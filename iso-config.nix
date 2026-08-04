@@ -1,11 +1,11 @@
-{ config, lib, pkgs, nixpkgs, ... }:
+{ config, lib, pkgs, modulesPath, ... }:
 
 {
   imports = [
     # Makes `system.build.isoImage` available and produces a bootable,
     # writable (tmpfs root + overlay) live ISO. Unlike the full installer CD
     # modules it does not add a default `nixos` user or alter passwords.
-    (nixpkgs + "/nixos/modules/installer/cd-dvd/iso-image.nix")
+    (modulesPath + "/installer/cd-dvd/iso-image.nix")
   ];
 
   isoImage.volumeID = "nixos-ssh";
@@ -38,10 +38,11 @@
     isNormalUser = true;
     extraGroups = [ "wheel" ];
     description = "Administrator";
+    initialPassword = "";
   };
 
   # Wheel members can run sudo without entering a password.
   security.sudo.wheelNeedsPassword = false;
 
-  system.stateVersion = "24.11";
+  system.stateVersion = "26.05";
 }

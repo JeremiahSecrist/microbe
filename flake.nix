@@ -12,7 +12,7 @@
       # The ISO image is built from this configuration.
       iso = nixpkgs.lib.nixosSystem {
         inherit system;
-        specialArgs = { inherit nixpkgs; };
+        # specialArgs = { inherit nixpkgs; };
         modules = [ ./iso-config.nix ];
       };
     in
