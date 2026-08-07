@@ -557,8 +557,13 @@ disks + state. `down --remove-volumes` also deletes qcow2 disks.
 > drive provisioning **without any shell-level privilege** — no sudoers, no
 > setuid, no capability grants. Operations are idempotent: netlink link
 > lookup errors (`LinkNotFound`) trigger create; addresses are replaced; DNAT
-> rules are checked before install. Teardown is best-effort (delete errors
-> ignored). The CLI builds bridge/tap/DNAT specs from `flakegen.Stack` (same
+> rules are checked before install. **Tap ownership gotcha (M3 live E2E)**:
+> a tap that already exists is reused as-is, so a stale tap created by an older
+> binary with a wrong owner pins the tap to root and the unprivileged
+> cloud-hypervisor process (the `microbe`-group user) gets `EPERM` on attach.
+> `EnsureTaps` must therefore reconcile ownership (delete + recreate a tap whose
+> sysfs `owner`/`group` differs from the spec), not just check existence.
+> Teardown is best-effort (delete errors ignored). The CLI builds bridge/tap/DNAT specs from `flakegen.Stack` (same
 > `TapID` source as the renderer), gated behind package-level seams
 > (`provisionHost` / `teardownHost`) so the cmd layer is testable without
 > root or a daemon. Runners launch as detached processes (Setpgid + Release)
