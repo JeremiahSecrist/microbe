@@ -736,8 +736,8 @@ provisioning daemon, and device access. The flake ships a NixOS module,
   `microbe` CLI when `virtualisation.microbe.package` is set (the flake sets it
   to `packages.<system>.microbe`). No `ip`/`iptables` userspace is required:
   the daemon does netlink itself.
-- **Provisioning daemon** (docker-style): a `systemd.sockets.microbe` unit
-  owns `/run/microbe.sock` (`SocketUser=root`, `SocketGroup=microbe`,
+- **Provisioning daemon** (docker-style): a `systemd.sockets.microbe-provisiond`
+  unit owns `/run/microbe.sock` (`SocketUser=root`, `SocketGroup=microbe`,
   `SocketMode=0660`), and a `systemd.services.microbe-provisiond` root unit
   runs `microbe provisiond` (socket-activated) which applies bridge/tap/DNAT
   ops via netlink. Mirrors `systemd.sockets.docker` / `dockerd`.

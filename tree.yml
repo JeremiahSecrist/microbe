@@ -1,0 +1,18 @@
+version: 2
+tree:
+  docs:
+    microbe-plan.md:
+      desc: "Authoritative microbe design/implementation spec; §13.1 defines the root microbe-provisiond daemon socket-activation design."
+      updated: "2026-08-07T18:28:12.670Z"
+      commit: c3eda60
+  internal:
+    nix:
+      host_module_integration_test.go:
+        desc: "Eval-only integration test asserting host module config: kernel modules, sysctls, packages, groups, udev, daemon socket + service, no sudo rules."
+        updated: "2026-08-07T18:28:12.222Z"
+        commit: c3eda60
+  modules:
+    host.nix:
+      desc: "NixOS host module: kernel mods, sysctls, qemu-utils, microbe/kvm groups + udev, root microbe-provisiond daemon socket+service (no sudo/ip/iptables)."
+      updated: "2026-08-07T18:28:11.699Z"
+      commit: c3eda60

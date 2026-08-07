@@ -11,9 +11,9 @@ import (
 
 // TestHostModuleConfiguresHost is the red-green gate for modules/host.nix: a
 // NixOS host importing the module with virtualisation.microbe.enable = true
-// must gain the kernel modules, sysctls, packages, groups and udev rules
-// needed to run microbe VMs, and must be inert when disabled. Eval-only,
-// skipped without nix.
+// must gain the kernel modules, sysctls, the microbe-provisiond daemon socket
+// + service, packages and udev rules needed to run microbe VMs, and must be
+// inert when disabled. Eval-only, skipped without nix.
 func TestHostModuleConfiguresHost(t *testing.T) {
 	if _, err := exec.LookPath("nix"); err != nil {
 		t.Skip("nix not in PATH")
@@ -60,14 +60,25 @@ func TestHostModuleConfiguresHost(t *testing.T) {
           }
         ];
       };
+      microbeSocket = on.config.systemd.sockets."microbe-provisiond".socketConfig;
+      microbeSvc = on.config.systemd.services."microbe-provisiond".serviceConfig;
+      # Packages the module itself adds to the system (base NixOS already ships
+      # iproute2/iptables, so presence alone proves nothing).
+      onPkgs = map (p: p.pname or "") on.config.environment.systemPackages;
+      offPkgs = map (p: p.pname or "") off.config.environment.systemPackages;
+      addedPkgs = builtins.filter (n: !builtins.elem n offPkgs) onPkgs;
+      # Sudo rules that specifically target the microbe group.
+      microbeSudoRules = builtins.concatLists (map (r:
+        if builtins.elem "microbe" (r.groups or []) then
+          map (c: { cmd = c.command; noPasswd = builtins.elem "NOPASSWD" c.options; }) r.commands
+        else [ ]
+      ) on.config.security.sudo.extraRules);
     in {
       eval = {
         kernelModules = on.config.boot.kernelModules;
         ipForward = on.config.boot.kernel.sysctl."net.ipv4.ip_forward";
         bridgeNf = on.config.boot.kernel.sysctl."net.bridge.bridge-nf-call-iptables";
-        hasQemuImg = builtins.any (p: p.pname or "" == "qemu-utils") on.config.environment.systemPackages;
-        hasIptables = builtins.any (p: p.pname or "" == "iptables") on.config.environment.systemPackages;
-        hasIproute2 = builtins.any (p: p.pname or "" == "iproute2") on.config.environment.systemPackages;
+        addedPkgs = addedPkgs;
         hasPackage = builtins.any (p: p.pname or "" == "hello") on.config.environment.systemPackages;
         microbeGroup = on.config.users.groups ? microbe;
         kvmGroup = on.config.users.groups ? kvm;
@@ -75,7 +86,14 @@ func TestHostModuleConfiguresHost(t *testing.T) {
         aliceGroups = on.config.users.users.alice.extraGroups;
         disabledGroup = off.config.users.groups ? microbe;
         dockerForwarding = withDocker.config.boot.kernel.sysctl."net.ipv4.conf.all.forwarding";
-        sudoRules = builtins.concatLists (map (r: map (c: { cmd = c.command; noPasswd = builtins.elem "NOPASSWD" c.options; }) r.commands) on.config.security.sudo.extraRules);
+        socketListen = microbeSocket.ListenStream;
+        socketMode = microbeSocket.SocketMode;
+        socketUser = microbeSocket.SocketUser;
+        socketGroup = microbeSocket.SocketGroup;
+        socketWantedBy = on.config.systemd.sockets."microbe-provisiond".wantedBy;
+        svcType = microbeSvc.Type;
+        svcExecStart = microbeSvc.ExecStart;
+        microbeSudoRules = microbeSudoRules;
       };
     };
 }`
@@ -94,23 +112,28 @@ func TestHostModuleConfiguresHost(t *testing.T) {
 	}
 
 	var got struct {
-		KernelModules []string
-		IPForward     any
-		BridgeNf      any
-		HasQemuImg    bool
-		HasIptables   bool
-		HasIproute2   bool
-		HasPackage    bool
-		MicrobeGroup  bool
-		KVMGroup      bool
-		TunRule       bool
-		AliceGroups   []string
-		DisabledGroup bool
-		DockerFwd     any `json:"dockerForwarding"`
-		SudoRules     []struct {
+		KernelModules  []string
+		IPForward      any
+		BridgeNf       any
+		AddedPkgs      []string `json:"addedPkgs"`
+		HasPackage     bool
+		MicrobeGroup   bool
+		KVMGroup       bool
+		TunRule        bool
+		AliceGroups    []string
+		DisabledGroup  bool
+		DockerFwd      any `json:"dockerForwarding"`
+		SocketListen   string
+		SocketMode     string
+		SocketUser     string
+		SocketGroup    string
+		SocketWantedBy []string
+		SvcType        string
+		SvcExecStart   string
+		SudoRules      []struct {
 			Cmd      string `json:"cmd"`
 			NoPasswd bool   `json:"noPasswd"`
-		} `json:"sudoRules"`
+		} `json:"microbeSudoRules"`
 	}
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("decode eval: %v\n%s", err, out)
@@ -127,14 +150,17 @@ func TestHostModuleConfiguresHost(t *testing.T) {
 	if !isTruthy(got.BridgeNf) {
 		t.Errorf("bridge-nf-call-iptables = %v, want true", got.BridgeNf)
 	}
-	if !got.HasQemuImg {
-		t.Error("environment.systemPackages missing qemu-utils (qemu-img for volumes)")
+	if !containsStr(got.AddedPkgs, "qemu-utils") {
+		t.Errorf("module-added packages missing qemu-utils (qemu-img for volumes): %v", got.AddedPkgs)
 	}
-	if !got.HasIptables {
-		t.Error("environment.systemPackages missing iptables (DNAT)")
+	if !containsStr(got.AddedPkgs, "hello") {
+		t.Errorf("virtualisation.microbe.package (hello) not added to systemPackages: %v", got.AddedPkgs)
 	}
-	if !got.HasIproute2 {
-		t.Error("environment.systemPackages missing iproute2 (bridge/tap management)")
+	if containsStr(got.AddedPkgs, "iptables") {
+		t.Errorf("module still adds iptables; the daemon uses nftables netlink: %v", got.AddedPkgs)
+	}
+	if containsStr(got.AddedPkgs, "iproute2") {
+		t.Errorf("module still adds iproute2; the daemon uses netlink: %v", got.AddedPkgs)
 	}
 	if !got.HasPackage {
 		t.Error("virtualisation.microbe.package not added to environment.systemPackages")
@@ -159,21 +185,20 @@ func TestHostModuleConfiguresHost(t *testing.T) {
 	if !isTruthy(got.DockerFwd) {
 		t.Errorf("net.ipv4.conf.all.forwarding with docker enabled = %v, want true (no priority conflict)", got.DockerFwd)
 	}
-	wantCmds := map[string]bool{"/bin/ip": false, "/bin/xtables-nft-multi": false}
-	for _, r := range got.SudoRules {
-		for suffix := range wantCmds {
-			if strings.HasSuffix(r.Cmd, suffix) {
-				wantCmds[suffix] = true
-				if !r.NoPasswd {
-					t.Errorf("sudoers command %s missing NOPASSWD", r.Cmd)
-				}
-			}
-		}
+	if got.SocketListen != "/run/microbe.sock" {
+		t.Errorf("daemon socket ListenStream = %q, want /run/microbe.sock", got.SocketListen)
 	}
-	for cmd, found := range wantCmds {
-		if !found {
-			t.Errorf("sudoers rule missing %s for the microbe group", cmd)
-		}
+	if got.SocketMode != "0660" || got.SocketUser != "root" || got.SocketGroup != "microbe" {
+		t.Errorf("daemon socket ownership = %s:%s %s, want root:microbe 0660", got.SocketUser, got.SocketGroup, got.SocketMode)
+	}
+	if !containsStr(got.SocketWantedBy, "sockets.target") {
+		t.Errorf("daemon socket wantedBy = %v, want sockets.target", got.SocketWantedBy)
+	}
+	if got.SvcType != "simple" || !strings.Contains(got.SvcExecStart, "/bin/microbe provisiond") {
+		t.Errorf("daemon service = type %q exec %q", got.SvcType, got.SvcExecStart)
+	}
+	if len(got.SudoRules) != 0 {
+		t.Errorf("sudoers rules still present for the microbe group: %v (daemon owns provisioning)", got.SudoRules)
 	}
 }
 

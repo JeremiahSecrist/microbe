@@ -1,6 +1,6 @@
 # NixOS host module for the microbe VM orchestrator: the kernel modules,
-# sysctls, tools and device access a host needs to run microvm VMs managed by
-# microbe.
+# sysctls, tools, daemon and device access a host needs to run microvm VMs
+# managed by microbe.
 #
 # Usage from the microbe flake:
 #   { modules = [ microbe.nixosModules.host { virtualisation.microbe.enable = true; } ]; }
@@ -21,10 +21,10 @@ in
       description = ''
         Enable host support for the microbe VM orchestrator: tap/bridge kernel
         modules, IP forwarding + bridge netfilter sysctls (required for the
-        iptables DNAT that publishes VM ports), the tools microbe shells out to
-        (qemu-img, iptables, iproute2), and `microbe`/`kvm` groups with udev
-        rules granting device access to the users listed in
-        {option}`virtualisation.microbe.users`.
+        nftables DNAT that publishes VM ports), the `microbe-provisiond` root
+        daemon and its `root:microbe` mode-`0660` unix socket, and
+        `microbe`/`kvm` groups with udev rules granting device access to the
+        users listed in {option}`virtualisation.microbe.users`.
       '';
     };
 
@@ -32,9 +32,10 @@ in
       type = types.nullOr types.package;
       default = null;
       description = ''
-        The microbe CLI to add to {option}`environment.systemPackages`. The
-        microbe flake sets this to its built package automatically; leave unset
-        to configure the host without installing the CLI.
+        The microbe CLI to add to {option}`environment.systemPackages` and run
+        as the provisioning daemon. The microbe flake sets this to its built
+        package automatically; leave unset to configure the host without the
+        daemon.
       '';
     };
 
@@ -44,10 +45,10 @@ in
       example = [ "alice" ];
       description = ''
         Users granted tap-device and KVM accelerator access (members of the
-        `microbe` and `kvm` groups). Root always has access. Bridge, tap and
-        iptables provisioning itself still requires root (e.g. passwordless
-        sudo); the groups only remove the need for a privileged helper on
-        device nodes.
+        `microbe` and `kvm` groups). Root always has access. Network
+        provisioning itself runs inside the root `microbe-provisiond` daemon;
+        group members drive it through the unix socket and get no shell-level
+        privilege (no sudoers, no setuid).
       '';
     };
   };
@@ -56,7 +57,7 @@ in
     {
       boot.kernelModules = [
         "tun" # tap interfaces backing VM NICs
-        "br_netfilter" # let iptables see bridged traffic (DNAT on bridges)
+        "br_netfilter" # let nftables see bridged traffic (DNAT on bridges)
         "vhost" # virtio-net acceleration
         "vhost_net"
         # Loaded when the CPU supports them; modprobe warns harmlessly
@@ -78,8 +79,6 @@ in
       };
 
       environment.systemPackages = [
-        pkgs.iproute2 # ip link / bridge / tap management
-        pkgs.iptables # DNAT for published VM ports
         pkgs.qemu-utils # qemu-img for VM volume images
       ] ++ optionals (cfg.package != null) [ cfg.package ];
 
@@ -95,20 +94,30 @@ in
         KERNEL=="kvm", GROUP="kvm", MODE="0660", OPTIONS+="static_node=kvm"
       '';
 
-      # Members of the microbe group can run microbe's provisioning commands
-      # (ip, iptables) without a password so `microbe up`/`down` work without
-      # sudo. Same trust model as the docker group: group members get network
-      # admin. `iptables` resolves to xtables-nft-multi (its symlink target);
-      # sudo matches on the canonical path.
-      security.sudo.extraRules = [
-        {
-          groups = [ "microbe" ];
-          commands = [
-            { command = "${pkgs.iproute2}/bin/ip"; options = [ "NOPASSWD" ]; }
-            { command = "${pkgs.iptables}/bin/xtables-nft-multi"; options = [ "NOPASSWD" ]; }
-          ];
-        }
-      ];
+      # The provisioning daemon. Mirrors systemd.sockets.docker / dockerd:
+      # systemd owns the socket file (root:microbe, mode 0660) so microbe
+      # group members can drive provisioning without shell-level privilege,
+      # and socket-activates the root daemon which applies bridge/tap/DNAT
+      # ops itself via netlink. The daemon adopts the socket fd via LISTEN_FDS
+      # (`microbe provisiond`), never shelling out to ip/iptables.
+      systemd.sockets.microbe-provisiond = mkIf (cfg.package != null) {
+        description = "microbe provisioning daemon socket";
+        wantedBy = [ "sockets.target" ];
+        socketConfig = {
+          ListenStream = "/run/microbe.sock";
+          SocketMode = "0660";
+          SocketUser = "root";
+          SocketGroup = "microbe";
+        };
+      };
+
+      systemd.services.microbe-provisiond = mkIf (cfg.package != null) {
+        description = "microbe provisioning daemon";
+        serviceConfig = {
+          Type = "simple";
+          ExecStart = "${cfg.package}/bin/microbe provisiond";
+        };
+      };
     }
   ]);
 }
