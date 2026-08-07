@@ -118,7 +118,7 @@ func downRun(args []string, o downOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := teardownHost(o.ops, st.Name, st, nets, taps, ports); err != nil {
+	if err := teardownHost(o.ops, st.Name, nets, taps, ports); err != nil {
 		return err
 	}
 

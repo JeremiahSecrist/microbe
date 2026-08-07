@@ -23,7 +23,7 @@ import (
 // Seams over the host/process operations so tests can substitute fakes. The
 // defaults are the real, daemon-backed implementations.
 var (
-	provisionHost = func(ops provisiond.Ops, stack string, st *flakegen.Stack, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
+	provisionHost = func(ops provisiond.Ops, stack string, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
 		if err := ops.EnsureNetworks(stack, nets); err != nil {
 			return err
 		}
@@ -33,7 +33,7 @@ var (
 		return ops.ApplyPorts(ports)
 	}
 
-	teardownHost = func(ops provisiond.Ops, stack string, st *flakegen.Stack, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
+	teardownHost = func(ops provisiond.Ops, stack string, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
 		if err := ops.TeardownPorts(ports); err != nil {
 			return err
 		}
@@ -56,7 +56,7 @@ var (
 	}
 )
 
-// printOps implements provisiond.Ops by printing the intended actions to w.
+// printOps implements provisiond.Ops by printing the intended actions to out.
 // Used by --dry-run, which never contacts the daemon.
 type printOps struct {
 	out io.Writer

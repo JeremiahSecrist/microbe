@@ -12,7 +12,7 @@ import (
 func WriteStack(dir string, st *Stack, userConfigPath string) error {
 	generated, err := st.RenderGenerated()
 	if err != nil {
-		return err
+		return fmt.Errorf("write stack: %w", err)
 	}
 	files := map[string]string{
 		"flake.nix":     st.RenderFlake(),
@@ -20,7 +20,7 @@ func WriteStack(dir string, st *Stack, userConfigPath string) error {
 	}
 	mods, err := FixedModules()
 	if err != nil {
-		return err
+		return fmt.Errorf("write stack: %w", err)
 	}
 	for name, content := range mods {
 		files["modules/"+name] = content

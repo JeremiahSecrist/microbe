@@ -9,9 +9,9 @@ import (
 // network plan and stack, then ship them to the microbe-provisiond daemon,
 // which applies them via netlink/nftables.
 //
-// CONTRACT (M3/M4 boundary): Agent B (lifecycle) depends on the exact type
-// names and field names in this file. Do not rename them without updating
-// Agent B.
+// CONTRACT: internal/cmd and internal/provisiond depend on the exact type
+// and field names in this file. Do not rename them without updating those
+// callers.
 
 // NetSpec is one network to provision on the host: a bridge br-<stack>-<net>
 // carrying the gateway address.

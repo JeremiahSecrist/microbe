@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -61,7 +62,7 @@ func rmRun(args []string, o rmOptions) error {
 	if !o.force {
 		fmt.Fprintf(o.out, "remove %s and their disks? [y/N] ", strings.Join(selected, ", "))
 		line, err := bufio.NewReader(o.stdin).ReadString('\n')
-		if err != nil && err != io.EOF {
+		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
 		ans := strings.ToLower(strings.TrimSpace(line))

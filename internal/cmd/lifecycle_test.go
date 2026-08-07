@@ -177,8 +177,8 @@ func (f *fakeOps) TeardownNetworks(stack string, nets []hostnet.NetSpec) error {
 func (f *fakeOps) TeardownTaps(taps []hostnet.TapSpec) error                   { return nil }
 func (f *fakeOps) TeardownPorts(ports []hostnet.PortSpec) error                { return nil }
 
-func recordHost(hr *hostRecorder, events *[]string, tag string) func(provisiond.Ops, string, *flakegen.Stack, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
-	return func(_ provisiond.Ops, stack string, _ *flakegen.Stack, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
+func recordHost(hr *hostRecorder, events *[]string, tag string) func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+	return func(_ provisiond.Ops, stack string, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
 		hr.calls++
 		hr.stack = stack
 		hr.nets = nets
@@ -319,7 +319,7 @@ func TestProvisionHostSeamForwardsToOps(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := &fakeOps{}
-	if err := provisionHost(ops, st.Name, st, nets, taps, ports); err != nil {
+	if err := provisionHost(ops, st.Name, nets, taps, ports); err != nil {
 		t.Fatal(err)
 	}
 	if ops.ensureNetworks != 1 || ops.ensureTaps != 1 || ops.applyPorts != 1 {

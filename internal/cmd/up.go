@@ -146,7 +146,7 @@ func upRun(args []string, o upOptions) error {
 		if err != nil {
 			return err
 		}
-		if err := provisionHost(o.ops, st.Name, st, nets, taps, ports); err != nil {
+		if err := provisionHost(o.ops, st.Name, nets, taps, ports); err != nil {
 			return err
 		}
 	}

@@ -32,11 +32,11 @@ const (
 // Request is one RPC sent over the socket. Exactly one of the payload fields
 // is populated per method.
 type Request struct {
-	Method Method              `json:"method"`
-	Stack  string              `json:"stack,omitempty"`
-	Nets   []hostnet.NetSpec   `json:"nets,omitempty"`
-	Taps   []hostnet.TapSpec   `json:"taps,omitempty"`
-	Ports  []hostnet.PortSpec  `json:"ports,omitempty"`
+	Method Method             `json:"method"`
+	Stack  string             `json:"stack,omitempty"`
+	Nets   []hostnet.NetSpec  `json:"nets,omitempty"`
+	Taps   []hostnet.TapSpec  `json:"taps,omitempty"`
+	Ports  []hostnet.PortSpec `json:"ports,omitempty"`
 }
 
 // Response is the daemon's reply. Error is empty on success.

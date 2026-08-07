@@ -56,7 +56,7 @@ func (c *Compose) validateSubnets() error {
 	for name, net := range c.Networks {
 		p, err := netip.ParsePrefix(net.Subnet)
 		if err != nil {
-			return fmt.Errorf("config: network %q: invalid subnet %q", name, net.Subnet)
+			return fmt.Errorf("config: network %q: invalid subnet %q: %w", name, net.Subnet, err)
 		}
 		if !p.Addr().Is4() || p.Bits() < 16 || p.Bits() > 30 {
 			return fmt.Errorf("config: network %q: subnet must be an IPv4 /16../30", name)
@@ -93,11 +93,11 @@ func (c *Compose) validateAttaches() error {
 			}
 			ip, err := netip.ParseAddr(a.IP)
 			if err != nil {
-				return fmt.Errorf("config: service %q: invalid ip %q", svcName, a.IP)
+				return fmt.Errorf("config: service %q: invalid ip %q: %w", svcName, a.IP, err)
 			}
 			p, err := netip.ParsePrefix(net.Subnet)
 			if err != nil {
-				return err
+				return fmt.Errorf("config: network %q: invalid subnet %q: %w", a.Name, net.Subnet, err)
 			}
 			if !p.Contains(ip) {
 				return fmt.Errorf("config: service %q: ip %q outside %q", svcName, a.IP, net.Subnet)

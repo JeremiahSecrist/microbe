@@ -21,7 +21,7 @@ func BuildRunner(dir, svc, outLink string) (string, error) {
 
 	stage, err := os.MkdirTemp("", "microbe-build-")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("nix: create build stage dir: %w", err)
 	}
 	defer os.RemoveAll(stage)
 	if err := stageSource(dir, stage); err != nil {
@@ -30,7 +30,7 @@ func BuildRunner(dir, svc, outLink string) (string, error) {
 
 	absOut, err := filepath.Abs(outLink)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("nix: resolve out-link %s: %w", outLink, err)
 	}
 	cmd := exec.Command("nix", "build", "--no-write-lock-file", "--print-out-paths", "--out-link", absOut, target)
 	cmd.Dir = stage
@@ -38,7 +38,7 @@ func BuildRunner(dir, svc, outLink string) (string, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("nix build %s failed: %v\n%s", svc, err, stderr.String())
+		return "", fmt.Errorf("nix build %s failed: %w\n%s", svc, err, stderr.String())
 	}
 	return strings.TrimSpace(string(out)), nil
 }
@@ -58,11 +58,11 @@ func stageSource(src, dst string) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("nix: read %s: %w", modsSrc, err)
 	}
 	modsDst := filepath.Join(dst, "modules")
 	if err := os.MkdirAll(modsDst, 0o755); err != nil {
-		return err
+		return fmt.Errorf("nix: create %s: %w", modsDst, err)
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".nix") {
@@ -78,10 +78,13 @@ func stageSource(src, dst string) error {
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("nix: read %s: %w", src, err)
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return fmt.Errorf("nix: create %s: %w", filepath.Dir(dst), err)
 	}
-	return os.WriteFile(dst, data, 0o644)
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		return fmt.Errorf("nix: write %s: %w", dst, err)
+	}
+	return nil
 }

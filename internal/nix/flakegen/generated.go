@@ -73,18 +73,15 @@ func renderNetworkd(svcName string, s Service) (map[string]any, error) {
 }
 
 func routesFor(idx int, netName string, s Service) ([]any, error) {
-	gateway := map[string]string{"Gateway": s.Gateway[netName]}
+	gateway := s.Gateway[netName]
 	if idx == 0 {
-		return []any{gateway}, nil
+		return []any{map[string]string{"Gateway": gateway}}, nil
 	}
 	subnet, err := subnetOf(s.IPs[netName], s.Prefix[netName])
 	if err != nil {
 		return nil, fmt.Errorf("network %q: %w", netName, err)
 	}
-	route := map[string]string{"Destination": subnet}
-	for k, v := range gateway {
-		route[k] = v
-	}
+	route := map[string]string{"Destination": subnet, "Gateway": gateway}
 	return []any{route}, nil
 }
 

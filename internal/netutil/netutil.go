@@ -1,6 +1,9 @@
 package netutil
 
-import "net/netip"
+import (
+	"encoding/binary"
+	"net/netip"
+)
 
 func Gateway(p netip.Prefix) netip.Addr {
 	a := p.Masked().Addr().As4()
@@ -16,22 +19,12 @@ func GatewayString(cidr string) (string, error) {
 	return Gateway(p).String(), nil
 }
 
+// Broadcast returns the all-ones host address of p: the network address with
+// every bit outside the prefix set to 1.
 func Broadcast(p netip.Prefix) netip.Addr {
 	a := p.Masked().Addr().As4()
-	bits := p.Bits()
-	for i := 3; i >= 0; i-- {
-		hostBits := (i+1)*8 - bits
-		if hostBits <= 0 {
-			break
-		}
-		if hostBits > 8 {
-			hostBits = 8
-		}
-		var mask uint8
-		for k := 0; k < hostBits; k++ {
-			mask |= 1 << k
-		}
-		a[i] |= mask
-	}
+	network := binary.BigEndian.Uint32(a[:])
+	hostMask := uint32(1)<<(32-p.Bits()) - 1
+	binary.BigEndian.PutUint32(a[:], network|hostMask)
 	return netip.AddrFrom4(a)
 }

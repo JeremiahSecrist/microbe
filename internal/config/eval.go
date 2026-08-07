@@ -18,7 +18,7 @@ func Eval(path string) ([]byte, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("config: nix eval failed: %v\n%s", err, stderr.String())
+		return nil, fmt.Errorf("config: nix eval failed: %w\n%s", err, stderr.String())
 	}
 	return out, nil
 }

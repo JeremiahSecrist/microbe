@@ -21,22 +21,19 @@ func renderValue(v any, depth int) string {
 	case int:
 		return strconv.Itoa(x)
 	case bool:
-		if x {
-			return "true"
-		}
-		return "false"
+		return renderBool(x)
 	case []string:
 		return nixInlineList(x)
 	case []any:
 		return renderList(x, depth)
 	case map[string]string:
-		return renderStringMap(x, depth)
+		return renderMap(x, depth, nixQuote)
 	case map[string]int:
-		return renderIntMap(x, depth)
+		return renderMap(x, depth, strconv.Itoa)
 	case map[string]bool:
-		return renderBoolMap(x, depth)
+		return renderMap(x, depth, renderBool)
 	case map[string]any:
-		return renderAnyMap(x, depth)
+		return renderMap(x, depth, func(v any) string { return renderValue(v, depth+1) })
 	default:
 		panic(fmt.Sprintf("nixify: unsupported type %T", v))
 	}
@@ -158,29 +155,17 @@ func isNixIdent(s string) bool {
 	return true
 }
 
-func renderStringMap(m map[string]string, depth int) string {
-	return renderAttrset(sortedKeys(m), func(k string) string {
-		return nixQuote(m[k])
-	}, depth)
+func renderBool(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
-func renderIntMap(m map[string]int, depth int) string {
+// renderMap renders any map[string]T as a Nix attrset, using format to
+// render each value.
+func renderMap[T any](m map[string]T, depth int, format func(T) string) string {
 	return renderAttrset(sortedKeys(m), func(k string) string {
-		return strconv.Itoa(m[k])
-	}, depth)
-}
-
-func renderBoolMap(m map[string]bool, depth int) string {
-	return renderAttrset(sortedKeys(m), func(k string) string {
-		if m[k] {
-			return "true"
-		}
-		return "false"
-	}, depth)
-}
-
-func renderAnyMap(m map[string]any, depth int) string {
-	return renderAttrset(sortedKeys(m), func(k string) string {
-		return renderValue(m[k], depth+1)
+		return format(m[k])
 	}, depth)
 }
