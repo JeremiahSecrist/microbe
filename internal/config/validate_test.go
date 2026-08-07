@@ -27,8 +27,8 @@ func TestFixtureNetworkingValidates(t *testing.T) {
 		t.Errorf("services = %d, want 3", len(cfg.Services))
 	}
 	db := cfg.Services["db"]
-	if len(db.Ports) != 1 || db.Ports[0] != "5432:5432" {
-		t.Errorf("db ports = %v, want [5432:5432]", db.Ports)
+	if len(db.Ports) != 0 {
+		t.Errorf("db ports = %v, want none (sqlite has no network listener)", db.Ports)
 	}
 	if db.VCPUs != 1 || db.Mem != 512 {
 		t.Errorf("db defaults not applied: vcpu=%d mem=%d", db.VCPUs, db.Mem)

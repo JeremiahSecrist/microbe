@@ -1,7 +1,8 @@
 # Canonical networking test fixture for microbe.
 #
 # Target behavior (the spec this test suite is committed to):
-#   - db    on backend  with static IP 192.168.51.2, published port 5432
+#   - db    on backend  with static IP 192.168.51.2, no published port
+#           (sqlite: a mounted disk, no network listener)
 #   - web   on backend+frontend with static IPs 192.168.51.3 / 192.168.50.3,
 #           starts only after db (dependsOn)
 #   - jump  on frontend+backend with NO static IPs -> auto-allocated
@@ -23,18 +24,16 @@
       mem  = 512;
 
       config = { pkgs, ... }: {
-        services.postgresql.enable = true;
+        environment.systemPackages = [ pkgs.sqlite ];
       };
 
       volumes = [
-        { type = "disk"; name = "db-data"; target = "/var/lib/postgresql"; size = "2G"; }
+        { type = "disk"; name = "db-data"; target = "/var/lib/db"; size = "2G"; }
       ];
 
       networks = [
         { name = "backend"; ip = "192.168.51.2"; }
       ];
-
-      ports = [ "5432:5432" ];
     };
 
     web = {
