@@ -558,6 +558,17 @@ disks + state. `down --remove-volumes` also deletes qcow2 disks.
 > atomically (temp+rename) to `.microbe/state.json` with the §9.4 shape.
 > Root is required only for real provisioning; `--dry-run` prints the `ip`
 > /`iptables` commands via `cmdrun.Dry` and never starts anything.
+>
+> **Git-resolution gotcha (M3/M4)**: `.microbe/` is gitignored, but a flake
+> path input inside a git repo is resolved via git, so a direct `nix build`
+> in `.microbe/` fails ("does not contain a flake.nix") — git excludes the
+> ignored directory from the tree. `nix.BuildRunner` therefore stages the
+> flake sources (flake.nix, microbe.nix, generated.nix, modules/) to a temp
+> dir outside the work tree, builds there, and out-links back to
+> `.microbe/runners/<svc>`. Runtime artifacts (volumes/, runs/, logs/,
+> state.json) are never staged. Verified: staged tree evals cleanly; a full
+> `nix build` realizes the NixOS+hypervisor closure (minutes, warm-store
+> dependent), so cheap `nix eval` is the CI-grade check.
 
 ---
 
