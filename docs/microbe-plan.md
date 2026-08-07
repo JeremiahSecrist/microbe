@@ -403,6 +403,25 @@ microvm.shares += {
 | `dependsOn` | `up` builds a DAG; topological start. Dependency failure ⇒ dependents not started (exit 3). |
 | `healthcheck` | Renderer installs a guest systemd unit (e.g. `tcpsocket` or `exec`) + CLI polls the runner/guest until healthy or timeout (`startPeriod + interval`). |
 
+> **Implementation note (M5, verified live)**: shipped as **TCP-socket-only**
+> healthchecks, not the full `exec`-in-guest kind above — that would need
+> SSH key injection, an SSH client dependency, and a real `microbe exec`
+> (all still unbuilt; `exec.go` is a stub). `Healthcheck.Command` was
+> replaced with `Port int`: after starting a service, if it declares a
+> `healthcheck`, `internal/cmd/up.go` dials `<primary-network-IP>:Port`
+> (`internal/cmd/health.go`'s `waitHealthy`) every `interval` until it
+> accepts a connection or `startPeriod` elapses, no guest-side unit
+> involved. Gating is **fail-fast**: the single sequential start loop
+> (dependency-first order from `startOrder`) breaks on the first service
+> that never becomes healthy, marking it `degraded` in `state.json` and
+> returning an error — so nothing declared later in the order (including
+> real dependents) starts, and `ps` still shows what happened instead of
+> the run vanishing silently. Verified against `db`/`web`/`jump` on lappy:
+> healthy case prints `healthy db` and reaches all-`running`/`healthy`;
+> pointing the healthcheck at a port nothing listens on reproduces
+> `degraded db: ... within 10s`, exit 1, and `jump`/`web` staying `stopped`
+> with no PID.
+
 ### 8.8 Guest base module
 
 The renderer injects `modules/guest-base.nix` (fixed, shipped with the CLI)
