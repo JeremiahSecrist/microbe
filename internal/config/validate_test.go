@@ -103,6 +103,40 @@ func TestValidateDependsOnCycle(t *testing.T) {
 	}
 }
 
+func TestValidateHealthcheck(t *testing.T) {
+	cases := []struct {
+		name    string
+		hc      string
+		wantErr bool
+	}{
+		{"valid", `{"port": 5432, "interval": "5s", "timeout": "2s", "startPeriod": "10s"}`, false},
+		{"port zero", `{"port": 0, "interval": "5s", "timeout": "2s", "startPeriod": "10s"}`, true},
+		{"port too big", `{"port": 70000, "interval": "5s", "timeout": "2s", "startPeriod": "10s"}`, true},
+		{"bad interval", `{"port": 5432, "interval": "nah", "timeout": "2s", "startPeriod": "10s"}`, true},
+		{"bad timeout", `{"port": 5432, "interval": "5s", "timeout": "nah", "startPeriod": "10s"}`, true},
+		{"bad startPeriod", `{"port": 5432, "interval": "5s", "timeout": "2s", "startPeriod": "nah"}`, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(`{
+			  "name": "hc",
+			  "networks": { "n": { "subnet": "10.0.0.0/24" } },
+			  "services": { "a": { "networks": [{ "name": "n" }], "healthcheck": ` + c.hc + ` } }
+			}`))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			err = cfg.Validate()
+			if c.wantErr && err == nil {
+				t.Error("want error, got nil")
+			}
+			if !c.wantErr && err != nil {
+				t.Errorf("want no error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateOverlappingSubnets(t *testing.T) {
 	cfg, err := Parse([]byte(`{
 	  "name": "bad",

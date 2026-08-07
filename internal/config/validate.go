@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"microbe/internal/netutil"
 )
@@ -68,6 +69,9 @@ func (c *Compose) Validate() error {
 		return err
 	}
 	if err := c.validateVolumes(); err != nil {
+		return err
+	}
+	if err := c.validateHealthchecks(); err != nil {
 		return err
 	}
 	return nil
@@ -228,6 +232,28 @@ func (c *Compose) validateVolumes() error {
 				return fmt.Errorf("config: service %q: duplicate volume target %q", svcName, v.Target)
 			}
 			targets[v.Target] = true
+		}
+	}
+	return nil
+}
+
+func (c *Compose) validateHealthchecks() error {
+	for svcName, svc := range c.Services {
+		hc := svc.Healthcheck
+		if hc == nil {
+			continue
+		}
+		if hc.Port < minHostPort || hc.Port > maxHostPort {
+			return fmt.Errorf("config: service %q: healthcheck port %d out of range", svcName, hc.Port)
+		}
+		for field, value := range map[string]string{
+			"interval":    hc.Interval,
+			"timeout":     hc.Timeout,
+			"startPeriod": hc.StartPeriod,
+		} {
+			if _, err := time.ParseDuration(value); err != nil {
+				return fmt.Errorf("config: service %q: invalid healthcheck %s %q: %w", svcName, field, value, err)
+			}
 		}
 	}
 	return nil
