@@ -1,6 +1,10 @@
 version: 2
 tree:
   docs:
+    e2e-fixes-plan.md:
+      desc: "Detailed TDD plan for two live-E2E blockers: tap ownership reconciliation in EnsureTaps, and volume image path/format alignment."
+      updated: "2026-08-07T20:45:01.476Z"
+      commit: feafc4e
     microbe-plan.md:
       desc: "Authoritative microbe design/implementation spec; §13.1 defines the root microbe-provisiond daemon socket-activation design."
       updated: "2026-08-07T18:28:12.670Z"
