@@ -26,6 +26,7 @@ type Service struct {
 	IPs      map[string]string
 	Gateway  map[string]string
 	Prefix   map[string]int
+	Taps     map[string]string // net -> host tap id (≤15 chars)
 }
 
 // Host is one /etc/hosts entry shared by every guest.
@@ -53,6 +54,7 @@ func FromConfig(cfg *config.Compose, plan *hostnet.NetworkPlan) (*Stack, error) 
 			IPs:      plan.IPs[name],
 			Gateway:  map[string]string{},
 			Prefix:   map[string]int{},
+			Taps:     map[string]string{},
 		}
 		for _, netName := range s.Networks {
 			p, err := netip.ParsePrefix(cfg.Networks[netName].Subnet)
@@ -61,6 +63,7 @@ func FromConfig(cfg *config.Compose, plan *hostnet.NetworkPlan) (*Stack, error) 
 			}
 			s.Gateway[netName] = netutil.Gateway(p).String()
 			s.Prefix[netName] = p.Bits()
+			s.Taps[netName] = TapID(cfg.Name, name, netName)
 		}
 		st.Services[name] = s
 	}

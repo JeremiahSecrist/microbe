@@ -30,7 +30,7 @@ func (st *Stack) RenderGenerated() (string, error) {
 		}
 		taps := map[string]string{}
 		for _, net := range s.Networks {
-			taps[net] = TapID(st.Name, name, net)
+			taps[net] = s.Taps[net]
 		}
 		services[name] = map[string]any{
 			"cid":      s.CID,

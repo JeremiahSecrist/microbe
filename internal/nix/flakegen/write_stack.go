@@ -15,8 +15,8 @@ func WriteStack(dir string, st *Stack, userConfigPath string) error {
 		return err
 	}
 	files := map[string]string{
-		"flake.nix":      st.RenderFlake(),
-		"generated.nix":  generated,
+		"flake.nix":     st.RenderFlake(),
+		"generated.nix": generated,
 	}
 	mods, err := FixedModules()
 	if err != nil {

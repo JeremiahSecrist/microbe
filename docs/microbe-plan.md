@@ -543,6 +543,22 @@ compose file and generated data.
 `down` reverses: stop runners (SIGTERM), remove taps/bridges/DNAT, keep
 disks + state. `down --remove-volumes` also deletes qcow2 disks.
 
+> **Implementation notes (M3/M4, verified by dry-run)**: host provisioning is
+> idempotent via probe-then-create — `ip link show dev <iface>` errors when the
+> device is missing, so `ip link add`/`ip tuntap add` only run on a failed
+> probe; addresses use `ip addr replace` (idempotent) and DNAT uses
+> `iptables -C` before `-A`. Teardown is best-effort (delete errors ignored).
+> The CLI builds bridge/tap/DNAT specs from `flakegen.Stack` (same `TapID`
+> source as the renderer), gated behind package-level seams (`provisionHost` /
+> `teardownHost`) so the cmd layer is testable without root. Runners launch as
+> detached processes (Setpgid + Release) with CWD `.microbe/runs/<svc>` (the
+> runner script drops `microvm.sock` in CWD) and log to `.microbe/logs/<svc>.log`.
+> Volume qcow2 images use `qemu-img create -f qcow2 -o size=<MiB>M` only when
+> absent, at `.microbe/volumes/<stack>/<name>.qcow2`. State is written
+> atomically (temp+rename) to `.microbe/state.json` with the §9.4 shape.
+> Root is required only for real provisioning; `--dry-run` prints the `ip`
+> /`iptables` commands via `cmdrun.Dry` and never starts anything.
+
 ---
 
 # Part B — Project plan
@@ -725,8 +741,7 @@ rendered modules build.
 | **M1 — Config & eval** | schema structs (§5), projection eval (§4), validation (§7), `config` command | `microbe config` prints validated JSON for the sample file. |
 | **M2 — Render & build** | flake/module templates (§9), `build` command | `microbe build` produces runner derivations for db+web. |
 | **M3 — Host net** | bridges, taps, IP alloc, DNAT (§8.6) | Manual `ip link` inspection shows bridge+taps; ports reachable. |
-| **M4 — Lifecycle** | `up`/`down`/`ps` | Single-VM `up`/`down` works end-to-end; volumes persist. |
-| **M5 — Multi-VM** | dependsOn, health, name resolution (§8.7) | db+web stack up; `web` reaches `db` by hostname; web gated on db health. |
+| **M4 — Lifecycle** | `up`/`down`/`ps` | Single-VM `up`/`down` works end-to-end; volumes persist. || **M5 — Multi-VM** | dependsOn, health, name resolution (§8.7) | db+web stack up; `web` reaches `db` by hostname; web gated on db health. |
 | **M6 — Observability** | `logs`, `exec`, `restart`, `rm` | All commands work against the sample stack. |
 | **M7 — Hardening** | error UX, dry-run, json output, docs | Full sample stack lifecycle passes integration tests. |
 
