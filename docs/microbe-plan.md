@@ -74,9 +74,9 @@ Non-goals for v1 (candidates for v2):
 └─────────┼─────────────────┼────────────────────┼──────────────┘
           │                 │                    │
 ┌─────────▼───────┐  ┌──────▼───────┐  ┌─────────▼──────────┐
-│   nix tooling   │  │   ip / ipt    │  │  qemu / cloud-hy-  │
-│  nix-instantiate│  │  (or netlink) │  │  pervisor / fire-  │
-│  nix build      │  │              │  │  cracker           │
+│   nix tooling   │  │ microbe-pro- │  │  qemu / cloud-hy-  │
+│  nix-instantiate│  │ visiond: net-│  │  pervisor / fire-  │
+│  nix build      │  │  link/nft    │  │  cracker           │
 └─────────────────┘  └──────────────┘  └────────────────────┘
 ```
 
@@ -318,11 +318,11 @@ microvm.interfaces += {
   `mvc-` + 11 hex chars of `sha256(stack-svc-net)`. The renderer reads the id
   from `gen.taps` so the host side (CLI provisioning) and guest side agree.
 
-- **Host side** (CLI, not Nix): bridge `br-<stack>-<N>`; tap `mvc-...` enslaved;
-  bridge IP = gateway (`<subnet> .1`).
-- Taps are **not** auto-created by the hypervisor; the CLI creates them
-  (netlink/`ip`) because microvm.nix only manages them under the `host`
-  module, which we do not require.
+- **Host side** (provisiond, not Nix): bridge `br-<stack>-<N>`; tap `mvc-...`
+  enslaved; bridge IP = gateway (`<subnet> .1`).
+- Taps are **not** auto-created by the hypervisor; `microbe-provisiond`
+  creates them via netlink (§13.1) because microvm.nix only manages them
+  under the `host` module, which we do not require.
 
 ### 8.3 Networking inside the guest
 
@@ -388,7 +388,7 @@ microvm.shares += {
 |---------|---------------|-----------|
 | `networks.<N>.subnet` | bridge `br-<stack>-<N>` @ gateway `.1` | created `up`, removed `down` |
 | each attach | tap `mvc-<stack>-<svc>-<N>` | created `up`, removed `down` |
-| `ports` | iptables DNAT `<hostPort> → <guest ip>:<guestPort>` | created `up`, removed `down` |
+| `ports` | nftables DNAT `<hostPort> → <guest ip>:<guestPort>` | created `up`, removed `down` |
 
 - **IP allocation**: CLI assigns static IPs deterministically — read
   `state.json`; if absent, next free host from `.2` upward, persisted. A
@@ -528,12 +528,16 @@ compose file and generated data.
    (idempotent).
 3. **Build**: `nix build` each service's runner (cache-friendly; unchanged
    config → store hits).
-4. **Provision** (only if missing / `--no-provision` to skip):
+4. **Provision** (only if missing / `--no-provision` to skip): the CLI sends
+   the bridge/tap/DNAT specs to the **microbe-provisiond** daemon over its
+   unix socket (`/run/microbe.sock`); the root daemon applies them itself via
+   netlink (bridges, taps, addresses) and the nftables netlink protocol
+   (DNAT) — no `ip`/`iptables` exec, no sudo (§13.1):
    - create bridges `br-<stack>-<net>`, assign bridge IP = gateway;
    - allocate static IPs + MACs (or read from `state.json`);
-   - create qcow2 disks at `volumes/<stack>/<name>.qcow2` (qemu-img) if absent;
+   - create qcow2 disks at `volumes/<stack>/<name>.qcow2` (qemu-img, unprivileged) if absent;
    - create tap devices and attach to bridges;
-   - apply iptables DNAT for `ports`.
+   - apply nftables DNAT for `ports`.
 5. **Start**: topological order from `dependsOn`; launch each
    `microvm-run` with the tap/socket args; record PID in `state.json`.
 6. **Wait**: for each service, poll `healthcheck` (or wait for SSH) until ready
@@ -544,20 +548,27 @@ compose file and generated data.
 disks + state. `down --remove-volumes` also deletes qcow2 disks.
 
 > **Implementation notes (M3/M4, verified by dry-run)**: host provisioning is
-> idempotent via probe-then-create — `ip link show dev <iface>` errors when the
-> device is missing, so `ip link add`/`ip tuntap add` only run on a failed
-> probe; addresses use `ip addr replace` (idempotent) and DNAT uses
-> `iptables -C` before `-A`. Teardown is best-effort (delete errors ignored).
-> The CLI builds bridge/tap/DNAT specs from `flakegen.Stack` (same `TapID`
-> source as the renderer), gated behind package-level seams (`provisionHost` /
-> `teardownHost`) so the cmd layer is testable without root. Runners launch as
-> detached processes (Setpgid + Release) with CWD `.microbe/runs/<svc>` (the
-> runner script drops `microvm.sock` in CWD) and log to `.microbe/logs/<svc>.log`.
-> Volume qcow2 images use `qemu-img create -f qcow2 -o size=<MiB>M` only when
-> absent, at `.microbe/volumes/<stack>/<name>.qcow2`. State is written
-> atomically (temp+rename) to `.microbe/state.json` with the §9.4 shape.
-> Root is required only for real provisioning; `--dry-run` prints the `ip`
-> /`iptables` commands via `cmdrun.Dry` and never starts anything.
+> **docker-style**: a root daemon, `microbe-provisiond`, owns all privileged
+> network state and applies it itself via `vishvananda/netlink` (bridge/tap/
+> address) and the `google/nftables` netlink protocol (DNAT), exactly as
+> Docker's libnetwork does. It is exposed through a unix socket
+> `/run/microbe.sock` owned `root:microbe` mode `0660` (systemd socket unit,
+> mirroring `systemd.sockets.docker`), so members of the `microbe` group can
+> drive provisioning **without any shell-level privilege** — no sudoers, no
+> setuid, no capability grants. Operations are idempotent: netlink link
+> lookup errors (`LinkNotFound`) trigger create; addresses are replaced; DNAT
+> rules are checked before install. Teardown is best-effort (delete errors
+> ignored). The CLI builds bridge/tap/DNAT specs from `flakegen.Stack` (same
+> `TapID` source as the renderer), gated behind package-level seams
+> (`provisionHost` / `teardownHost`) so the cmd layer is testable without
+> root or a daemon. Runners launch as detached processes (Setpgid + Release)
+> with CWD `.microbe/runs/<svc>` (the runner script drops `microvm.sock` in
+> CWD) and log to `.microbe/logs/<svc>.log`. Volume qcow2 images use
+> `qemu-img create -f qcow2 -o size=<MiB>M` only when absent, at
+> `.microbe/volumes/<stack>/<name>.qcow2`. State is written atomically
+> (temp+rename) to `.microbe/state.json` with the §9.4 shape. The daemon
+> requires root; the CLI never does. `--dry-run` prints the intended
+> provisioning actions and never contacts the daemon or starts anything.
 >
 > **Git-resolution gotcha (M3/M4)**: `.microbe/` is gitignored, but a flake
 > path input inside a git repo is resolved via git, so a direct `nix build`
@@ -602,8 +613,8 @@ Global flags:
 ```
 
 Exit codes: `0` success, `1` operational error, `2` config/validation error,
-`3` dependency-start failure, `4` missing prerequisite (no `nix`, no root for
-networking, host arch mismatch).
+`3` dependency-start failure, `4` missing prerequisite (no `nix`, daemon
+unreachable for provisioning, host arch mismatch).
 
 ---
 
@@ -632,11 +643,18 @@ microbe/
 │   │   ├── store.go           # state.json (§9.4)
 │   │   └── store_test.go
 │   ├── hostnet/
-│   │   ├── bridge.go          # create/delete bridge, taps
-│   │   ├── dnat.go            # iptables rules for port publishing
-│   │   ├── ipalloc.go         # subnet IP allocator (§8.6)
-│   │   ├── ipalloc_test.go
-│   │   └── iface_unix.go      # netlink or `ip` command wrapper
+│   │   ├── plan.go             # IP/MAC allocation (§8.6), spec derivation
+│   │   ├── spec.go             # NetSpec / TapSpec / PortSpec, BridgeName
+│   │   ├── plan_test.go
+│   │   └── spec_test.go
+│   ├── provisiond/             # root daemon (docker-style, §13.1)
+│   │   ├── protocol.go         # request/response types over the socket
+│   │   ├── netops.go           # netlink bridge/tap/addr (§8.6)
+│   │   ├── nft.go              # nftables DNAT for port publishing
+│   │   ├── server.go           # unix socket listener, dispatch
+│   │   ├── client.go           # CLI-side client (dial, call)
+│   │   ├── server_test.go
+│   │   └── client_test.go
 │   ├── runtime/
 │   │   ├── runner.go          # discover/exec microvm-run scripts
 │   │   ├── up.go, down.go, ps.go, logs.go, exec.go
@@ -654,8 +672,9 @@ microbe/
 
 Dependencies (keep minimal):
 - `github.com/spf13/cobra` — CLI framework.
-- `github.com/samber/lo` or stdlib only (prefer stdlib).
-- `github.com/vishvananda/netlink` — bridge/tap setup (falls back to `ip`).
+- `github.com/vishvananda/netlink` — bridge/tap/address setup (pure Go, no `ip`).
+- `github.com/google/nftables` — nftables DNAT via netlink (no `iptables`).
+- `golang.org/x/sys` — transitive netlink dependency.
 - `gopkg.in/yaml.v3` only if/when a docker-compose adapter lands.
 
 ---
@@ -692,14 +711,18 @@ Dependencies (keep minimal):
 
 ## 13. Security & Safety
 
-- Bridges/taps/DNAT require root. CLI uses `sudo`-style privilege helpers and
-  fails fast with clear messages when capabilities are missing; documents the
-  required setcap or systemd-udevd setup.
+- Bridges/taps/DNAT require root, but **only the `microbe-provisiond` daemon
+  holds that privilege** (§13.1). The CLI runs unprivileged and reaches the
+  daemon through a `root:microbe` mode-`0660` unix socket. Members of the
+  `microbe` group get network administration for declared stacks — the same
+  trust model as the `docker` group — but never gain shell-level
+  privilege: no sudoers rules, no setuid, no capabilities. If the daemon is
+  unreachable or missing, the CLI fails fast with a clear message.
 
 ### 13.1 Host NixOS module (`modules/host.nix`)
 
-A host that runs microbe needs kernel/networking readiness, the tools the CLI
-shells out to, and device access. The flake ships a NixOS module,
+A host that runs microbe needs kernel/networking readiness, a root
+provisioning daemon, and device access. The flake ships a NixOS module,
 `nixosModules.host` (option namespace `virtualisation.microbe`, modeled after
 `virtualisation/docker.nix`):
 
@@ -708,13 +731,20 @@ shells out to, and device access. The flake ships a NixOS module,
   feature).
 - **Sysctls** (priority 98, so user config can override): `net.ipv4.ip_forward`
   + per-interface forwarding, and `net.bridge.bridge-nf-call-{ip,ip6}tables` so
-  the iptables DNAT that publishes VM ports sees bridged traffic.
-- **Packages**: `iproute2`, `iptables`, `qemu-utils` (`qemu-img` for VM volume
-  images), plus the `microbe` CLI when `virtualisation.microbe.package` is set
-  (the flake sets it to `packages.<system>.microbe`).
+  the nftables DNAT that publishes VM ports sees bridged traffic.
+- **Packages**: `qemu-utils` (`qemu-img` for VM volume images), plus the
+  `microbe` CLI when `virtualisation.microbe.package` is set (the flake sets it
+  to `packages.<system>.microbe`). No `ip`/`iptables` userspace is required:
+  the daemon does netlink itself.
+- **Provisioning daemon** (docker-style): a `systemd.sockets.microbe` unit
+  owns `/run/microbe.sock` (`SocketUser=root`, `SocketGroup=microbe`,
+  `SocketMode=0660`), and a `systemd.services.microbe-provisiond` root unit
+  runs `microbe provisiond` (socket-activated) which applies bridge/tap/DNAT
+  ops via netlink. Mirrors `systemd.sockets.docker` / `dockerd`.
 - **Device access**: `microbe` and `kvm` groups; udev rules granting them
   `/dev/net/tun` and `/dev/kvm`; `virtualisation.microbe.users` adds named
-  users to both groups. Bridge/tap/iptables provisioning still needs root.
+  users to both groups. Device nodes are the only host resources the group
+  touches directly; all network provisioning goes through the daemon socket.
 - The module is inert unless `virtualisation.microbe.enable = true`. The
   ISO target in the repo flake enables it.
 
