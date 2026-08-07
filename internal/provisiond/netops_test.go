@@ -36,6 +36,21 @@ func TestTapLinkOwnership(t *testing.T) {
 	}
 }
 
+// TestTapNeedsRecreate is the red-green gate for tap ownership reconciliation:
+// a tap created by a pre-25b85b3 CLI (or any foreign owner) is root-owned and
+// must be recreated so cloud-hypervisor (running as the invoking uid) can
+// attach via TUNSETIFF; a tap already owned by the spec's uid must be kept.
+func TestTapNeedsRecreate(t *testing.T) {
+	spec := hostnet.TapSpec{Name: "mvc-test", Owner: 1000}
+
+	if !tapNeedsRecreate(spec, &netlink.Tuntap{Owner: 0}) {
+		t.Error("root-owned tap (Owner=0) vs spec Owner=1000: want recreate")
+	}
+	if tapNeedsRecreate(spec, &netlink.Tuntap{Owner: 1000}) {
+		t.Error("tap already owned by spec Owner=1000: want keep")
+	}
+}
+
 // TestIsLinkNotFound is the red-green gate for the bridge/tap "create if
 // missing" path. netlink.LinkByName returns LinkNotFoundError by VALUE (not
 // pointer), so matching with errors.As against *LinkNotFoundError silently

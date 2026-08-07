@@ -67,6 +67,14 @@ func (NetOps) EnsureTaps(taps []hostnet.TapSpec) error {
 			if err := netlink.LinkAdd(link); err != nil {
 				return fmt.Errorf("provisiond: create tap %s: %w", t.Name, err)
 			}
+		} else if tap, ok := link.(*netlink.Tuntap); !ok || tapNeedsRecreate(t, tap) {
+			if err := netlink.LinkDel(link); err != nil {
+				return fmt.Errorf("provisiond: delete stale tap %s: %w", t.Name, err)
+			}
+			link = tapLink(t)
+			if err := netlink.LinkAdd(link); err != nil {
+				return fmt.Errorf("provisiond: recreate tap %s: %w", t.Name, err)
+			}
 		}
 		master, err := netlink.LinkByName(t.Bridge)
 		if err != nil {
@@ -104,6 +112,13 @@ func delLinkByName(name string) error {
 		return err
 	}
 	return netlink.LinkDel(link)
+}
+
+// tapNeedsRecreate reports whether an existing tap's owner diverges from the
+// spec: a mismatch means it was created by a different (often root) caller
+// and must be deleted + recreated so the spec's uid can attach to it.
+func tapNeedsRecreate(spec hostnet.TapSpec, existing *netlink.Tuntap) bool {
+	return existing.Owner != uint32(spec.Owner)
 }
 
 // tapLink builds a persistent tap device the VM process can reopen: root's
