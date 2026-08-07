@@ -87,6 +87,11 @@ func TapID(stack, svc, net string) string {
 	return "mvc-" + hex.EncodeToString(sum[:])[:11]
 }
 
+// Names returns the sorted service names in the stack.
+func (st *Stack) Names() []string {
+	return sortedServiceNames(st)
+}
+
 // Hosts returns the /etc/hosts entries shared by every guest, ordered by
 // service then network.
 func (st *Stack) Hosts() []Host {

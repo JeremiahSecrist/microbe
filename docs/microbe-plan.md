@@ -307,11 +307,16 @@ For each `attach` to network `N`:
 ```
 microvm.interfaces += {
   type = "tap";
-  id   = "mvc-<stack>-<svc>-<N>";   # host tap name
-  mac  = <assigned MAC>;            # 02:00:00:00:00:xx, from generated.nix
+  id   = <tap id>;              # host tap name, from generated.nix (§9.2)
+  mac  = <assigned MAC>;        # 02:00:00:00:00:xx, from generated.nix
   # tap.vhost default off (v1)
 };
 ```
+
+- **Tap ids are ≤15 chars** (Linux `IFNAMSIZ`). The CLI computes
+  `mvc-<stack>-<svc>-<N>` when it fits, else a deterministic
+  `mvc-` + 11 hex chars of `sha256(stack-svc-net)`. The renderer reads the id
+  from `gen.taps` so the host side (CLI provisioning) and guest side agree.
 
 - **Host side** (CLI, not Nix): bridge `br-<stack>-<N>`; tap `mvc-...` enslaved;
   bridge IP = gateway (`<subnet> .1`).
@@ -440,10 +445,16 @@ no firewall on managed networks, journald streaming socket for `logs`.
       prefix  = { backend = 24; };
       hosts = [ { ip = "192.168.51.2"; names = [ "db" "db.backend" ]; } ];
       networkd = { /* exact systemd.network attrset, §8.3 */ };
+      taps = { backend = "mvc-<stack>-<svc>-<net>"; };  # ≤15 chars, see §8.2
     };
   };
 }
 ```
+
+> **Implementation note (M2)**: tap ids are computed by the CLI (see §8.2) so
+> the host provisioning and the guest config always agree; the renderer reads
+> `gen.taps` rather than re-deriving the name.
+
 
 ### 9.3 Generated flake (rendered by text/template)
 
@@ -452,22 +463,33 @@ no firewall on managed networks, journald streaming socket for `logs`.
   inputs = { nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
              microvm.url = "github:microvm-nix/microvm.nix"; };
   outputs = { nixpkgs, microvm, ... }:
-    let system = "x86_64-linux";
-        mkSvc = name:
-          nixpkgs.lib.nixosSystem {
-            inherit system;
-            modules = [
-              microvm.nixosModules.microvm
-              ./modules/renderer.nix
-              ./modules/guest-base.nix
-              ./modules/${name}.nix
-              (import ./microbe.nix)   # R4: native render view
-              ./generated.nix
-            ];
-          };
-    in { nixosConfigurations = builtins.mapAttrs (_: mkSvc) <services>; };
+    let
+      system = "x86_64-linux";
+      compose = import ./microbe.nix;          # native render view (R4)
+      mkSvc = name:
+        nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [
+            microvm.nixosModules.microvm
+            ./modules/renderer.nix
+            ./modules/guest-base.nix
+            ./modules/${name}.nix
+            (compose.services.${name}.config or ({ ... }: { }))  # user NixOS module
+          ];
+        };
+    in { nixosConfigurations = builtins.mapAttrs (name: _: mkSvc name) <services>; };
 }
 ```
+
+> **Implementation notes (M2, verified against microvm.nix)**:
+> - `builtins.mapAttrs` must pass the attr name, not the (null) value:
+>   `(name: _: mkSvc name)`. The plan's original `(_: mkSvc)` passed `null`.
+> - The user's compose file cannot be a NixOS module directly (`services.*`
+>   clashes with NixOS options), so the flake imports it, extracts
+>   `compose.services.${name}.config` as the service's NixOS module, and the
+>   renderer (which imports `./microbe.nix` + `./generated.nix` itself) maps
+>   the rest.
+
 
 Per-service module `modules/<svc>.nix` sets `microCompose.serviceName` (an
 option owned by the renderer) so the renderer picks the right slice of the
