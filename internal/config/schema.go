@@ -14,31 +14,31 @@ type Network struct {
 }
 
 type Service struct {
-	VCPUs       int          `json:"vcpu"`
-	Mem         int          `json:"mem"`
-	Hypervisor  string       `json:"hypervisor"`
-	Config      interface{}  `json:"config"`
-	Volumes     []Volume     `json:"volumes"`
-	Networks    []Attach     `json:"networks"`
-	Ports       []string     `json:"ports"`
-	DependsOn   []string     `json:"dependsOn"`
-	Healthcheck *Healthcheck `json:"healthcheck"`
+	VCPUs         int          `json:"vcpu"`
+	Mem           int          `json:"mem"`
+	Hypervisor    string       `json:"hypervisor"`
+	ConfigPresent bool         `json:"configPresent,omitempty"`
+	Volumes       []Volume     `json:"volumes,omitempty"`
+	Networks      []Attach     `json:"networks,omitempty"`
+	Ports         []string     `json:"ports,omitempty"`
+	DependsOn     []string     `json:"dependsOn,omitempty"`
+	Healthcheck   *Healthcheck `json:"healthcheck,omitempty"`
 }
 
 type Volume struct {
 	Type     string `json:"type"`
-	Name     string `json:"name"`
+	Name     string `json:"name,omitempty"`
 	Target   string `json:"target"`
-	Size     string `json:"size"`
-	Host     string `json:"host"`
-	Mode     string `json:"mode"`
-	Protocol string `json:"protocol"`
-	FsType   string `json:"fsType"`
+	Size     string `json:"size,omitempty"`
+	Host     string `json:"host,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+	FsType   string `json:"fsType,omitempty"`
 }
 
 type Attach struct {
 	Name string `json:"name"`
-	IP   string `json:"ip"`
+	IP   string `json:"ip,omitempty"`
 }
 
 func (a *Attach) UnmarshalJSON(b []byte) error {

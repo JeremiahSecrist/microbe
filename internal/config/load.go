@@ -3,6 +3,8 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 )
 
 const (
@@ -54,5 +56,15 @@ func applyDefaults(c *Compose) {
 }
 
 func Load(path string) (*Compose, error) {
-	return nil, fmt.Errorf("config: not implemented yet")
+	var data []byte
+	var err error
+	if strings.HasSuffix(path, ".nix") {
+		data, err = Eval(path)
+	} else {
+		data, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return Parse(data)
 }
