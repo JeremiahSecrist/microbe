@@ -80,6 +80,7 @@ in
 
       environment.systemPackages = [
         pkgs.qemu-utils # qemu-img for VM volume images
+        pkgs.e2fsprogs # mkfs.ext4 to format them (EnsureVolume, unprivileged)
       ] ++ optionals (cfg.package != null) [ cfg.package ];
 
       users.groups.microbe = { };
