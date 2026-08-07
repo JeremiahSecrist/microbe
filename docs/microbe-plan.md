@@ -1,4 +1,4 @@
-# micro-compose — Docker-Compose-Style Orchestration for microvm.nix
+# microbe — Docker-Compose-Style Orchestration for microvm.nix
 
 Status: **Draft for review** · Version 2.0 (supersedes v1; adds formal schema + microvm.nix integration spec)
 Date: 2026-08-07
@@ -12,8 +12,8 @@ What is missing today is *orchestration of multiple VMs as a unit*: shared
 virtual networks, persistent volumes that survive reboots, startup ordering,
 port publishing, and a stack-level lifecycle (`up` / `down` / `ps` / `logs`).
 
-This project adds a **Go CLI** named `micro-compose` that treats microvm.nix
-the way docker-compose treats Docker: one declarative file (`micro-compose.nix`)
+This project adds a **Go CLI** named `microbe` that treats microvm.nix
+the way docker-compose treats Docker: one declarative file (`microbe.nix`)
 describes a stack of VMs, and the CLI renders, provisions, and manages them.
 
 Key design decision: **the config file is written in Nix**, not YAML/JSON.
@@ -23,7 +23,7 @@ out to `nix-instantiate --eval --json` to lower the config to JSON, then
 orchestrates from that.
 
 **This document is the authoritative reference** for (a) the structure of
-`micro-compose.nix` and (b) how that structure integrates into microvm.nix.
+`microbe.nix` and (b) how that structure integrates into microvm.nix.
 Sections §4–§9 form the formal specification; the rest are project goals,
 UX, and execution plan.
 
@@ -33,7 +33,7 @@ UX, and execution plan.
 
 | # | Goal |
 |---|------|
-| G1 | Declare an entire multi-VM stack in one `micro-compose.nix` file. |
+| G1 | Declare an entire multi-VM stack in one `microbe.nix` file. |
 | G2 | `up` / `down` / `ps` / `logs` / `exec` lifecycle for the whole stack. |
 | G3 | Named, persistent block-device volumes (survive `down` / `up`). |
 | G4 | Host-path shares (virtiofs / 9p) for bidirectional file exchange. |
@@ -56,11 +56,11 @@ Non-goals for v1 (candidates for v2):
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                        user terminal                          │
-│                       micro-compose <cmd>                     │
+│                       microbe <cmd>                     │
 └───────────────────────────┬──────────────────────────────────┘
                             │
 ┌───────────────────────────▼──────────────────────────────────┐
-│                        Go CLI  (micro-compose)                │
+│                        Go CLI  (microbe)                │
 │                                                               │
 │  ┌──────────────┐  ┌──────────────┐  ┌────────────────────┐   │
 │  │  config load │  │ state store  │  │  orchestrator      │   │
@@ -82,13 +82,13 @@ Non-goals for v1 (candidates for v2):
 
 Three layers:
 
-1. **Config layer** — reads `micro-compose.nix`, evaluates its orchestration
+1. **Config layer** — reads `microbe.nix`, evaluates its orchestration
    projection to JSON via `nix-instantiate --eval --json` (§4), validates
    against a Go schema (§6), and exposes a typed model to the rest of the CLI.
 2. **Provisioning layer** — renders (a) a NixOS flake containing one `microvm`
    config per service (§8), (b) host-side network setup (bridges, taps, DNAT),
    (c) volume files (qcow2 disks) and share directories. Generated files live
-   under `.micro-compose/` (gitignored).
+   under `.microbe/` (gitignored).
 3. **Runtime layer** — starts/stops the runners produced by
    `microvm.declaredRunner` for each service, tracks state (§12), streams logs.
 
@@ -104,7 +104,7 @@ therefore gives the file **two evaluation contexts**. This is the core
 architectural decision of the project.
 
 ```
-                          micro-compose.nix
+                          microbe.nix
                           ┌──────────────────────┐
                           │  networks            │
                           │  services.<n>.config │ ← NixOS modules (functions, paths)
@@ -118,7 +118,7 @@ architectural decision of the project.
    ORCHESTRATION VIEW                                RENDER VIEW
    (JSON wire schema, §5)                         (native Nix, §4.x)
               │                                             │
-   nix-instantiate --eval --json                  import ./micro-compose.nix
+   nix-instantiate --eval --json                  import ./microbe.nix
    with `config` PROJECTED OUT                    inside the generated flake,
    (existence only: configPresent)                so guest modules stay alive
               │                                             │
@@ -126,7 +126,7 @@ architectural decision of the project.
    ┌──────────────────────┐                  ┌──────────────────────────┐
    │  Go CLI:             │                  │  generated stack flake:  │
    │  · validate          │                  │  nixosConfigurations.<svc>│
-   │  · allocate IPs/MACs │── generated.nix ─▶│  imports micro-compose.nix│
+   │  · allocate IPs/MACs │── generated.nix ─▶│  imports microbe.nix│
    │  · build host nets   │  (bridge, §8.2)   │  + renderer + guest-base │
    │  · manage lifecycle  │                  └──────────────────────────┘
    └──────────────────────┘
@@ -134,7 +134,7 @@ architectural decision of the project.
 
 ### 4.1 Rules
 
-**R1 — File form.** `micro-compose.nix` is either a plain attribute set or a
+**R1 — File form.** `microbe.nix` is either a plain attribute set or a
 function `{ lib, ... } -> attribute set`. The CLI applies it with a pinned
 `lib` (from nixpkgs) when it is a function.
 
@@ -152,7 +152,7 @@ unmodified, so they may be inline lambdas, `import`ed paths, or any module
 value the guest accepts.
 
 **R5 — Communication.** The only data the CLI passes back into Nix is
-`.micro-compose/generated.nix` (§8.2): per-service MACs, CIDs, IPs, gateway,
+`.microbe/generated.nix` (§8.2): per-service MACs, CIDs, IPs, gateway,
 hosts table, and rendered networkd units, written as a plain attrset of
 JSON-safe values. No rendered logic flows through JSON.
 
@@ -372,9 +372,9 @@ microvm.shares += {
 ```
 
 - `source` may be absolute or relative to `/var/lib/microvms/$hostName`;
-  the CLI resolves relative `host` to an absolute path under `.micro-compose/shares/`.
+  the CLI resolves relative `host` to an absolute path under `.microbe/shares/`.
 - `virtiofs` requires the virtiofsd socket wiring; the renderer emits the
-  per-share `socket` path under `.micro-compose/sockets/` and the CLI starts
+  per-share `socket` path under `.microbe/sockets/` and the CLI starts
   virtiofsd alongside the runner (mirrors `microvm-virtiofsd@.service`).
 
 ### 8.6 Networks (orchestration, host side)
@@ -412,7 +412,7 @@ no firewall on managed networks, journald streaming socket for `logs`.
 ### 9.1 Layout
 
 ```
-.micro-compose/
+.microbe/
 ├── flake.nix                    ; generated per stack
 ├── modules/
 │   ├── renderer.nix             ; fixed: compose → microvm mapping (imports generated.nix + user file)
@@ -461,7 +461,7 @@ no firewall on managed networks, journald streaming socket for `logs`.
               ./modules/renderer.nix
               ./modules/guest-base.nix
               ./modules/${name}.nix
-              (import ./micro-compose.nix)   # R4: native render view
+              (import ./microbe.nix)   # R4: native render view
               ./generated.nix
             ];
           };
@@ -492,7 +492,7 @@ compose file and generated data.
       "volumes": ["db-data"],
       "status": "running",
       "pid": 4242,
-      "runner": ".micro-compose/runners/db"
+      "runner": ".microbe/runners/db"
     }
   },
   "ports": { "5432": { "svc": "db", "guest": 5432 } }
@@ -502,7 +502,7 @@ compose file and generated data.
 ### 9.5 `up` lifecycle walkthrough
 
 1. **Load**: eval orchestration projection → JSON → validate (§5–§7).
-2. **Render**: write `.micro-compose/` flake + modules + `generated.nix`
+2. **Render**: write `.microbe/` flake + modules + `generated.nix`
    (idempotent).
 3. **Build**: `nix build` each service's runner (cache-friendly; unchanged
    config → store hits).
@@ -528,7 +528,7 @@ disks + state. `down --remove-volumes` also deletes qcow2 disks.
 ## 10. CLI Surface
 
 ```
-micro-compose [global flags] <command>
+microbe [global flags] <command>
 
 Commands:
   up        [--build] [--no-provision] [services...]
@@ -547,7 +547,7 @@ Commands:
   version
 
 Global flags:
-  -f, --file PATH   Compose file (default ./micro-compose.nix)
+  -f, --file PATH   Compose file (default ./microbe.nix)
   -v, --verbose     Verbose output
   --dry-run         Print what would happen without doing it
 ```
@@ -561,8 +561,8 @@ networking, host arch mismatch).
 ## 11. Go Project Layout
 
 ```
-micro-compose/
-├── go.mod                     # module micro-compose; Go 1.22+
+microbe/
+├── go.mod                     # module microbe; Go 1.22+
 ├── main.go                    # entry: cobra root command
 ├── internal/
 │   ├── config/
@@ -600,7 +600,7 @@ micro-compose/
 │       └── common.go          # flags, context, spinner
 └── test/
     ├── integration/           # real-VM smoke tests (tag: integration)
-    └── fixtures/              # sample micro-compose.nix files
+    └── fixtures/              # sample microbe.nix files
 ```
 
 Dependencies (keep minimal):
@@ -647,7 +647,7 @@ Dependencies (keep minimal):
   fails fast with clear messages when capabilities are missing; documents the
   required setcap or systemd-udevd setup.
 - All state/config paths stay inside the project dir; no writes outside
-  `.micro-compose/` except host network changes.
+  `.microbe/` except host network changes.
 - Passwords/secrets: guest configs should use `users.users.<u>.hashedPassword`
   or keys; CLI never injects plaintext passwords into rendered files.
 - The generated guest modules must **not** allow the VM to escape to host
@@ -665,7 +665,7 @@ Dependencies (keep minimal):
 - Build errors: surface the `nix build` failure excerpt (last N lines) with the
   service name; exit code 1.
 - Runtime errors: include service name, PID, and last log tail; suggest
-  `micro-compose logs <svc>`.
+  `microbe logs <svc>`.
 - All commands are `--dry-run`-able and idempotent where sensible.
 - `ps` shows: service, status (starting/running/healthy/degraded/stopped),
   UPTIME, IPs, ports.
@@ -700,8 +700,8 @@ rendered modules build.
 
 | Milestone | Scope | Exit criteria |
 |-----------|-------|---------------|
-| **M1 — Config & eval** | schema structs (§5), projection eval (§4), validation (§7), `config` command | `micro-compose config` prints validated JSON for the sample file. |
-| **M2 — Render & build** | flake/module templates (§9), `build` command | `micro-compose build` produces runner derivations for db+web. |
+| **M1 — Config & eval** | schema structs (§5), projection eval (§4), validation (§7), `config` command | `microbe config` prints validated JSON for the sample file. |
+| **M2 — Render & build** | flake/module templates (§9), `build` command | `microbe build` produces runner derivations for db+web. |
 | **M3 — Host net** | bridges, taps, IP alloc, DNAT (§8.6) | Manual `ip link` inspection shows bridge+taps; ports reachable. |
 | **M4 — Lifecycle** | `up`/`down`/`ps` | Single-VM `up`/`down` works end-to-end; volumes persist. |
 | **M5 — Multi-VM** | dependsOn, health, name resolution (§8.7) | db+web stack up; `web` reaches `db` by hostname; web gated on db health. |
@@ -730,7 +730,7 @@ rendered modules build.
 6. **Nix eval performance**: `nix-instantiate` on large configs per command
    run; consider caching the evaluated JSON keyed by file hash.
 7. **docker-compose adapter**: parse an existing `docker-compose.yml` into a
-   `micro-compose.nix` (mapping images→nixos modules is lossy). Best-effort
+   `microbe.nix` (mapping images→nixos modules is lossy). Best-effort
    converter in v2?
 8. **`mem`/`vcpu` defaults and overcommit**: default the same as microvm.nix
    (no overcommit) vs docker-style overcommit (all VMs declared, host may be

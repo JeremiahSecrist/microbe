@@ -14,7 +14,7 @@ var (
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "micro-compose",
+		Use:   "microbe",
 		Short: "Docker-compose-style orchestration for microvm.nix",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			if verbose {
@@ -22,7 +22,7 @@ func newRootCmd() *cobra.Command {
 			}
 		},
 	}
-	root.PersistentFlags().StringVarP(&file, "file", "f", "micro-compose.nix", "compose file path")
+	root.PersistentFlags().StringVarP(&file, "file", "f", "microbe.nix", "compose file path")
 	root.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	root.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "print actions without executing")
 

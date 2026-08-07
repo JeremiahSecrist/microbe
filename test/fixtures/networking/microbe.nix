@@ -1,4 +1,4 @@
-# Canonical networking test fixture for micro-compose.
+# Canonical networking test fixture for microbe.
 #
 # Target behavior (the spec this test suite is committed to):
 #   - db    on backend  with static IP 192.168.51.2, published port 5432

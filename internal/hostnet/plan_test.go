@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"micro-compose/internal/config"
+	"microbe/internal/config"
 )
 
 const fixture = "../../test/fixtures/networking/projection.json"

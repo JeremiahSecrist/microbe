@@ -6,5 +6,5 @@
 *.test
 coverage.out
 
-# micro-compose runtime artifacts
-/.micro-compose/
+# microbe runtime artifacts
+/.microbe/

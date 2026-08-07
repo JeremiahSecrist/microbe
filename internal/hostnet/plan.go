@@ -5,8 +5,8 @@ import (
 	"net/netip"
 	"sort"
 
-	"micro-compose/internal/config"
-	"micro-compose/internal/netutil"
+	"microbe/internal/config"
+	"microbe/internal/netutil"
 )
 
 type NetworkPlan struct {

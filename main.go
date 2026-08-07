@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"micro-compose/internal/cmd"
+	"microbe/internal/cmd"
 )
 
 func main() {

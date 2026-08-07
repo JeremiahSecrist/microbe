@@ -1,4 +1,4 @@
-module micro-compose
+module microbe
 
 go 1.25.4
 

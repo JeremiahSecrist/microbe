@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"micro-compose/internal/netutil"
+	"microbe/internal/netutil"
 )
 
 var nameRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
