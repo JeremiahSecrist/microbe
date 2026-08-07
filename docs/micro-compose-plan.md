@@ -1,6 +1,6 @@
 # micro-compose — Docker-Compose-Style Orchestration for microvm.nix
 
-Status: **Draft for review**
+Status: **Draft for review** · Version 2.0 (supersedes v1; adds formal schema + microvm.nix integration spec)
 Date: 2026-08-07
 
 ---
@@ -21,6 +21,11 @@ Nix is already the language of this stack and gives us module reuse, functions,
 and build-time guarantees. The Go CLI does **not** parse Nix itself; it shells
 out to `nix-instantiate --eval --json` to lower the config to JSON, then
 orchestrates from that.
+
+**This document is the authoritative reference** for (a) the structure of
+`micro-compose.nix` and (b) how that structure integrates into microvm.nix.
+Sections §4–§9 form the formal specification; the rest are project goals,
+UX, and execution plan.
 
 ---
 
@@ -77,199 +82,450 @@ Non-goals for v1 (candidates for v2):
 
 Three layers:
 
-1. **Config layer** — reads `micro-compose.nix`, evaluates it to JSON via
-   `nix-instantiate --eval --json`, validates against a Go schema, and exposes
-   a typed model to the rest of the CLI.
-2. **Provisioning layer** — generates (a) a NixOS flake containing one
-   `microvm` config per service, (b) host-side network setup (bridges, taps),
-   (c) volume files (qcow2 disks) and share directories. Puts the generated
-   files in the project's `.micro-compose/` dir (gitignored).
+1. **Config layer** — reads `micro-compose.nix`, evaluates its orchestration
+   projection to JSON via `nix-instantiate --eval --json` (§4), validates
+   against a Go schema (§6), and exposes a typed model to the rest of the CLI.
+2. **Provisioning layer** — renders (a) a NixOS flake containing one `microvm`
+   config per service (§8), (b) host-side network setup (bridges, taps, DNAT),
+   (c) volume files (qcow2 disks) and share directories. Generated files live
+   under `.micro-compose/` (gitignored).
 3. **Runtime layer** — starts/stops the runners produced by
-   `microvm.declaredRunner` for each service, tracks state, streams logs.
+   `microvm.declaredRunner` for each service, tracks state (§12), streams logs.
 
 ---
 
-## 4. The Config Schema (`micro-compose.nix`)
+# Part A — Formal specification
 
-The file is a Nix attribute set with three top-level keys: `name`, `networks`,
-and `services`. Full sample below (same one presented for review, kept as the
-canonical example).
+## 4. Dual Evaluation Model
+
+The compose file contains values that **cannot** cross a JSON boundary
+(NixOS module functions, `import` paths referencing `pkgs`). The design
+therefore gives the file **two evaluation contexts**. This is the core
+architectural decision of the project.
+
+```
+                          micro-compose.nix
+                          ┌──────────────────────┐
+                          │  networks            │
+                          │  services.<n>.config │ ← NixOS modules (functions, paths)
+                          │  services.<n>.vcpu   │
+                          │  services.<n>.volumes│
+                          │  ...                 │
+                          └──────────┬───────────┘
+                                     │
+              ┌──────────────────────┴──────────────────────┐
+              │                                             │
+   ORCHESTRATION VIEW                                RENDER VIEW
+   (JSON wire schema, §5)                         (native Nix, §4.x)
+              │                                             │
+   nix-instantiate --eval --json                  import ./micro-compose.nix
+   with `config` PROJECTED OUT                    inside the generated flake,
+   (existence only: configPresent)                so guest modules stay alive
+              │                                             │
+              ▼                                             ▼
+   ┌──────────────────────┐                  ┌──────────────────────────┐
+   │  Go CLI:             │                  │  generated stack flake:  │
+   │  · validate          │                  │  nixosConfigurations.<svc>│
+   │  · allocate IPs/MACs │── generated.nix ─▶│  imports micro-compose.nix│
+   │  · build host nets   │  (bridge, §8.2)   │  + renderer + guest-base │
+   │  · manage lifecycle  │                  └──────────────────────────┘
+   └──────────────────────┘
+```
+
+### 4.1 Rules
+
+**R1 — File form.** `micro-compose.nix` is either a plain attribute set or a
+function `{ lib, ... } -> attribute set`. The CLI applies it with a pinned
+`lib` (from nixpkgs) when it is a function.
+
+**R2 — Projection.** In the orchestration view, every `services.<n>.config`
+value is replaced by the boolean `configPresent`. All other fields must be
+JSON-serializable. Evaluation of the projection must not force `config`.
+
+**R3 — No double force.** The orchestration projection evaluates the whole
+file, so top-level values other than `config` must be finite data. User code
+runs only inside `config` values, which are never forced in this context.
+
+**R4 — Native consumption.** In the render view the file is `import`ed as a
+NixOS module input. `config` values are passed to the module system
+unmodified, so they may be inline lambdas, `import`ed paths, or any module
+value the guest accepts.
+
+**R5 — Communication.** The only data the CLI passes back into Nix is
+`.micro-compose/generated.nix` (§8.2): per-service MACs, CIDs, IPs, gateway,
+hosts table, and rendered networkd units, written as a plain attrset of
+JSON-safe values. No rendered logic flows through JSON.
+
+---
+
+## 5. Wire Schema (orchestration view)
+
+The orchestration projection, formally:
+
+```abnf
+compose       = "{" "schemaVersion" ":" version
+                "name" ":" string
+                "networks" ":" networks
+                "services" ":" services "}"
+
+version       = %x31                 ; literal 1
+
+networks      = "{" *( name ":" network ) "}"
+network       = "{" "subnet" ":" cidr "}"
+
+services      = "{" *( name ":" service ) "}"
+service       = "{" [ "vcpu" ":" integer ]
+                    [ "mem" ":" integer ]
+                    [ "hypervisor" ":" hypervisor ]
+                    [ "configPresent" ":" boolean ]
+                    [ "volumes" ":" "[" *( volume ) "]" ]
+                    [ "networks" ":" "[" *( attach ) "]" ]
+                    [ "ports" ":" "[" *( port-map ) "]" ]
+                    [ "dependsOn" ":" "[" *( name ) "]" ]
+                    [ "healthcheck" ":" healthcheck ] "}"
+
+hypervisor    = "cloud-hypervisor" / "qemu" / "firecracker"
+
+volume        = disk / share
+disk          = "{" "type" ":" "disk"
+                    "name" ":" string
+                    "target" ":" string
+                    "size" ":" size
+                    [ "fsType" ":" string ] "}"
+share         = "{" "type" ":" "share"
+                    "host" ":" string
+                    "target" ":" string
+                    [ "mode" ":" ( "ro" / "rw" ) ]
+                    [ "protocol" ":" ( "9p" / "virtiofs" ) ] "}"
+
+attach        = "{" "name" ":" name [ "ip" ":" ip-addr ] "}"
+
+port-map      = ip-or-empty ":" port ":" port     ; "8080:80"
+              / ip-or-empty ":" port ":" port "/" proto
+
+healthcheck   = "{" [ "interval" ":" duration ]
+                    [ "timeout" ":" duration ]
+                    [ "startPeriod" ":" duration ]
+                    [ "command" ":" "[" *( string ) "]" ] "}"
+
+cidr          = ip-addr "/" prefix
+ip-addr       = 1*3DIGIT "." 1*3DIGIT "." 1*3DIGIT "." 1*3DIGIT
+prefix        = 1*2DIGIT            ; 16..30 for managed networks
+size          = integer *( "K" / "M" / "G" / "T" )   ; "20G", "512M"
+duration      = integer *( "ms" / "s" / "m" )
+name          = 1*( ALPHA / DIGIT / "-" / "_" )
+```
+
+### 5.1 Field defaults (applied by the CLI when absent)
+
+| Field | Default | Notes |
+|-------|---------|-------|
+| `schemaVersion` | `1` | Reject files with unknown versions. |
+| `services.<n>.vcpu` | `1` | |
+| `services.<n>.mem` | `512` | MiB. |
+| `services.<n>.hypervisor` | `cloud-hypervisor` | Per-service override allowed. |
+| `services.<n>.volumes` | `[]` | |
+| `services.<n>.networks` | `[]` | A service may have no network. |
+| `services.<n>.ports` | `[]` | Requires ≥1 network. |
+| `services.<n>.dependsOn` | `[]` | |
+| `services.<n>.healthcheck` | absent | Absent ⇒ no readiness gate. |
+| `volume.share.mode` | `rw` | |
+| `volume.share.protocol` | `9p` | Matches microvm.nix default. |
+| `volume.disk.fsType` | `ext4` | |
+| `healthcheck.interval` | `5s` | |
+| `healthcheck.timeout` | `2s` | |
+| `healthcheck.startPeriod` | `10s` | |
+
+---
+
+## 6. Nix DSL Surface
+
+The user-facing file may use sugar that the orchestration projection
+normalizes:
+
+| Surface | Normalizes to |
+|---------|---------------|
+| `services.<n>.networks = [ "frontend" "backend" ]` (list of strings) | `networks = [{ name = "frontend"; } { name = "backend"; }]` |
+| `services.<n>.config = ./services/web.nix` (path) | `configPresent = true` in projection; path kept in render view. |
+| `services.<n>.config = { pkgs, ... }: { ... }` (inline lambda) | `configPresent = true`; never serialized. |
+| Omitted `ip` in an attach | CLI allocates next free host (stateful, §9.6). |
+| `networks.<n>` value may be `{ subnet = ...; }` | unchanged |
+
+Forbidden in the file (validation errors):
+- Top-level keys other than `name`, `networks`, `services`, `schemaVersion`.
+- Non-string keys; empty `name`; reserved `name` values (`host`, `up`, etc.).
+- A service with `ports` but no `networks`.
+- Two services with the same `hostname` (implicit service name) on a shared
+  network.
+
+---
+
+## 7. Validation Invariants
+
+Enforced by the CLI after projecting to JSON; any failure ⇒ exit code 2.
+
+| ID | Rule |
+|----|------|
+| V1 | `name` matches `[a-z][a-z0-9_-]{0,31}`. |
+| V2 | Service names match `[a-z][a-z0-9_-]{0,31}` and are unique. |
+| V3 | Network names match V2 rules and are unique. |
+| V4 | Every `attach.name` references a declared network. |
+| V5 | All network `subnet`s are pairwise disjoint; no overlap with the host's active subnets. |
+| V6 | Every static `ip` lies within its network's subnet and is not the subnet `.0`, the broadcast, or the gateway (`.1`). |
+| V7 | Static IPs within a network are unique. |
+| V8 | `ports`: `hostPort` unique across the stack; values in 1–65535; `guestPort` in 1–65535. |
+| V9 | `dependsOn` references existing services; the graph is acyclic. |
+| V10 | Volume names unique per service; `disk.name` unique per stack. |
+| V11 | `disk.target` and `share.target` are absolute paths; no two volumes in a service share a `target`. |
+| V12 | `hypervisor` ∈ {`cloud-hypervisor`, `qemu`, `firecracker`}; hypervisor supported on host arch. |
+| V13 | Total `mem` across services ≤ host RAM budget (configurable; warning, not hard error, by default). |
+| V14 | `dependsOn` cycles and self-dependency rejected (V9). |
+| V15 | `share.host` resolves relative to the compose file's directory. |
+
+---
+
+## 8. Integration Mapping (compose → microvm.nix)
+
+Each service is rendered into a NixOS configuration. The mapping below is
+authoritative; option names come from microvm.nix `microvm` options
+(verified against `microvm-nix.github.io/microvm.nix`).
+
+### 8.1 Identity & resources
+
+| Compose | Rendered microvm option |
+|---------|--------------------------|
+| `services.<n>` | `networking.hostName = "<n>"` |
+| `services.<n>.vcpu` | `microvm.vcpu = <n>` |
+| `services.<n>.mem` | `microvm.mem = <n>` |
+| `services.<n>.hypervisor` | `microvm.hypervisor = <n>` |
+| (CLI-assigned) | `microvm.vsock.cid = <cid>` — from `generated.nix` |
+
+### 8.2 Interfaces
+
+For each `attach` to network `N`:
+
+```
+microvm.interfaces += {
+  type = "tap";
+  id   = "mvc-<stack>-<svc>-<N>";   # host tap name
+  mac  = <assigned MAC>;            # 02:00:00:00:00:xx, from generated.nix
+  # tap.vhost default off (v1)
+};
+```
+
+- **Host side** (CLI, not Nix): bridge `br-<stack>-<N>`; tap `mvc-...` enslaved;
+  bridge IP = gateway (`<subnet> .1`).
+- Taps are **not** auto-created by the hypervisor; the CLI creates them
+  (netlink/`ip`) because microvm.nix only manages them under the `host`
+  module, which we do not require.
+
+### 8.3 Networking inside the guest
+
+The CLI generates a networkd unit as data into `generated.nix`; the renderer
+merges it (no hand-written per-VM networking):
+
+```
+systemd.network.networks."mvc-<svc>" = {
+  matchConfig.MACAddress  = <mac>;
+  linkConfig.RequiredForOnline = "no";
+  address = [ "<ip>/<prefix>" ];
+  routes  = [ { Gateway = "<gateway>"; } ];
+};
+```
+
+- Multiple networks ⇒ multiple units and multiple default routes; the
+  gateway of the *first* declared network becomes the primary default route,
+  later ones get explicit subnet routes only.
+- `networking.useDHCP = false`; DNS = `1.1.1.1` unless overridden in the guest
+  config.
+- `/etc/hosts`: for every service reachable via shared networks or
+  `dependsOn`, an entry `<ip> <svcname> <svcname>.<network>`. Rendered into
+  `environment.etc.hosts` by the renderer.
+
+### 8.4 Volumes — `disk`
+
+```
+microvm.volumes += {
+  image      = "<stack>/<name>.qcow2";   # under the CLI-managed volume dir
+  mountPoint = <target>;
+  size       = <MiB(size)>;              # "20G" → 20480
+  autoCreate = true;                     # CLI pre-creates; belt-and-suspenders
+  fsType     = <fsType or "ext4">;
+};
+```
+
+- The CLI ensures the image exists (`qemu-img create`) before start.
+- `mountPoint` registration lives in microvm.nix; no extra `fileSystems`
+  needed by the user.
+- `down` keeps images; `rm` deletes them.
+
+### 8.5 Volumes — `share`
+
+```
+microvm.shares += {
+  proto      = <protocol or "9p">;
+  tag        = "mvc-<stack>-<svc>-<n>";   # unique per share
+  source     = <absolute host path>;      # resolved against compose dir
+  mountPoint = <target>;
+  readOnly   = <mode == "ro">;
+};
+```
+
+- `source` may be absolute or relative to `/var/lib/microvms/$hostName`;
+  the CLI resolves relative `host` to an absolute path under `.micro-compose/shares/`.
+- `virtiofs` requires the virtiofsd socket wiring; the renderer emits the
+  per-share `socket` path under `.micro-compose/sockets/` and the CLI starts
+  virtiofsd alongside the runner (mirrors `microvm-virtiofsd@.service`).
+
+### 8.6 Networks (orchestration, host side)
+
+| Compose | Host resource | Lifecycle |
+|---------|---------------|-----------|
+| `networks.<N>.subnet` | bridge `br-<stack>-<N>` @ gateway `.1` | created `up`, removed `down` |
+| each attach | tap `mvc-<stack>-<svc>-<N>` | created `up`, removed `down` |
+| `ports` | iptables DNAT `<hostPort> → <guest ip>:<guestPort>` | created `up`, removed `down` |
+
+- **IP allocation**: CLI assigns static IPs deterministically — read
+  `state.json`; if absent, next free host from `.2` upward, persisted. A
+  restarted stack keeps the same IPs.
+- **MAC allocation**: `02:00:00:00:00:<2-hex>`, unique per interface across
+  the stack, persisted in `generated.nix`/`state.json`.
+
+### 8.7 Ordering & health
+
+| Compose | Integration |
+|---------|-------------|
+| `dependsOn` | `up` builds a DAG; topological start. Dependency failure ⇒ dependents not started (exit 3). |
+| `healthcheck` | Renderer installs a guest systemd unit (e.g. `tcpsocket` or `exec`) + CLI polls the runner/guest until healthy or timeout (`startPeriod + interval`). |
+
+### 8.8 Guest base module
+
+The renderer injects `modules/guest-base.nix` (fixed, shipped with the CLI)
+so every VM has: `services.openssh` (key auth via injected pubkey, root
+password login disabled by default), networkd, `systemd-networkd` enabled,
+no firewall on managed networks, journald streaming socket for `logs`.
+
+---
+
+## 9. Rendered Artifacts
+
+### 9.1 Layout
+
+```
+.micro-compose/
+├── flake.nix                    ; generated per stack
+├── modules/
+│   ├── renderer.nix             ; fixed: compose → microvm mapping (imports generated.nix + user file)
+│   ├── guest-base.nix           ; fixed: ssh, networkd, journal socket
+│   └── <svc>.nix                ; per-service: injects svc config + identity
+├── generated.nix                ; CLI data: macs, cids, ips, hosts, networkd units
+├── volumes/<stack>/<name>.qcow2
+├── shares/                      ; materialized relative share dirs
+├── sockets/<tag>.sock           ; virtiofsd sockets
+├── runners/<svc>                ; resolved microvm-run scripts
+├── logs/<svc>.log
+└── state.json
+```
+
+### 9.2 `generated.nix` shape (the CLI↔Nix bridge)
 
 ```nix
-# micro-compose.nix
 {
-  name = "app-stack";
-
-  # Virtual networks. Each becomes a host-side bridge + per-VM taps.
-  # `subnet` is required and must be a /24 or smaller that doesn't collide
-  # with the host's networks.
-  networks = {
-    frontend = { subnet = "192.168.50.0/24"; };
-    backend  = { subnet = "192.168.51.0/24"; };
-  };
-
   services = {
     db = {
-      vcpu = 2;
-      mem  = 1024;
-
-      config = { pkgs, ... }: {
-        services.postgresql = {
-          enable = true;
-          package = pkgs.postgresql_16;
-        };
-      };
-
-      volumes = [
-        # Named block device: CLI-managed qcow2, survives down/up.
-        { type = "disk";  name = "db-data"; target = "/var/lib/postgresql"; size = "20G"; }
-        # Host path share: virtiofs/9p mount into guest.
-        { type = "share"; host = "./backups"; target = "/backups"; mode = "rw"; }
-      ];
-
-      networks = [
-        { name = "backend"; ip = "192.168.51.2"; }
-      ];
-
-      ports = [ "5432:5432" ];
-
-      healthcheck = { interval = "5s"; timeout = "2s"; };
-    };
-
-    web = {
-      vcpu = 2;
-      mem  = 2048;
-
-      config = ./services/web.nix;   # or a module path
-
-      dependsOn = [ "db" ];
-
-      networks = [
-        { name = "backend";  ip = "192.168.51.3"; }
-        { name = "frontend"; ip = "192.168.50.3"; }
-      ];
-
-      ports = [ "8080:80" ];
-    };
-
-    jump = {
-      config = { ... }: { services.openssh.enable = true; };
-      networks = [ "frontend" "backend" ];   # shorthand: auto IPs
+      cid = 3;
+      macs = { backend = "02:00:00:00:00:02"; };
+      ips  = { backend = "192.168.51.2"; };
+      gateway = { backend = "192.168.51.1"; };
+      prefix  = { backend = 24; };
+      hosts = [ { ip = "192.168.51.2"; names = [ "db" "db.backend" ]; } ];
+      networkd = { /* exact systemd.network attrset, §8.3 */ };
     };
   };
 }
 ```
 
-### 4.1 Field reference
+### 9.3 Generated flake (rendered by text/template)
 
-**Top level**
+```nix
+{
+  inputs = { nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+             microvm.url = "github:microvm-nix/microvm.nix"; };
+  outputs = { nixpkgs, microvm, ... }:
+    let system = "x86_64-linux";
+        mkSvc = name:
+          nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              microvm.nixosModules.microvm
+              ./modules/renderer.nix
+              ./modules/guest-base.nix
+              ./modules/${name}.nix
+              (import ./micro-compose.nix)   # R4: native render view
+              ./generated.nix
+            ];
+          };
+    in { nixosConfigurations = builtins.mapAttrs (_: mkSvc) <services>; };
+}
+```
 
-| Field      | Type       | Required | Meaning |
-|------------|------------|----------|---------|
-| `name`     | string     | yes      | Stack name; prefixes runners, bridges, disks, state. |
-| `networks` | attrset    | yes      | Named networks. |
-| `services` | attrset    | yes      | Named services (VMs). |
+Per-service module `modules/<svc>.nix` sets `microCompose.serviceName` (an
+option owned by the renderer) so the renderer picks the right slice of the
+compose file and generated data.
 
-**`networks.<name>`**
+### 9.4 `state.json` shape (CLI state)
 
-| Field    | Type   | Required | Meaning |
-|----------|--------|----------|---------|
-| `subnet` | string | yes      | CIDR, e.g. `192.168.50.0/24`. Must not overlap host LAN or other networks. |
+```json
+{
+  "stack": "app-stack",
+  "networks": {
+    "backend": {
+      "cidr": "192.168.51.0/24",
+      "allocated": { "db": "192.168.51.2", "web": "192.168.51.3" }
+    }
+  },
+  "services": {
+    "db": {
+      "ip": { "backend": "192.168.51.2" },
+      "cid": 3,
+      "macs": { "backend": "02:00:00:00:00:02" },
+      "volumes": ["db-data"],
+      "status": "running",
+      "pid": 4242,
+      "runner": ".micro-compose/runners/db"
+    }
+  },
+  "ports": { "5432": { "svc": "db", "guest": 5432 } }
+}
+```
 
-**`services.<name>`**
+### 9.5 `up` lifecycle walkthrough
 
-| Field         | Type          | Required | Meaning |
-|---------------|---------------|----------|---------|
-| `vcpu`        | int           | no       | vCPUs (default 1). |
-| `mem`         | int           | no       | RAM in MiB (default 512). |
-| `hypervisor`  | enum          | no       | `cloud-hypervisor` (default) / `qemu` / `firecracker`. |
-| `config`      | nixos module  | yes      | The guest NixOS module — the "image". |
-| `volumes`     | list          | no       | Disks and shares (see §4.2). |
-| `networks`    | list of attrs | no       | Attach points (see §4.3). |
-| `ports`       | list of str   | no       | `hostPort:guestPort` publishes. |
-| `dependsOn`   | list of str   | no       | Start ordering. |
-| `healthcheck` | attr          | no       | Readiness probe for `up` gating. |
-| `cpuset` / `memoryBones` | ... | no | Pass-through to microvm.nix pinning (v2). |
+1. **Load**: eval orchestration projection → JSON → validate (§5–§7).
+2. **Render**: write `.micro-compose/` flake + modules + `generated.nix`
+   (idempotent).
+3. **Build**: `nix build` each service's runner (cache-friendly; unchanged
+   config → store hits).
+4. **Provision** (only if missing / `--no-provision` to skip):
+   - create bridges `br-<stack>-<net>`, assign bridge IP = gateway;
+   - allocate static IPs + MACs (or read from `state.json`);
+   - create qcow2 disks at `volumes/<stack>/<name>.qcow2` (qemu-img) if absent;
+   - create tap devices and attach to bridges;
+   - apply iptables DNAT for `ports`.
+5. **Start**: topological order from `dependsOn`; launch each
+   `microvm-run` with the tap/socket args; record PID in `state.json`.
+6. **Wait**: for each service, poll `healthcheck` (or wait for SSH) until ready
+   or timeout; gate dependents.
+7. **Report**: print table of services, IPs, published ports.
 
-**`services.<name>.volumes[]`**
-
-| Field | Type | Required | Kind: `disk` (block device) | Kind: `share` (host path) |
-|-------|------|----------|-----------------------------|---------------------------|
-| `type`    | enum | yes      | `disk` | `share` |
-| `name`    | str  | disk yes | CLI-managed qcow2 volume name | n/a |
-| `target`  | str  | yes      | Mount point in guest (via filesystems). | Mount point in guest. |
-| `size`    | str  | disk yes | e.g. `20G`. | n/a |
-| `host`    | str  | share yes | n/a | Host path (relative to compose file). |
-| `mode`    | str  | share no  | n/a | `ro`/`rw` (default `rw`). |
-| `protocol`| enum | no       | n/a | `virtiofs` (default) / `9p`. |
-
-**`services.<name>.networks[]`**
-
-| Field | Type | Required | Meaning |
-|-------|------|----------|---------|
-| `name` | str  | yes      | Which network (must exist in `networks`). |
-| `ip`   | str  | no       | Static IP. Omitted → auto-assign next free host in subnet. |
-
-If the list element is a bare string, it is shorthand for `{ name = str; }`.
-
-**`services.<name>.healthcheck`**
-
-| Field      | Type | Required | Meaning |
-|------------|------|----------|---------|
-| `interval` | str  | no       | e.g. `5s` (default 5s). |
-| `timeout`  | str  | no       | e.g. `2s` (default 2s). |
-| `startPeriod` | str | no      | Grace period before probe (default 10s). |
-| `command`  | list | no       | Command to run in guest; default uses a socket/ssh ping. |
-
-### 4.2 Semantics — volumes
-
-- **`disk`** → creates/manages `volumes/<name>.qcow2` in `.micro-compose/`.
-  Attached via microvm.nix `microvm.volumes` with a matching `filesystems`
-  mount at `target`. Created lazily on first `up`; never removed by `down`
-  (that is `rm`).
-- **`share`** → registered via `microvm.shares`. Host dir is created if
-  missing. `ro` mounts use virtiofs read-only mode.
-- Volume names are stack-scoped: `app-stack/db-data.qcow2`, so two stacks
-  never collide.
-
-### 4.3 Semantics — networks
-
-- Every named network becomes a host **bridge** `br-<stack>-<net>` (or reuse a
-  systemd-networkd-managed bridge declaratively when possible).
-- Each VM on a network gets a **tap** `tap-<svc>-<net>` (or one shared tap per
-  bridge via microvm's user networking when the bridge cannot be created).
-- Guest side: the CLI generates a `systemd-networkd` stanza into each service's
-  rendered module keyed by the assigned MAC, matching the pattern already used
-  in `microvm-config.nix` (match by MAC, static address + gateway = bridge IP).
-- Auto-IP allocation: CLI keeps a `state.json` of per-network allocated IPs so
-  a restarted stack keeps the same IPs.
-- **Cross-VM name resolution**: the CLI writes a hosts file into each guest
-  (`/etc/hosts` entries for every service on shared networks). `dependsOn`
-  implies sharing *all* networks of the dependency for name resolution, so
-  `web` can `curl http://db:5432`.
-
-### 4.4 Semantics — ports
-
-- `hostPort:guestPort` → published on the host. Implementation options per
-  hypervisor: cloud-hypervisor has no built-in port forward on tap, so the CLI
-  uses either (a) `iptables DNAT` on the bridge, or (b) a tiny host-side
-  `socat`/`systemd` socket unit proxying to the guest IP, or (c) `user`
-  networking with `hostfwd` when the VM uses `slirp` networking instead of a
-  bridge. v1 decision: **bridged networks + iptables DNAT**, with `slirp`
-  networking as fallback when the host cannot create bridges (non-root or
-  containerized host).
-
-### 4.5 Semantics — ordering & health
-
-- `up` builds a DAG from `dependsOn`; starts nodes in dependency order.
-- If a node has `healthcheck`, `up` waits until it passes (or `startPeriod` +
-  `interval` timeout) before starting dependents.
-- `dependsOn` also short-circuits failure: if a dependency fails to boot, its
-  dependents are not started and `up` exits non-zero.
+`down` reverses: stop runners (SIGTERM), remove taps/bridges/DNAT, keep
+disks + state. `down --remove-volumes` also deletes qcow2 disks.
 
 ---
 
-## 5. CLI Surface
+# Part B — Project plan
+
+## 10. CLI Surface
 
 ```
 micro-compose [global flags] <command>
@@ -297,11 +553,12 @@ Global flags:
 ```
 
 Exit codes: `0` success, `1` operational error, `2` config/validation error,
-`3` dependency-start failure.
+`3` dependency-start failure, `4` missing prerequisite (no `nix`, no root for
+networking, host arch mismatch).
 
 ---
 
-## 6. Go Project Layout
+## 11. Go Project Layout
 
 ```
 micro-compose/
@@ -310,23 +567,25 @@ micro-compose/
 ├── internal/
 │   ├── config/
 │   │   ├── load.go            # eval nix→JSON, read+validate
-│   │   ├── schema.go          # typed structs + validation rules
-│   │   ├── eval.go            # nix-instantiate wrapper
+│   │   ├── schema.go          # typed structs matching §5
+│   │   ├── eval.go            # nix-instantiate wrapper + projection
 │   │   └── validate_test.go
 │   ├── nix/                   # nix tooling interop
 │   │   ├── instantiate.go
 │   │   ├── build.go           # nix build for runner derivations
-│   │   └── flakegen/          # Go text/template that emits the stack flake
-│   │       ├── flake.nix.tmpl
-│   │       ├── vm-module.tmpl # per-service NixOS module (net, mounts, hosts)
+│   │   └── flakegen/          # Go text/template emitting the stack flake
+│   │       ├── flake.nix.tmpl # §9.3
+│   │       ├── generated.nix.tmpl # §9.2
+│   │       ├── renderer.nix   # fixed mapping module (§8)
+│   │       ├── guest-base.nix # fixed (§8.8)
 │   │       └── render.go
 │   ├── state/
-│   │   ├── store.go           # state.json (IPs, volume names, runner paths)
+│   │   ├── store.go           # state.json (§9.4)
 │   │   └── store_test.go
 │   ├── hostnet/
 │   │   ├── bridge.go          # create/delete bridge, taps
 │   │   ├── dnat.go            # iptables rules for port publishing
-│   │   ├── ipalloc.go         # subnet IP allocator
+│   │   ├── ipalloc.go         # subnet IP allocator (§8.6)
 │   │   ├── ipalloc_test.go
 │   │   └── iface_unix.go      # netlink or `ip` command wrapper
 │   ├── runtime/
@@ -352,112 +611,37 @@ Dependencies (keep minimal):
 
 ---
 
-## 7. State & File Layout on Disk
-
-Everything generated lives under `<project>/.micro-compose/` (gitignored).
+## 12. Lifecycle State Machine
 
 ```
-.micro-compose/
-├── flake.nix               # generated: nixosConfigurations for every service
-├── flake.lock
-├── modules/                # generated per-service modules
-│   ├── db.nix
-│   └── web.nix
-├── volumes/
-│   └── db-data.qcow2       # persistent block volumes (name-scoped)
-├── shares/                 # created on demand for relative host paths
-├── runners/                # resolved microvm-run scripts
-│   ├── db
-│   └── web
-├── logs/                   # rotation-safe run logs (or use journald)
-│   └── db.log
-└── state.json              # IP allocation, volume registry, statuses
+                     +--------+     down      +--------+
+        up ───────▶  │ START  │ ───────────▶  │ STOPPED│ ◀────── up
+                     +--------+               +--------+
+                         │                        ▲
+                 provisioned                  │
+                         ▼                        │
+                     +--------+     boot fail /  │ down
+                 ┌──▶│ RUNNING│ ── stop ────────┘
+                 │   +--------+
+      unhealthy  │       │ healthy
+                 │       ▼
+                 │   +--------+
+                 └──▶│ HEALTHY│
+                     +--------+
 ```
 
-`state.json` shape:
-
-```json
-{
-  "stack": "app-stack",
-  "networks": {
-    "backend": {
-      "cidr": "192.168.51.0/24",
-      "allocated": { "db": "192.168.51.2", "web": "192.168.51.3" }
-    }
-  },
-  "services": {
-    "db": {
-      "ip": { "backend": "192.168.51.2" },
-      "volumes": ["db-data"],
-      "status": "running",
-      "pid": 4242,
-      "runner": ".micro-compose/runners/db"
-    }
-  },
-  "ports": { "5432": { "svc": "db", "guest": 5432 } }
-}
-```
+| State | Meaning |
+|-------|---------|
+| `stopped` | Runner not running; volumes/state retained. |
+| `starting` | Runner launched; waiting on readiness. |
+| `running` | Process alive; no healthcheck or within start period. |
+| `healthy` | Healthcheck passing. |
+| `degraded` | Healthcheck failing after grace. |
+| `provisioned` | Build done, host nets + disks ready, not yet started. |
 
 ---
 
-## 8. Rendering Pipeline (nix side)
-
-Given the config JSON, the CLI renders a flake. Two options for how the flake
-is consumed:
-
-**Option A — generated flake per stack (chosen for v1).**
-```
-flake.nix  (rendered by text/template)
-├── inputs: nixpkgs, microvm
-└── nixosConfigurations.<svc> =
-      nixpkgs.lib.nixosSystem {
-        modules = [
-          microvm.nixosModules.microvm
-          ./modules/<svc>.nix     # generated guest module
-        ];
-      };
-```
-- `modules/<svc>.nix` contains: `microvm.{hypervisor,vcpu,mem,volumes,shares,interfaces}`,
-  `systemd.network` stanza (MAC-matched static IP + gateway), `/etc/hosts`
-  entries, mount units for disks, openssh config, healthcheck systemd service.
-- Runner derivation per service via `config.microvm.declaredRunner`; the CLI
-  runs `nix build .#nixosConfigurations.<svc>.config.microvm.declaredRunner`.
-
-**Option B — library API (no generated flake).** A nix `lib` that takes the
-compose attrset and returns host + guest configs, so the user can integrate
-directly in their own flake. Nice, but harder to iterate on first; defer to v2.
-
-The generated host-side network config (bridges/taps) is produced **at runtime
-by the CLI** (ip/netlink), *not* baked into the flake, so `up`/`down` can
-create/teardown without rebuilding NixOS.
-
----
-
-## 9. Lifecycle Walkthrough (`up`)
-
-1. **Load**: eval `micro-compose.nix` → JSON → validate.
-2. **Render**: write `.micro-compose/` flake + modules (idempotent).
-3. **Build**: `nix build` each service's runner (cache-friendly; unchanged
-   config → store hits).
-4. **Provision** (only if missing / `--no-provision` to skip):
-   - create bridges `br-<stack>-<net>`, assign bridge IP = subnet gateway;
-   - allocate static IPs (or read from `state.json`);
-   - create qcow2 disks at `volumes/<name>.qcow2` (qemu-img) if absent;
-   - create tap devices and attach to bridges;
-   - apply iptables DNAT for `ports`.
-5. **Start**: topological order from `dependsOn`; launch each
-   `microvm-run` (or the hypervisor binary directly) with the tap/socket args;
-   record PID in `state.json`.
-6. **Wait**: for each service, poll `healthcheck` (or wait for SSH) until ready
-   or timeout; gate dependents.
-7. **Report**: print table of services, IPs, published ports.
-
-`down` reverses: stop runners (SIGTERM), remove taps/bridges/DNAT, keep
-disks + state. `down --remove-volumes` also deletes qcow2 disks.
-
----
-
-## 10. Security & Safety
+## 13. Security & Safety
 
 - Bridges/taps/DNAT require root. CLI uses `sudo`-style privilege helpers and
   fails fast with clear messages when capabilities are missing; documents the
@@ -471,10 +655,11 @@ disks + state. `down --remove-volumes` also deletes qcow2 disks.
   ports, and (v2) optional firewall rules per service.
 - `nix-instantiate --eval` runs user config — document that the compose file
   is trusted input (same trust model as the user's own nix config).
+- Guest base module disables root password login over SSH by default (§8.8).
 
 ---
 
-## 11. Error Handling & UX
+## 14. Error Handling & UX
 
 - Config errors: report with Nix line info where possible; exit code 2.
 - Build errors: surface the `nix build` failure excerpt (last N lines) with the
@@ -489,11 +674,11 @@ disks + state. `down --remove-volumes` also deletes qcow2 disks.
 
 ---
 
-## 12. Testing Strategy
+## 15. Testing Strategy
 
 Unit tests (Go):
-- `config/validate_test.go` — schema validation edge cases (bad CIDR, missing
-  volume name, unknown network ref, duplicate IPs).
+- `config/validate_test.go` — schema validation edge cases (V1–V15: bad CIDR,
+  missing volume name, unknown network ref, duplicate IPs, dependsOn cycles).
 - `hostnet/ipalloc_test.go` — allocation, reuse, exhaustion, conflicts.
 - `nix/flakegen` — golden-file tests for rendered flake/modules against
   fixtures.
@@ -511,44 +696,55 @@ rendered modules build.
 
 ---
 
-## 13. Milestones
+## 16. Milestones
 
 | Milestone | Scope | Exit criteria |
 |-----------|-------|---------------|
-| **M1 — Config & eval** | schema structs, `nix-instantiate` eval, validation, `config` command | `micro-compose config` prints validated JSON for the sample file. |
-| **M2 — Render & build** | flake/module templates, `build` command | `micro-compose build` produces runner derivations for db+web. |
-| **M3 — Host net** | bridges, taps, IP alloc, DNAT | Manual `ip link` inspection shows bridge+taps; ports reachable. |
+| **M1 — Config & eval** | schema structs (§5), projection eval (§4), validation (§7), `config` command | `micro-compose config` prints validated JSON for the sample file. |
+| **M2 — Render & build** | flake/module templates (§9), `build` command | `micro-compose build` produces runner derivations for db+web. |
+| **M3 — Host net** | bridges, taps, IP alloc, DNAT (§8.6) | Manual `ip link` inspection shows bridge+taps; ports reachable. |
 | **M4 — Lifecycle** | `up`/`down`/`ps` | Single-VM `up`/`down` works end-to-end; volumes persist. |
-| **M5 — Multi-VM** | dependsOn, health, name resolution | db+web stack up; `web` reaches `db` by hostname; web gated on db health. |
+| **M5 — Multi-VM** | dependsOn, health, name resolution (§8.7) | db+web stack up; `web` reaches `db` by hostname; web gated on db health. |
 | **M6 — Observability** | `logs`, `exec`, `restart`, `rm` | All commands work against the sample stack. |
 | **M7 — Hardening** | error UX, dry-run, json output, docs | Full sample stack lifecycle passes integration tests. |
 
 ---
 
-## 14. Open Questions
+## 17. Open Questions
 
 1. **exec transport**: ssh-over-vsock requires a guest agent + key injection;
    simpler v1 is `exec` via `cloud-hypervisor` console or `firecracker` API.
-   Decide: is a persistent sshd in every guest acceptable?
+   Decide: is a persistent sshd in every guest acceptable? (Affects §8.8.)
 2. **Bridge management**: create bridges imperatively via netlink at `up` time,
    or declare them in host NixOS (systemd-networkd) and have the CLI just
    attach? Current leaning: imperative + `--dry-run`, with a future
    `--host-config` command that emits the NixOS module to make them static.
-3. **Port publish for cloud-hypervisor**: DNAT vs socat proxy. Requires
-   testing cloud-hypervisor's behavior on bridged taps.
-4. **Nix eval performance**: `nix-instantiate` on large configs per command
+3. **Port publish for cloud-hypervisor**: DNAT vs socat proxy on bridged taps.
+   Requires a spike; DNAT is the spec default (§8.6).
+4. **`microvm.volumes.image` location**: confirm whether microvm.nix resolves
+   `image` relative to `/var/lib/microvms/$hostName` only, or accepts absolute
+   paths. If relative-only, the CLI pins the volume dir per service (§8.4).
+5. **`dependsOn` network inheritance**: should dependents *implicitly* join
+   all networks of their dependency, or only share `/etc/hosts`? Current spec:
+   hosts only; explicit networks still required (§8.7).
+6. **Nix eval performance**: `nix-instantiate` on large configs per command
    run; consider caching the evaluated JSON keyed by file hash.
-5. **docker-compose adapter**: parse an existing `docker-compose.yml` into a
-   `micro-compose.nix` (mapping images→nixos modules is lossy). Do we want a
-   best-effort converter in v2?
-6. **`mem`/`vcpu` defaults and overcommit**: default the same as microvm.nix
+7. **docker-compose adapter**: parse an existing `docker-compose.yml` into a
+   `micro-compose.nix` (mapping images→nixos modules is lossy). Best-effort
+   converter in v2?
+8. **`mem`/`vcpu` defaults and overcommit**: default the same as microvm.nix
    (no overcommit) vs docker-style overcommit (all VMs declared, host may be
-   smaller). Leaning: explicit is better; document required host RAM.
+   smaller). Leaning: explicit is better; document required host RAM (V13).
 
 ---
 
-## 15. References
+## 18. References
 
+- microvm.nix options: <https://microvm-nix.github.io/microvm.nix/microvm-options.html>
+- microvm.nix shares: <https://microvm-nix.github.io/microvm.nix/shares.html>
+- microvm.nix interfaces: <https://microvm-nix.github.io/microvm.nix/interfaces.html>
+- microvm.nix volumes: <https://microvm-nix.github.io/microvm.nix/volumes.html>
+- microvm.nix conventions (runner/host contract): <https://microvm-nix.github.io/microvm.nix/conventions.html>
 - microvm.nix: <https://github.com/microvm-nix/microvm.nix>
 - Current repo microvm config: `microvm-config.nix` (tap `unc0`, static
   `192.168.99.2/24`, MAC-matched networkd).
