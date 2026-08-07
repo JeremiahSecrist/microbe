@@ -1,5 +1,10 @@
 package hostnet
 
+import (
+	"crypto/sha256"
+	"encoding/hex"
+)
+
 // Host resource specs. The lifecycle commands (M4) build these from the
 // network plan and stack, then ship them to the microbe-provisiond daemon,
 // which applies them via netlink/nftables.
@@ -29,7 +34,14 @@ type PortSpec struct {
 	GuestPort int
 }
 
-// BridgeName returns the host bridge name for a stack+network pair.
+// BridgeName returns the host bridge name for a stack+network pair: readable
+// "br-<stack>-<net>" when it fits, else a deterministic 15-char hash-based
+// name (Linux interface names are capped at IFNAMSIZ=15).
 func BridgeName(stack, net string) string {
-	return "br-" + stack + "-" + net
+	full := "br-" + stack + "-" + net
+	if len(full) <= 15 {
+		return full
+	}
+	sum := sha256.Sum256([]byte(full))
+	return "br-" + hex.EncodeToString(sum[:])[:12]
 }
