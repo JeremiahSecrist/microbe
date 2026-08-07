@@ -145,6 +145,32 @@ func TestStartServiceResolvesSymlink(t *testing.T) {
 	}
 }
 
+// TestStartServiceResolvesDirLink is the red-green gate for the runner link
+// shape: nix build --out-link symlinks to the store DIRECTORY (which holds
+// bin/microvm-run), so StartService must resolve a directory link to its
+// bin/microvm-run script instead of execing the directory (EACCES).
+func TestStartServiceResolvesDirLink(t *testing.T) {
+	dir := t.TempDir()
+	storeDir := filepath.Join(dir, "runner-store")
+	binDir := filepath.Join(storeDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeScript(t, binDir, "microvm-run", "#!/bin/sh\nsleep 30\n")
+	link := filepath.Join(dir, "runner")
+	if err := os.Symlink(storeDir, link); err != nil {
+		t.Fatal(err)
+	}
+	pid, err := StartService(context.Background(), link, filepath.Join(dir, "runs", "svc"), filepath.Join(dir, "logs", "svc.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer StopService(context.Background(), pid, time.Second)
+	if !processAlive(pid) {
+		t.Errorf("pid %d not alive via directory symlink", pid)
+	}
+}
+
 func TestStopServiceEscalatesToKill(t *testing.T) {
 	dir := t.TempDir()
 	script := writeScript(t, dir, "stubborn", "#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n")

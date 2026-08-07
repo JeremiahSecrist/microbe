@@ -83,6 +83,11 @@ func StartService(ctx context.Context, runnerPath, runDir, logPath string) (int,
 	if resolved, err := filepath.EvalSymlinks(runnerPath); err == nil {
 		script = resolved
 	}
+	// nix build --out-link symlinks to the store DIRECTORY holding
+	// bin/microvm-run; execing a directory is EACCES, so resolve it.
+	if fi, err := os.Stat(script); err == nil && fi.IsDir() {
+		script = filepath.Join(script, "bin", "microvm-run")
+	}
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return 0, err
 	}
