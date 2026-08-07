@@ -27,7 +27,7 @@ func allocateIPs(cfg *config.Compose) (map[string]map[string]string, error) {
 	for svc := range cfg.Services {
 		ips[svc] = map[string]string{}
 	}
-	for netName, net := range cfg.Networks {
+	for netName, network := range cfg.Networks {
 		members := servicesOn(cfg, netName)
 		used := map[string]bool{}
 		for _, svcName := range members {
@@ -40,7 +40,7 @@ func allocateIPs(cfg *config.Compose) (map[string]map[string]string, error) {
 				ips[svcName][netName] = ip
 				continue
 			}
-			ip, err := nextFree(net.Subnet, used)
+			ip, err := nextFree(network.Subnet, used)
 			if err != nil {
 				return nil, fmt.Errorf("network %q: %w", netName, err)
 			}
@@ -56,11 +56,11 @@ func allocateMACs(cfg *config.Compose) map[string]map[string]string {
 	for svc := range cfg.Services {
 		macs[svc] = map[string]string{}
 	}
-	type pair struct{ svc, net string }
-	var pairs []pair
+	type svcNetPair struct{ svc, net string }
+	var pairs []svcNetPair
 	for svcName, svc := range cfg.Services {
-		for _, a := range svc.Networks {
-			pairs = append(pairs, pair{svcName, a.Name})
+		for _, attach := range svc.Networks {
+			pairs = append(pairs, svcNetPair{svcName, attach.Name})
 		}
 	}
 	sort.Slice(pairs, func(i, j int) bool {
@@ -69,8 +69,8 @@ func allocateMACs(cfg *config.Compose) map[string]map[string]string {
 		}
 		return pairs[i].net < pairs[j].net
 	})
-	for i, pr := range pairs {
-		macs[pr.svc][pr.net] = fmt.Sprintf("02:00:00:00:00:%02x", i+1)
+	for i, pair := range pairs {
+		macs[pair.svc][pair.net] = fmt.Sprintf("02:00:00:00:00:%02x", i+1)
 	}
 	return macs
 }
@@ -98,8 +98,8 @@ func RenderHosts(p *NetworkPlan) []string {
 func servicesOn(cfg *config.Compose, netName string) []string {
 	var out []string
 	for svcName, svc := range cfg.Services {
-		for _, a := range svc.Networks {
-			if a.Name == netName {
+		for _, attach := range svc.Networks {
+			if attach.Name == netName {
 				out = append(out, svcName)
 				break
 			}
@@ -110,25 +110,25 @@ func servicesOn(cfg *config.Compose, netName string) []string {
 }
 
 func staticIP(svc config.Service, netName string) string {
-	for _, a := range svc.Networks {
-		if a.Name == netName {
-			return a.IP
+	for _, attach := range svc.Networks {
+		if attach.Name == netName {
+			return attach.IP
 		}
 	}
 	return ""
 }
 
 func nextFree(subnet string, used map[string]bool) (string, error) {
-	p, err := netip.ParsePrefix(subnet)
+	prefix, err := netip.ParsePrefix(subnet)
 	if err != nil {
 		return "", err
 	}
-	start := netutil.Gateway(p).Next()
-	end := netutil.Broadcast(p).Prev()
-	for a := start; a.IsValid() && a.Compare(end) <= 0; a = a.Next() {
-		s := a.String()
-		if !used[s] {
-			return s, nil
+	start := netutil.Gateway(prefix).Next()
+	end := netutil.Broadcast(prefix).Prev()
+	for addr := start; addr.IsValid() && addr.Compare(end) <= 0; addr = addr.Next() {
+		addrStr := addr.String()
+		if !used[addrStr] {
+			return addrStr, nil
 		}
 	}
 	return "", fmt.Errorf("no free host in %s", subnet)

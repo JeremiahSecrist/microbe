@@ -39,28 +39,28 @@ func newConfigCmd() *cobra.Command {
 	}
 }
 
-func printPlan(p *hostnet.NetworkPlan) {
-	var svcs []string
-	for s := range p.IPs {
-		svcs = append(svcs, s)
+func printPlan(plan *hostnet.NetworkPlan) {
+	var svcNames []string
+	for svcName := range plan.IPs {
+		svcNames = append(svcNames, svcName)
 	}
-	sort.Strings(svcs)
+	sort.Strings(svcNames)
 	fmt.Println()
 	fmt.Println("network plan:")
 	fmt.Printf("  %-8s %-10s %-16s %s\n", "service", "network", "ip", "mac")
-	for _, s := range svcs {
-		var nets []string
-		for n := range p.IPs[s] {
-			nets = append(nets, n)
+	for _, svcName := range svcNames {
+		var netNames []string
+		for netName := range plan.IPs[svcName] {
+			netNames = append(netNames, netName)
 		}
-		sort.Strings(nets)
-		for _, n := range nets {
-			fmt.Printf("  %-8s %-10s %-16s %s\n", s, n, p.IPs[s][n], p.MACs[s][n])
+		sort.Strings(netNames)
+		for _, netName := range netNames {
+			fmt.Printf("  %-8s %-10s %-16s %s\n", svcName, netName, plan.IPs[svcName][netName], plan.MACs[svcName][netName])
 		}
 	}
 	fmt.Println()
 	fmt.Println("hosts:")
-	for _, h := range hostnet.RenderHosts(p) {
-		fmt.Printf("  %s\n", h)
+	for _, hostLine := range hostnet.RenderHosts(plan) {
+		fmt.Printf("  %s\n", hostLine)
 	}
 }

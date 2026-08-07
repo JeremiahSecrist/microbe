@@ -61,8 +61,8 @@ func VolumeImagePath(base, stack, name string) string {
 // filesystem directly onto the file's bytes, which only works unprivileged
 // for a raw layout — a qcow2 container needs qemu-nbd (root) to expose it as
 // a block device first. The renderer declares imageType = "raw" to match.
-// The command goes through r so tests can record it.
-func EnsureVolume(r cmdrun.Runner, base, stack, name, size, fsType string) (string, error) {
+// The command goes through run so tests can record it.
+func EnsureVolume(run cmdrun.Runner, base, stack, name, size, fsType string) (string, error) {
 	path := VolumeImagePath(base, stack, name)
 	if _, err := os.Stat(path); err == nil {
 		return path, nil
@@ -74,10 +74,10 @@ func EnsureVolume(r cmdrun.Runner, base, stack, name, size, fsType string) (stri
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
-	if err := r("qemu-img", "create", "-f", "raw", "-o", fmt.Sprintf("size=%dM", miB), path); err != nil {
+	if err := run("qemu-img", "create", "-f", "raw", "-o", fmt.Sprintf("size=%dM", miB), path); err != nil {
 		return "", err
 	}
-	if err := r("mkfs."+fsType, path); err != nil {
+	if err := run("mkfs."+fsType, path); err != nil {
 		return "", err
 	}
 	return path, nil

@@ -25,27 +25,27 @@ func newDownCmd() *cobra.Command {
 		Use:   "down [services...]",
 		Short: "Stop services and tear down host resources",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			r := cmdrun.Shell()
+			runner := cmdrun.Shell()
 			if dryRun {
-				r = cmdrun.Dry(os.Stdout)
+				runner = cmdrun.Dry(os.Stdout)
 			}
 			var ops provisiond.Ops
 			if dryRun {
 				ops = printOps{out: os.Stdout}
 			} else {
-				c, err := provisiond.Dial(provisiond.SocketPath)
+				conn, err := provisiond.Dial(provisiond.SocketPath)
 				if err != nil {
 					return err
 				}
-				defer c.Close()
-				ops = c
+				defer conn.Close()
+				ops = conn
 			}
 			return downRun(args, downOptions{
 				file:          file,
 				dryRun:        dryRun,
 				removeVolumes: removeVolumes,
 				base:          ".microbe",
-				runner:        r,
+				runner:        runner,
 				ops:           ops,
 				out:           os.Stdout,
 			})
@@ -65,8 +65,8 @@ type downOptions struct {
 	out           io.Writer
 }
 
-func downRun(args []string, o downOptions) error {
-	store, err := state.Load(filepath.Join(o.base, "state.json"))
+func downRun(args []string, opts downOptions) error {
+	store, err := state.Load(filepath.Join(opts.base, "state.json"))
 	if err != nil {
 		return err
 	}
@@ -85,19 +85,19 @@ func downRun(args []string, o downOptions) error {
 			return fmt.Errorf("no service %q in state", name)
 		}
 		if svc.PID > 0 {
-			fmt.Fprintf(o.out, "stopping %s (pid %d)\n", name, svc.PID)
-			if !o.dryRun {
+			fmt.Fprintf(opts.out, "stopping %s (pid %d)\n", name, svc.PID)
+			if !opts.dryRun {
 				if err := stopService(context.Background(), svc.PID, runtime.StopGrace); err != nil {
 					return err
 				}
 			}
 		}
-		svc.Status = "stopped"
+		svc.Status = serviceStatusStopped
 		svc.PID = 0
 		store.Services[name] = svc
 	}
 
-	cfg, err := config.Load(o.file)
+	cfg, err := config.Load(opts.file)
 	if err != nil {
 		return err
 	}
@@ -118,17 +118,17 @@ func downRun(args []string, o downOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := teardownHost(o.ops, st.Name, nets, taps, ports); err != nil {
+	if err := teardownHost(opts.ops, st.Name, nets, taps, ports); err != nil {
 		return err
 	}
 
-	if o.removeVolumes {
+	if opts.removeVolumes {
 		for _, name := range selected {
 			svc := store.Services[name]
 			for _, vol := range svc.Volumes {
-				path := runtime.VolumeImagePath(o.base, store.Stack, vol)
-				fmt.Fprintf(o.out, "removing volume %s\n", path)
-				if !o.dryRun {
+				path := runtime.VolumeImagePath(opts.base, store.Stack, vol)
+				fmt.Fprintf(opts.out, "removing volume %s\n", path)
+				if !opts.dryRun {
 					if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 						return err
 					}
@@ -141,8 +141,8 @@ func downRun(args []string, o downOptions) error {
 		}
 	}
 
-	if !o.dryRun {
-		if err := store.Save(filepath.Join(o.base, "state.json")); err != nil {
+	if !opts.dryRun {
+		if err := store.Save(filepath.Join(opts.base, "state.json")); err != nil {
 			return err
 		}
 	}

@@ -47,12 +47,12 @@ func newBuildCmd() *cobra.Command {
 				if _, ok := st.Services[svc]; !ok {
 					return fmt.Errorf("no service %q", svc)
 				}
-				out := filepath.Join(dir, "runners", svc)
+				outLink := filepath.Join(dir, "runners", svc)
 				if dryRun {
-					fmt.Printf("nix build .#nixosConfigurations.%s.config.microvm.declaredRunner -> %s\n", svc, out)
+					fmt.Printf("nix build .#nixosConfigurations.%s.config.microvm.declaredRunner -> %s\n", svc, outLink)
 					continue
 				}
-				path, err := nix.BuildRunner(dir, svc, out)
+				path, err := nix.BuildRunner(dir, svc, outLink)
 				if err != nil {
 					return err
 				}

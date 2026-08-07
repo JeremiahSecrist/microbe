@@ -35,30 +35,30 @@ func (NetOps) ApplyPorts(ports []hostnet.PortSpec) error {
 	if err != nil {
 		return fmt.Errorf("provisiond: nftables: %w", err)
 	}
-	t, chain, err := ensureNatChain(c)
+	table, chain, err := ensureNatChain(c)
 	if err != nil {
 		return err
 	}
-	existing, err := c.GetRules(t, chain)
+	existing, err := c.GetRules(table, chain)
 	if err != nil {
 		return fmt.Errorf("provisiond: list DNAT rules: %w", err)
 	}
 	have := map[string]bool{}
-	for _, r := range existing {
-		if f := userDataFingerprint(r.UserData); f != "" {
-			have[f] = true
+	for _, rule := range existing {
+		if tag := userDataFingerprint(rule.UserData); tag != "" {
+			have[tag] = true
 		}
 	}
-	for _, p := range ports {
-		fp := fingerprint(p)
+	for _, port := range ports {
+		fp := fingerprint(port)
 		if have[fp] {
 			continue
 		}
 		c.AddRule(&nftables.Rule{
-			Table:    t,
+			Table:    table,
 			Chain:    chain,
 			UserData: []byte(fp),
-			Exprs:    dnatExprs(p),
+			Exprs:    dnatExprs(port),
 		})
 	}
 	return c.Flush()
@@ -70,22 +70,22 @@ func (NetOps) TeardownPorts(ports []hostnet.PortSpec) error {
 	if err != nil {
 		return fmt.Errorf("provisiond: nftables: %w", err)
 	}
-	t, chain, err := ensureNatChain(c)
+	table, chain, err := ensureNatChain(c)
 	if err != nil {
 		return err
 	}
-	existing, err := c.GetRules(t, chain)
+	existing, err := c.GetRules(table, chain)
 	if err != nil {
 		return fmt.Errorf("provisiond: list DNAT rules: %w", err)
 	}
 	want := map[string]bool{}
-	for _, p := range ports {
-		want[fingerprint(p)] = true
+	for _, port := range ports {
+		want[fingerprint(port)] = true
 	}
-	for _, r := range existing {
-		if f := userDataFingerprint(r.UserData); want[f] {
-			if err := c.DelRule(r); err != nil {
-				return fmt.Errorf("provisiond: delete DNAT rule %s: %w", f, err)
+	for _, rule := range existing {
+		if tag := userDataFingerprint(rule.UserData); want[tag] {
+			if err := c.DelRule(rule); err != nil {
+				return fmt.Errorf("provisiond: delete DNAT rule %s: %w", tag, err)
 			}
 		}
 	}

@@ -12,6 +12,24 @@ import (
 	"microbe/internal/netutil"
 )
 
+const (
+	// firstGuestCID is the vsock CID assigned to the first service in a
+	// stack. CIDs 0-2 are reserved by vsock convention for the host and
+	// well-known services, so guest CIDs start counting up from here.
+	firstGuestCID = 3
+
+	// maxTapNameLen is the longest tap interface name the kernel accepts
+	// (Linux caps interface names, including the NUL terminator, at
+	// IFNAMSIZ=16, leaving 15 usable characters).
+	maxTapNameLen = 15
+
+	// tapHashLen is the length of the hex-encoded hash suffix used for a
+	// tap name once the readable form exceeds maxTapNameLen. Combined with
+	// the 4-character "mvc-" prefix this yields a name exactly
+	// maxTapNameLen characters long.
+	tapHashLen = maxTapNameLen - len("mvc-")
+)
+
 // Stack is the CLI-side model of a rendered stack: enough data to emit
 // generated.nix (spec §9.2) and the flake (spec §9.3).
 type Stack struct {
@@ -26,7 +44,7 @@ type Service struct {
 	IPs      map[string]string
 	Gateway  map[string]string
 	Prefix   map[string]int
-	Taps     map[string]string // net -> host tap id (≤15 chars)
+	Taps     map[string]string // net -> host tap id (see maxTapNameLen)
 
 	// VolumeImages maps disk volume name to its absolute qcow2 path on the
 	// host, populated by the caller (up.go knows the CLI's base dir). Empty
@@ -41,8 +59,7 @@ type Host struct {
 }
 
 // FromConfig builds a Stack from a validated compose file and its network
-// plan. CIDs are assigned 3, 4, ... in service-name order (vsock convention
-// reserves 0-2 for host/services).
+// plan. CIDs are assigned starting at firstGuestCID in service-name order.
 func FromConfig(cfg *config.Compose, plan *hostnet.NetworkPlan) (*Stack, error) {
 	st := &Stack{Name: cfg.Name, Services: map[string]Service{}}
 	names := make([]string, 0, len(cfg.Services))
@@ -53,7 +70,7 @@ func FromConfig(cfg *config.Compose, plan *hostnet.NetworkPlan) (*Stack, error) 
 	for i, name := range names {
 		svcCfg := cfg.Services[name]
 		s := Service{
-			CID:      i + 3,
+			CID:      i + firstGuestCID,
 			Networks: declaredNets(svcCfg),
 			MACs:     plan.MACs[name],
 			IPs:      plan.IPs[name],
@@ -84,15 +101,15 @@ func declaredNets(svc config.Service) []string {
 }
 
 // TapID returns the host-side tap name for a service's interface: readable
-// "mvc-<stack>-<svc>-<net>" when it fits, else a deterministic 15-char
-// hash-based name (Linux interface names are capped at IFNAMSIZ=15).
+// "mvc-<stack>-<svc>-<net>" when it fits within maxTapNameLen, else a
+// deterministic hash-based name of the same length.
 func TapID(stack, svc, net string) string {
 	full := "mvc-" + stack + "-" + svc + "-" + net
-	if len(full) <= 15 {
+	if len(full) <= maxTapNameLen {
 		return full
 	}
 	sum := sha256.Sum256([]byte(full))
-	return "mvc-" + hex.EncodeToString(sum[:])[:11]
+	return "mvc-" + hex.EncodeToString(sum[:])[:tapHashLen]
 }
 
 // Names returns the sorted service names in the stack.

@@ -5,6 +5,18 @@ import (
 	"encoding/hex"
 )
 
+// maxIfNameLen is Linux's interface name length cap (IFNAMSIZ, including the
+// NUL terminator leaves 15 usable bytes). Tap and bridge names must fit
+// within this.
+const maxIfNameLen = 15
+
+// bridgePrefix is prepended to every bridge name, readable or hashed.
+const bridgePrefix = "br-"
+
+// hashedNameLen is the hex digest length used for a hashed bridge name, sized
+// so bridgePrefix+hash stays within maxIfNameLen.
+const hashedNameLen = maxIfNameLen - len(bridgePrefix)
+
 // Host resource specs. The lifecycle commands (M4) build these from the
 // network plan and stack, then ship them to the microbe-provisiond daemon,
 // which applies them via netlink/nftables.
@@ -42,10 +54,10 @@ type PortSpec struct {
 // "br-<stack>-<net>" when it fits, else a deterministic 15-char hash-based
 // name (Linux interface names are capped at IFNAMSIZ=15).
 func BridgeName(stack, net string) string {
-	full := "br-" + stack + "-" + net
-	if len(full) <= 15 {
+	full := bridgePrefix + stack + "-" + net
+	if len(full) <= maxIfNameLen {
 		return full
 	}
 	sum := sha256.Sum256([]byte(full))
-	return "br-" + hex.EncodeToString(sum[:])[:12]
+	return bridgePrefix + hex.EncodeToString(sum[:])[:hashedNameLen]
 }

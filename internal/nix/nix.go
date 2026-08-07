@@ -16,8 +16,8 @@ import (
 // input inside a git repo is resolved via git, and gitignored directories
 // (like .microbe/) are excluded from that tree, which would make the flake
 // appear to have no flake.nix.
-func BuildRunner(dir, svc, outLink string) (string, error) {
-	target := ".#nixosConfigurations." + svc + ".config.microvm.declaredRunner"
+func BuildRunner(dir, service, outLink string) (string, error) {
+	target := ".#nixosConfigurations." + service + ".config.microvm.declaredRunner"
 
 	stage, err := os.MkdirTemp("", "microbe-build-")
 	if err != nil {
@@ -38,7 +38,7 @@ func BuildRunner(dir, svc, outLink string) (string, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("nix build %s failed: %w\n%s", svc, err, stderr.String())
+		return "", fmt.Errorf("nix build %s failed: %w\n%s", service, err, stderr.String())
 	}
 	return strings.TrimSpace(string(out)), nil
 }
@@ -64,11 +64,11 @@ func stageSource(src, dst string) error {
 	if err := os.MkdirAll(modsDst, 0o755); err != nil {
 		return fmt.Errorf("nix: create %s: %w", modsDst, err)
 	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".nix") {
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".nix") {
 			continue
 		}
-		if err := copyFile(filepath.Join(modsSrc, e.Name()), filepath.Join(modsDst, e.Name())); err != nil {
+		if err := copyFile(filepath.Join(modsSrc, entry.Name()), filepath.Join(modsDst, entry.Name())); err != nil {
 			return err
 		}
 	}

@@ -39,6 +39,8 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
+// Execute runs the microbe CLI: it builds the root command tree and parses
+// os.Args, returning any error the invoked subcommand reports.
 func Execute() error {
 	return newRootCmd().Execute()
 }

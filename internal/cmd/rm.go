@@ -41,8 +41,8 @@ type rmOptions struct {
 	out   io.Writer
 }
 
-func rmRun(args []string, o rmOptions) error {
-	store, err := state.Load(filepath.Join(o.base, "state.json"))
+func rmRun(args []string, opts rmOptions) error {
+	store, err := state.Load(filepath.Join(opts.base, "state.json"))
 	if err != nil {
 		return err
 	}
@@ -55,19 +55,19 @@ func rmRun(args []string, o rmOptions) error {
 		sort.Strings(selected)
 	}
 	if len(selected) == 0 {
-		fmt.Fprintln(o.out, "no services to remove")
+		fmt.Fprintln(opts.out, "no services to remove")
 		return nil
 	}
 
-	if !o.force {
-		fmt.Fprintf(o.out, "remove %s and their disks? [y/N] ", strings.Join(selected, ", "))
-		line, err := bufio.NewReader(o.stdin).ReadString('\n')
+	if !opts.force {
+		fmt.Fprintf(opts.out, "remove %s and their disks? [y/N] ", strings.Join(selected, ", "))
+		line, err := bufio.NewReader(opts.stdin).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
 		ans := strings.ToLower(strings.TrimSpace(line))
 		if ans != "y" && ans != "yes" {
-			fmt.Fprintln(o.out, "aborted")
+			fmt.Fprintln(opts.out, "aborted")
 			return nil
 		}
 	}
@@ -78,8 +78,8 @@ func rmRun(args []string, o rmOptions) error {
 			return fmt.Errorf("no service %q in state", name)
 		}
 		for _, vol := range svc.Volumes {
-			path := runtime.VolumeImagePath(o.base, store.Stack, vol)
-			fmt.Fprintf(o.out, "removing %s\n", path)
+			path := runtime.VolumeImagePath(opts.base, store.Stack, vol)
+			fmt.Fprintf(opts.out, "removing %s\n", path)
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return err
 			}
@@ -90,5 +90,5 @@ func rmRun(args []string, o rmOptions) error {
 		}
 	}
 
-	return store.Save(filepath.Join(o.base, "state.json"))
+	return store.Save(filepath.Join(opts.base, "state.json"))
 }

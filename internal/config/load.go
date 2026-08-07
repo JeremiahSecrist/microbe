@@ -13,6 +13,10 @@ const (
 	DefaultHypervisor = "cloud-hypervisor"
 )
 
+// Parse decodes a Compose document from JSON and fills in any omitted
+// fields (schema version, per-service resource sizing, volume defaults)
+// with their standard values. It does not validate the result; call
+// Compose.Validate for that.
 func Parse(data []byte) (*Compose, error) {
 	var c Compose
 	if err := json.Unmarshal(data, &c); err != nil {
@@ -22,9 +26,11 @@ func Parse(data []byte) (*Compose, error) {
 	return &c, nil
 }
 
+// applyDefaults fills in zero-valued fields of c with the package's
+// standard defaults, in place.
 func applyDefaults(c *Compose) {
 	if c.SchemaVersion == 0 {
-		c.SchemaVersion = 1
+		c.SchemaVersion = CurrentSchemaVersion
 	}
 	for name, svc := range c.Services {
 		if svc.VCPUs == 0 {
@@ -55,6 +61,8 @@ func applyDefaults(c *Compose) {
 	}
 }
 
+// Load reads a Compose stack from path, evaluating it with Eval if it's a
+// Nix module (".nix" suffix) or parsing it directly as JSON otherwise.
 func Load(path string) (*Compose, error) {
 	var data []byte
 	var err error

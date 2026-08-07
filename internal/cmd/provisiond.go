@@ -38,6 +38,10 @@ func newProvisiondCmd() *cobra.Command {
 	}
 }
 
+// systemdListenFDStart is SD_LISTEN_FDS_START: systemd always hands the
+// first socket-activated fd to the child process as fd 3.
+const systemdListenFDStart = 3
+
 // socketActivatedServer returns the provisiond server wired to systemd's
 // passed-in socket (LISTEN_FDS), or nil if not socket-activated.
 func socketActivatedServer() (*provisiond.Server, error) {
@@ -48,14 +52,13 @@ func socketActivatedServer() (*provisiond.Server, error) {
 	if _, err := fmt.Sscanf(os.Getenv("LISTEN_FDS"), "%d", &fds); err != nil || fds < 1 {
 		return nil, errors.New("provisiond: invalid LISTEN_FDS")
 	}
-	// systemd passes the first socket as fd 3 (SD_LISTEN_FDS_START).
-	f := os.NewFile(3, "microbe.sock")
-	if f == nil {
+	sockFile := os.NewFile(systemdListenFDStart, "microbe.sock")
+	if sockFile == nil {
 		return nil, errors.New("provisiond: no socket passed by systemd (fd 3)")
 	}
-	ln, err := net.FileListener(f)
+	ln, err := net.FileListener(sockFile)
 	if err != nil {
-		f.Close()
+		sockFile.Close()
 		return nil, fmt.Errorf("provisiond: adopt fd 3: %w", err)
 	}
 	return provisiond.NewServer(ln, provisiond.NetOps{}), nil

@@ -23,27 +23,27 @@ func newUpCmd() *cobra.Command {
 		Use:   "up [services...]",
 		Short: "Build, provision and start the stack",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			r := cmdrun.Shell()
+			runner := cmdrun.Shell()
 			if dryRun {
-				r = cmdrun.Dry(os.Stdout)
+				runner = cmdrun.Dry(os.Stdout)
 			}
 			var ops provisiond.Ops
 			if dryRun {
 				ops = printOps{out: os.Stdout}
 			} else if !noProvision {
-				c, err := provisiond.Dial(provisiond.SocketPath)
+				conn, err := provisiond.Dial(provisiond.SocketPath)
 				if err != nil {
 					return err
 				}
-				defer c.Close()
-				ops = c
+				defer conn.Close()
+				ops = conn
 			}
 			return upRun(args, upOptions{
 				file:        file,
 				dryRun:      dryRun,
 				noProvision: noProvision,
 				base:        ".microbe",
-				runner:      r,
+				runner:      runner,
 				ops:         ops,
 				out:         os.Stdout,
 			})
@@ -64,35 +64,38 @@ type upOptions struct {
 }
 
 // attachVolumeImages populates each service's disk volumes with the absolute
-// on-host qcow2 path (runtime.VolumeImagePath is relative to o.base), so
+// on-host qcow2 path (runtime.VolumeImagePath is relative to base), so
 // generated.nix carries a path renderer.nix can use regardless of the
 // runner's CWD.
 func attachVolumeImages(base string, cfg *config.Compose, st *flakegen.Stack) error {
 	for name, svcCfg := range cfg.Services {
-		s, ok := st.Services[name]
+		svc, ok := st.Services[name]
 		if !ok {
 			continue
 		}
-		for _, v := range svcCfg.Volumes {
-			if v.Type != "disk" {
+		for _, vol := range svcCfg.Volumes {
+			if vol.Type != volumeTypeDisk {
 				continue
 			}
-			abs, err := filepath.Abs(runtime.VolumeImagePath(base, cfg.Name, v.Name))
+			abs, err := filepath.Abs(runtime.VolumeImagePath(base, cfg.Name, vol.Name))
 			if err != nil {
 				return err
 			}
-			if s.VolumeImages == nil {
-				s.VolumeImages = map[string]string{}
+			if svc.VolumeImages == nil {
+				svc.VolumeImages = map[string]string{}
 			}
-			s.VolumeImages[v.Name] = abs
+			svc.VolumeImages[vol.Name] = abs
 		}
-		st.Services[name] = s
+		st.Services[name] = svc
 	}
 	return nil
 }
 
-func upRun(args []string, o upOptions) error {
-	cfg, err := config.Load(o.file)
+// defaultVolumeFsType is applied to disk volumes that don't specify one.
+const defaultVolumeFsType = "ext4"
+
+func upRun(args []string, opts upOptions) error {
+	cfg, err := config.Load(opts.file)
 	if err != nil {
 		return err
 	}
@@ -107,14 +110,14 @@ func upRun(args []string, o upOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := attachVolumeImages(o.base, cfg, st); err != nil {
+	if err := attachVolumeImages(opts.base, cfg, st); err != nil {
 		return err
 	}
 
-	if err := flakegen.WriteStack(o.base, st, o.file); err != nil {
+	if err := flakegen.WriteStack(opts.base, st, opts.file); err != nil {
 		return err
 	}
-	fmt.Fprintf(o.out, "rendered %s\n", o.base)
+	fmt.Fprintf(opts.out, "rendered %s\n", opts.base)
 
 	selected := args
 	if len(selected) == 0 {
@@ -127,26 +130,26 @@ func upRun(args []string, o upOptions) error {
 	}
 
 	for _, svc := range selected {
-		outLink := filepath.Join(o.base, "runners", svc)
-		if o.dryRun {
-			fmt.Fprintf(o.out, "nix build .#nixosConfigurations.%s.config.microvm.declaredRunner -> %s\n", svc, outLink)
+		outLink := filepath.Join(opts.base, "runners", svc)
+		if opts.dryRun {
+			fmt.Fprintf(opts.out, "nix build .#nixosConfigurations.%s.config.microvm.declaredRunner -> %s\n", svc, outLink)
 			continue
 		}
-		path, err := buildRunner(o.base, svc, outLink)
+		path, err := buildRunner(opts.base, svc, outLink)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(o.out, "%s -> %s\n", svc, path)
+		fmt.Fprintf(opts.out, "%s -> %s\n", svc, path)
 	}
 
-	if !o.noProvision {
+	if !opts.noProvision {
 		nets := netSpecs(st)
 		taps := tapSpecs(st)
 		ports, err := portSpecs(cfg, st)
 		if err != nil {
 			return err
 		}
-		if err := provisionHost(o.ops, st.Name, nets, taps, ports); err != nil {
+		if err := provisionHost(opts.ops, st.Name, nets, taps, ports); err != nil {
 			return err
 		}
 	}
@@ -158,41 +161,41 @@ func upRun(args []string, o upOptions) error {
 
 	pids := map[string]int{}
 	for _, svc := range order {
-		if o.dryRun {
-			fmt.Fprintf(o.out, "start %s\n", svc)
+		if opts.dryRun {
+			fmt.Fprintf(opts.out, "start %s\n", svc)
 			continue
 		}
-		for _, v := range cfg.Services[svc].Volumes {
-			if v.Type != "disk" {
+		for _, vol := range cfg.Services[svc].Volumes {
+			if vol.Type != volumeTypeDisk {
 				continue
 			}
-			fsType := v.FsType
+			fsType := vol.FsType
 			if fsType == "" {
-				fsType = "ext4"
+				fsType = defaultVolumeFsType
 			}
-			path, err := runtime.EnsureVolume(o.runner, o.base, cfg.Name, v.Name, v.Size, fsType)
+			path, err := runtime.EnsureVolume(opts.runner, opts.base, cfg.Name, vol.Name, vol.Size, fsType)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(o.out, "volume %s\n", path)
+			fmt.Fprintf(opts.out, "volume %s\n", path)
 		}
 		pid, err := startService(context.Background(),
-			filepath.Join(o.base, "runners", svc),
-			filepath.Join(o.base, "runs", svc),
-			filepath.Join(o.base, "logs", svc+".log"))
+			filepath.Join(opts.base, "runners", svc),
+			filepath.Join(opts.base, "runs", svc),
+			filepath.Join(opts.base, "logs", svc+".log"))
 		if err != nil {
 			return err
 		}
 		pids[svc] = pid
-		fmt.Fprintf(o.out, "started %s (pid %d)\n", svc, pid)
+		fmt.Fprintf(opts.out, "started %s (pid %d)\n", svc, pid)
 	}
 
-	if !o.dryRun {
-		store := buildStore(cfg, st, pids, filepath.Join(o.base, "runners"))
-		if err := store.Save(filepath.Join(o.base, "state.json")); err != nil {
+	if !opts.dryRun {
+		store := buildStore(cfg, st, pids, filepath.Join(opts.base, "runners"))
+		if err := store.Save(filepath.Join(opts.base, "state.json")); err != nil {
 			return err
 		}
-		printStore(o.out, store)
+		printStore(opts.out, store)
 	}
 	return nil
 }

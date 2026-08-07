@@ -10,10 +10,32 @@ import (
 	"microbe/internal/netutil"
 )
 
-var nameRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+// maxNameLen is the longest permitted stack, network, or service name
+// (excluding the required first character), matched by nameRe.
+const maxNameLen = 31
 
+// minSubnetBits and maxSubnetBits bound the accepted network prefix length:
+// large enough to always have a usable host range, small enough to keep
+// per-network address space reasonable.
+const (
+	minSubnetBits = 16
+	maxSubnetBits = 30
+)
+
+// minHostPort and maxHostPort are the valid range for a TCP/UDP port number.
+const (
+	minHostPort = 1
+	maxHostPort = 65535
+)
+
+var nameRe = regexp.MustCompile(fmt.Sprintf(`^[a-z][a-z0-9_-]{0,%d}$`, maxNameLen))
+
+// Validate checks that c is internally consistent: schema version,
+// name formats, subnet layout, service network attachments, port
+// uniqueness, dependsOn references, and volume definitions. It returns the
+// first error found.
 func (c *Compose) Validate() error {
-	if c.SchemaVersion != 1 {
+	if c.SchemaVersion != CurrentSchemaVersion {
 		return fmt.Errorf("config: unsupported schemaVersion %d", c.SchemaVersion)
 	}
 	if !nameRe.MatchString(c.Name) {
@@ -54,14 +76,14 @@ func (c *Compose) Validate() error {
 func (c *Compose) validateSubnets() error {
 	prefixes := make(map[string]netip.Prefix, len(c.Networks))
 	for name, net := range c.Networks {
-		p, err := netip.ParsePrefix(net.Subnet)
+		prefix, err := netip.ParsePrefix(net.Subnet)
 		if err != nil {
 			return fmt.Errorf("config: network %q: invalid subnet %q: %w", name, net.Subnet, err)
 		}
-		if !p.Addr().Is4() || p.Bits() < 16 || p.Bits() > 30 {
-			return fmt.Errorf("config: network %q: subnet must be an IPv4 /16../30", name)
+		if !prefix.Addr().Is4() || prefix.Bits() < minSubnetBits || prefix.Bits() > maxSubnetBits {
+			return fmt.Errorf("config: network %q: subnet must be an IPv4 /%d../%d", name, minSubnetBits, maxSubnetBits)
 		}
-		prefixes[name] = p
+		prefixes[name] = prefix
 	}
 	names := make([]string, 0, len(c.Networks))
 	for name := range c.Networks {
@@ -83,32 +105,32 @@ func (c *Compose) validateAttaches() error {
 		staticByNet[netName] = map[string]string{}
 	}
 	for svcName, svc := range c.Services {
-		for _, a := range svc.Networks {
-			net, ok := c.Networks[a.Name]
+		for _, attach := range svc.Networks {
+			net, ok := c.Networks[attach.Name]
 			if !ok {
-				return fmt.Errorf("config: service %q: unknown network %q", svcName, a.Name)
+				return fmt.Errorf("config: service %q: unknown network %q", svcName, attach.Name)
 			}
-			if a.IP == "" {
+			if attach.IP == "" {
 				continue
 			}
-			ip, err := netip.ParseAddr(a.IP)
+			ip, err := netip.ParseAddr(attach.IP)
 			if err != nil {
-				return fmt.Errorf("config: service %q: invalid ip %q: %w", svcName, a.IP, err)
+				return fmt.Errorf("config: service %q: invalid ip %q: %w", svcName, attach.IP, err)
 			}
-			p, err := netip.ParsePrefix(net.Subnet)
+			prefix, err := netip.ParsePrefix(net.Subnet)
 			if err != nil {
-				return fmt.Errorf("config: network %q: invalid subnet %q: %w", a.Name, net.Subnet, err)
+				return fmt.Errorf("config: network %q: invalid subnet %q: %w", attach.Name, net.Subnet, err)
 			}
-			if !p.Contains(ip) {
-				return fmt.Errorf("config: service %q: ip %q outside %q", svcName, a.IP, net.Subnet)
+			if !prefix.Contains(ip) {
+				return fmt.Errorf("config: service %q: ip %q outside %q", svcName, attach.IP, net.Subnet)
 			}
-			if ip == p.Masked().Addr() || ip == netutil.Gateway(p) || ip == netutil.Broadcast(p) {
-				return fmt.Errorf("config: service %q: ip %q is reserved in %q", svcName, a.IP, net.Subnet)
+			if ip == prefix.Masked().Addr() || ip == netutil.Gateway(prefix) || ip == netutil.Broadcast(prefix) {
+				return fmt.Errorf("config: service %q: ip %q is reserved in %q", svcName, attach.IP, net.Subnet)
 			}
-			if prev, dup := staticByNet[a.Name][a.IP]; dup {
-				return fmt.Errorf("config: duplicate static ip %q on %q (%s, %s)", a.IP, a.Name, prev, svcName)
+			if prev, dup := staticByNet[attach.Name][attach.IP]; dup {
+				return fmt.Errorf("config: duplicate static ip %q on %q (%s, %s)", attach.IP, attach.Name, prev, svcName)
 			}
-			staticByNet[a.Name][a.IP] = svcName
+			staticByNet[attach.Name][attach.IP] = svcName
 		}
 	}
 	return nil
@@ -117,10 +139,10 @@ func (c *Compose) validateAttaches() error {
 func (c *Compose) validatePorts() error {
 	seen := map[string]string{}
 	for svcName, svc := range c.Services {
-		for _, pm := range svc.Ports {
-			host := hostPort(pm)
+		for _, portMapping := range svc.Ports {
+			host := hostPort(portMapping)
 			if host == "" {
-				return fmt.Errorf("config: service %q: invalid port mapping %q", svcName, pm)
+				return fmt.Errorf("config: service %q: invalid port mapping %q", svcName, portMapping)
 			}
 			if prev, dup := seen[host]; dup {
 				return fmt.Errorf("config: duplicate host port %s (%s, %s)", host, prev, svcName)
@@ -211,22 +233,25 @@ func (c *Compose) validateVolumes() error {
 	return nil
 }
 
-func hostPort(pm string) string {
-	host := pm
-	if j := strings.Index(host, "/"); j >= 0 {
-		host = host[:j]
+// hostPort extracts the host-side port number from a Docker Compose-style
+// port mapping (e.g. "8080:80", "127.0.0.1:8080:80/tcp"), returning it
+// normalized without leading zeros, or "" if the mapping is malformed.
+func hostPort(portMapping string) string {
+	host := portMapping
+	if slash := strings.Index(host, "/"); slash >= 0 {
+		host = host[:slash]
 	}
-	parts := strings.Split(host, ":")
-	switch len(parts) {
-	case 2:
-		host = parts[0]
-	case 3:
-		host = parts[1]
+	fields := strings.Split(host, ":")
+	switch len(fields) {
+	case 2: // hostPort:containerPort
+		host = fields[0]
+	case 3: // hostIP:hostPort:containerPort
+		host = fields[1]
 	default:
 		return ""
 	}
-	if n, err := strconv.Atoi(host); err == nil && n >= 1 && n <= 65535 {
-		return strconv.Itoa(n)
+	if port, err := strconv.Atoi(host); err == nil && port >= minHostPort && port <= maxHostPort {
+		return strconv.Itoa(port)
 	}
 	return ""
 }
