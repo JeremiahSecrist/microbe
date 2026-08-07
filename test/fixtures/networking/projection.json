@@ -9,9 +9,10 @@
     "db": {
       "configPresent": true,
       "volumes": [
-        { "type": "disk", "name": "db-data", "target": "/var/lib/db", "size": "2G" }
+        { "type": "disk", "name": "db-data", "target": "/var/lib/postgresql", "size": "2G" }
       ],
-      "networks": [ { "name": "backend", "ip": "192.168.51.2" } ]
+      "networks": [ { "name": "backend", "ip": "192.168.51.2" } ],
+      "ports": [ "5432:5432" ]
     },
     "web": {
       "configPresent": true,
