@@ -12,11 +12,29 @@
   outputs = { self, nixpkgs, microvm }:
     let
       system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system};
 
-      # The ISO image is built from this configuration.
+      # The microbe CLI, built from this repo. Dependencies are vendored in
+      # ./vendor (vendorHash = null).
+      microbePkg = pkgs.buildGoModule {
+        pname = "microbe";
+        version = "0.1.0";
+        src = ./.;
+        vendorHash = null;
+      };
+
+      # The ISO image is built from this configuration. It is the intended
+      # microbe host, so it imports the host module and installs the CLI.
       iso = nixpkgs.lib.nixosSystem {
         inherit system;
-        modules = [ ./iso-config.nix ];
+        modules = [
+          ./iso-config.nix
+          ./modules/host.nix
+          {
+            virtualisation.microbe.enable = true;
+            virtualisation.microbe.package = microbePkg;
+          }
+        ];
       };
 
       # The MicroVM is built from the same shared SSH/admin config
@@ -31,10 +49,14 @@
     in
     {
       packages.${system} = {
+        microbe = microbePkg;
         iso = iso.config.system.build.isoImage;
         microvm = microvmCfg.config.microvm.declaredRunner;
         default = iso.config.system.build.isoImage;
       };
+
+      # NixOS module configuring a host to run microbe VMs.
+      nixosModules.host = import ./modules/host.nix;
 
       apps.${system} = {
         microvm = {

@@ -695,6 +695,32 @@ Dependencies (keep minimal):
 - Bridges/taps/DNAT require root. CLI uses `sudo`-style privilege helpers and
   fails fast with clear messages when capabilities are missing; documents the
   required setcap or systemd-udevd setup.
+
+### 13.1 Host NixOS module (`modules/host.nix`)
+
+A host that runs microbe needs kernel/networking readiness, the tools the CLI
+shells out to, and device access. The flake ships a NixOS module,
+`nixosModules.host` (option namespace `virtualisation.microbe`, modeled after
+`virtualisation/docker.nix`):
+
+- **Kernel modules**: `tun`, `br_netfilter`, `vhost`, `vhost_net`, and
+  `kvm_intel`/`kvm_amd` (modprobe warns harmlessly when the CPU lacks the
+  feature).
+- **Sysctls** (priority 98, so user config can override): `net.ipv4.ip_forward`
+  + per-interface forwarding, and `net.bridge.bridge-nf-call-{ip,ip6}tables` so
+  the iptables DNAT that publishes VM ports sees bridged traffic.
+- **Packages**: `iproute2`, `iptables`, `qemu-utils` (`qemu-img` for VM volume
+  images), plus the `microbe` CLI when `virtualisation.microbe.package` is set
+  (the flake sets it to `packages.<system>.microbe`).
+- **Device access**: `microbe` and `kvm` groups; udev rules granting them
+  `/dev/net/tun` and `/dev/kvm`; `virtualisation.microbe.users` adds named
+  users to both groups. Bridge/tap/iptables provisioning still needs root.
+- The module is inert unless `virtualisation.microbe.enable = true`. The
+  ISO target in the repo flake enables it.
+
+The CLI package is built with `pkgs.buildGoModule` (`vendorHash = null`) from
+the vendored `./vendor` directory, so it builds offline.
+
 - All state/config paths stay inside the project dir; no writes outside
   `.microbe/` except host network changes.
 - Passwords/secrets: guest configs should use `users.users.<u>.hashedPassword`
