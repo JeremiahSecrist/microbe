@@ -1,9 +1,12 @@
 package config
 
+import "encoding/json"
+
 type Compose struct {
-	Name     string             `json:"name"`
-	Networks map[string]Network `json:"networks"`
-	Services map[string]Service `json:"services"`
+	SchemaVersion int                `json:"schemaVersion"`
+	Name          string             `json:"name"`
+	Networks      map[string]Network `json:"networks"`
+	Services      map[string]Service `json:"services"`
 }
 
 type Network struct {
@@ -30,11 +33,27 @@ type Volume struct {
 	Host     string `json:"host"`
 	Mode     string `json:"mode"`
 	Protocol string `json:"protocol"`
+	FsType   string `json:"fsType"`
 }
 
 type Attach struct {
 	Name string `json:"name"`
 	IP   string `json:"ip"`
+}
+
+func (a *Attach) UnmarshalJSON(b []byte) error {
+	var name string
+	if err := json.Unmarshal(b, &name); err == nil {
+		a.Name = name
+		return nil
+	}
+	type alias Attach
+	var x alias
+	if err := json.Unmarshal(b, &x); err != nil {
+		return err
+	}
+	*a = Attach(x)
+	return nil
 }
 
 type Healthcheck struct {
