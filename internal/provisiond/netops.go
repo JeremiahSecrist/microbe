@@ -12,6 +12,15 @@ import (
 // netops.go implements the Ops interface with netlink. It runs inside the root
 // daemon (microbe-provisiond) and never shells out to ip/iptables.
 
+// isLinkNotFound reports whether err is a "link does not exist" error from
+// vishvananda/netlink. LinkByName returns LinkNotFoundError by VALUE (not
+// pointer), so errors.As against *LinkNotFoundError misses it; match the value
+// type explicitly.
+func isLinkNotFound(err error) bool {
+	var nf netlink.LinkNotFoundError
+	return errors.As(err, &nf)
+}
+
 // NetOps is the netlink-backed Ops implementation.
 type NetOps struct{}
 
@@ -24,8 +33,7 @@ func (NetOps) EnsureNetworks(stack string, nets []hostnet.NetSpec) error {
 		b := hostnet.BridgeName(stack, n.Name)
 		link, err := netlink.LinkByName(b)
 		if err != nil {
-			var nf *netlink.LinkNotFoundError
-			if !errors.As(err, &nf) {
+			if !isLinkNotFound(err) {
 				return fmt.Errorf("provisiond: look up bridge %s: %w", b, err)
 			}
 			link = &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: b}}
@@ -52,13 +60,12 @@ func (NetOps) EnsureTaps(taps []hostnet.TapSpec) error {
 	for _, t := range taps {
 		link, err := netlink.LinkByName(t.Name)
 		if err != nil {
-			var nf *netlink.LinkNotFoundError
-			if !errors.As(err, &nf) {
+			if !isLinkNotFound(err) {
 				return fmt.Errorf("provisiond: look up tap %s: %w", t.Name, err)
 			}
 			link = &netlink.Tuntap{
-				LinkAttrs: netlink.LinkAttrs{Name: t.Name},
-				Mode:      netlink.TUNTAP_MODE_TAP,
+				LinkAttrs:  netlink.LinkAttrs{Name: t.Name},
+				Mode:       netlink.TUNTAP_MODE_TAP,
 				NonPersist: true,
 			}
 			if err := netlink.LinkAdd(link); err != nil {
