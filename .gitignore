@@ -1,3 +1,10 @@
 /result
 /nixos-26.11.20260802.6438090-x86_64-linux.iso
-/nixos-26.11.20260802.6438090-x86_64-linux.iso
+
+# Go
+/bin/
+*.test
+coverage.out
+
+# micro-compose runtime artifacts
+/.micro-compose/
