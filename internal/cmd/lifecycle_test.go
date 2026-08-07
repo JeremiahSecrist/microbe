@@ -14,6 +14,7 @@ import (
 	"microbe/internal/config"
 	"microbe/internal/hostnet"
 	"microbe/internal/nix/flakegen"
+	"microbe/internal/provisiond"
 	"microbe/internal/state"
 )
 
@@ -146,8 +147,36 @@ type hostRecorder struct {
 	ports []hostnet.PortSpec
 }
 
-func recordHost(hr *hostRecorder, events *[]string, tag string) func(cmdrun.Runner, string, *flakegen.Stack, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
-	return func(_ cmdrun.Runner, stack string, _ *flakegen.Stack, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
+// fakeOps records the daemon calls made through the provisionHost seam.
+type fakeOps struct {
+	ensureNetworks int
+	ensureTaps     int
+	applyPorts     int
+	stack          string
+}
+
+func (f *fakeOps) EnsureNetworks(stack string, nets []hostnet.NetSpec) error {
+	f.ensureNetworks++
+	f.stack = stack
+	return nil
+}
+
+func (f *fakeOps) EnsureTaps(taps []hostnet.TapSpec) error {
+	f.ensureTaps++
+	return nil
+}
+
+func (f *fakeOps) ApplyPorts(ports []hostnet.PortSpec) error {
+	f.applyPorts++
+	return nil
+}
+
+func (f *fakeOps) TeardownNetworks(stack string, nets []hostnet.NetSpec) error { return nil }
+func (f *fakeOps) TeardownTaps(taps []hostnet.TapSpec) error                   { return nil }
+func (f *fakeOps) TeardownPorts(ports []hostnet.PortSpec) error                { return nil }
+
+func recordHost(hr *hostRecorder, events *[]string, tag string) func(provisiond.Ops, string, *flakegen.Stack, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+	return func(_ provisiond.Ops, stack string, _ *flakegen.Stack, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
 		hr.calls++
 		hr.stack = stack
 		hr.nets = nets
@@ -166,15 +195,14 @@ func TestUpRunProvision(t *testing.T) {
 	_, st := loadStack(t, cfgPath)
 
 	var hr hostRecorder
-	origProvision, origBuild, origStart, origGeteuid := provisionHost, buildRunner, startService, geteuid
+	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
 	provisionHost = recordHost(&hr, nil, "provision")
 	buildRunner = func(dir, svc, outLink string) (string, error) {
 		return filepath.Join(dir, "runners", svc), nil
 	}
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
-	geteuid = func() int { return 0 }
 	defer func() {
-		provisionHost, buildRunner, startService, geteuid = origProvision, origBuild, origStart, origGeteuid
+		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
 	}()
 
 	rec := &cmdRecorder{}
@@ -237,6 +265,26 @@ func TestUpRunProvision(t *testing.T) {
 	}
 }
 
+func TestProvisionHostSeamForwardsToOps(t *testing.T) {
+	cfg, st := loadStack(t, writeConfig(t))
+	nets := netSpecs(st)
+	taps := tapSpecs(st)
+	ports, err := portSpecs(cfg, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := &fakeOps{}
+	if err := provisionHost(ops, st.Name, st, nets, taps, ports); err != nil {
+		t.Fatal(err)
+	}
+	if ops.ensureNetworks != 1 || ops.ensureTaps != 1 || ops.applyPorts != 1 {
+		t.Errorf("ops calls = %d/%d/%d, want 1/1/1", ops.ensureNetworks, ops.ensureTaps, ops.applyPorts)
+	}
+	if ops.stack != "test-net" {
+		t.Errorf("ops stack = %q, want test-net", ops.stack)
+	}
+}
+
 func TestUpRunDryRunNoRootNoStart(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
@@ -252,11 +300,11 @@ func TestUpRunDryRunNoRootNoStart(t *testing.T) {
 	defer func() { provisionHost, startService = origProvision, origStart }()
 
 	var buf bytes.Buffer
-	// geteuid left at the real value; dry-run must not require root.
+	// dry-run must not require a daemon; printOps prints the intended actions.
 	if err := upRun(nil, upOptions{
-		file: cfgPath, base: base, dryRun: true, runner: cmdrun.Dry(&buf), out: &buf,
+		file: cfgPath, base: base, dryRun: true, runner: cmdrun.Dry(&buf), ops: printOps{out: &buf}, out: &buf,
 	}); err != nil {
-		t.Fatalf("dry-run up errored (root check should be skipped): %v", err)
+		t.Fatalf("dry-run up errored: %v", err)
 	}
 	if started {
 		t.Error("dry-run started a service")
@@ -272,26 +320,26 @@ func TestUpRunDryRunNoRootNoStart(t *testing.T) {
 	}
 }
 
-func TestUpRunProvisionsAsNonRoot(t *testing.T) {
+func TestUpRunProvisionsViaDaemon(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
 
 	var hr hostRecorder
-	origProvision, origBuild, origStart, origGeteuid := provisionHost, buildRunner, startService, geteuid
+	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
 	provisionHost = recordHost(&hr, nil, "provision")
 	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1, nil }
-	geteuid = func() int { return 1000 }
 	defer func() {
-		provisionHost, buildRunner, startService, geteuid = origProvision, origBuild, origStart, origGeteuid
+		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
 	}()
 
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
-		t.Fatalf("non-root up errored (sudo path should be transparent): %v", err)
+	ops := &fakeOps{}
+	if err := upRun(nil, upOptions{file: cfgPath, base: base, ops: ops, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatalf("up errored: %v", err)
 	}
 	if hr.calls != 1 {
-		t.Errorf("provisionHost calls = %d, want 1 (provisioning must run as non-root)", hr.calls)
+		t.Errorf("provisionHost calls = %d, want 1", hr.calls)
 	}
 }
 
@@ -300,13 +348,12 @@ func TestUpRunNoProvision(t *testing.T) {
 	base := t.TempDir()
 
 	var hr hostRecorder
-	origProvision, origBuild, origStart, origGeteuid := provisionHost, buildRunner, startService, geteuid
+	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
 	provisionHost = recordHost(&hr, nil, "provision")
 	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1, nil }
-	geteuid = func() int { return 1000 }
 	defer func() {
-		provisionHost, buildRunner, startService, geteuid = origProvision, origBuild, origStart, origGeteuid
+		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
 	}()
 
 	var buf bytes.Buffer
@@ -331,15 +378,14 @@ func TestDownRunOrderingAndState(t *testing.T) {
 	var hr hostRecorder
 	var events []string
 	var stopped []int
-	origTeardown, origStop, origGeteuid := teardownHost, stopService, geteuid
+	origTeardown, origStop := teardownHost, stopService
 	teardownHost = recordHost(&hr, &events, "teardown")
 	stopService = func(_ context.Context, pid int, _ time.Duration) error {
 		stopped = append(stopped, pid)
 		events = append(events, "stop")
 		return nil
 	}
-	geteuid = func() int { return 0 }
-	defer func() { teardownHost, stopService, geteuid = origTeardown, origStop, origGeteuid }()
+	defer func() { teardownHost, stopService = origTeardown, origStop }()
 
 	var buf bytes.Buffer
 	if err := downRun(nil, downOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
@@ -391,11 +437,10 @@ func TestDownRunRemoveVolumes(t *testing.T) {
 	}
 
 	var hr hostRecorder
-	origTeardown, origStop, origGeteuid := teardownHost, stopService, geteuid
+	origTeardown, origStop := teardownHost, stopService
 	teardownHost = recordHost(&hr, nil, "teardown")
 	stopService = func(context.Context, int, time.Duration) error { return nil }
-	geteuid = func() int { return 0 }
-	defer func() { teardownHost, stopService, geteuid = origTeardown, origStop, origGeteuid }()
+	defer func() { teardownHost, stopService = origTeardown, origStop }()
 
 	var buf bytes.Buffer
 	if err := downRun(nil, downOptions{file: cfgPath, base: base, removeVolumes: true, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {

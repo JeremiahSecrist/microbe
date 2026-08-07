@@ -4,45 +4,42 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"microbe/internal/cmdrun"
 	"microbe/internal/config"
 	"microbe/internal/hostnet"
 	"microbe/internal/nix"
 	"microbe/internal/nix/flakegen"
+	"microbe/internal/provisiond"
 	"microbe/internal/runtime"
 	"microbe/internal/state"
 )
 
 // Seams over the host/process operations so tests can substitute fakes. The
-// defaults are the real, hostnet-backed implementations.
+// defaults are the real, daemon-backed implementations.
 var (
-	geteuid = func() int { return os.Geteuid() }
-
-	provisionHost = func(r cmdrun.Runner, stack string, st *flakegen.Stack, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
-		if err := hostnet.EnsureNetworks(r, stack, nets); err != nil {
+	provisionHost = func(ops provisiond.Ops, stack string, st *flakegen.Stack, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
+		if err := ops.EnsureNetworks(stack, nets); err != nil {
 			return err
 		}
-		if err := hostnet.EnsureTaps(r, taps); err != nil {
+		if err := ops.EnsureTaps(taps); err != nil {
 			return err
 		}
-		return hostnet.ApplyPorts(r, ports)
+		return ops.ApplyPorts(ports)
 	}
 
-	teardownHost = func(r cmdrun.Runner, stack string, st *flakegen.Stack, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
-		if err := hostnet.TeardownPorts(r, ports); err != nil {
+	teardownHost = func(ops provisiond.Ops, stack string, st *flakegen.Stack, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
+		if err := ops.TeardownPorts(ports); err != nil {
 			return err
 		}
-		if err := hostnet.TeardownTaps(r, taps); err != nil {
+		if err := ops.TeardownTaps(taps); err != nil {
 			return err
 		}
-		return hostnet.TeardownNetworks(r, stack, nets)
+		return ops.TeardownNetworks(stack, nets)
 	}
 
 	buildRunner = func(dir, svc, outLink string) (string, error) {
@@ -57,6 +54,54 @@ var (
 		return runtime.StopService(ctx, pid, grace)
 	}
 )
+
+// printOps implements provisiond.Ops by printing the intended actions to w.
+// Used by --dry-run, which never contacts the daemon.
+type printOps struct {
+	out io.Writer
+}
+
+func (p printOps) EnsureNetworks(stack string, nets []hostnet.NetSpec) error {
+	for _, n := range nets {
+		fmt.Fprintf(p.out, "ensure bridge %s %s/%d\n", hostnet.BridgeName(stack, n.Name), n.Gateway, n.Prefix)
+	}
+	return nil
+}
+
+func (p printOps) EnsureTaps(taps []hostnet.TapSpec) error {
+	for _, t := range taps {
+		fmt.Fprintf(p.out, "ensure tap %s -> %s\n", t.Name, t.Bridge)
+	}
+	return nil
+}
+
+func (p printOps) ApplyPorts(ports []hostnet.PortSpec) error {
+	for _, pt := range ports {
+		fmt.Fprintf(p.out, "dnat host %d -> %s:%d\n", pt.HostPort, pt.GuestIP, pt.GuestPort)
+	}
+	return nil
+}
+
+func (p printOps) TeardownNetworks(stack string, nets []hostnet.NetSpec) error {
+	for _, n := range nets {
+		fmt.Fprintf(p.out, "teardown bridge %s\n", hostnet.BridgeName(stack, n.Name))
+	}
+	return nil
+}
+
+func (p printOps) TeardownTaps(taps []hostnet.TapSpec) error {
+	for _, t := range taps {
+		fmt.Fprintf(p.out, "teardown tap %s\n", t.Name)
+	}
+	return nil
+}
+
+func (p printOps) TeardownPorts(ports []hostnet.PortSpec) error {
+	for _, pt := range ports {
+		fmt.Fprintf(p.out, "teardown dnat host %d -> %s:%d\n", pt.HostPort, pt.GuestIP, pt.GuestPort)
+	}
+	return nil
+}
 
 // parsePort parses a "host:guest" port mapping.
 func parsePort(pm string) (host, guest int, err error) {

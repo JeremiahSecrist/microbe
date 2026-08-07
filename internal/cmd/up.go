@@ -13,6 +13,7 @@ import (
 	"microbe/internal/config"
 	"microbe/internal/hostnet"
 	"microbe/internal/nix/flakegen"
+	"microbe/internal/provisiond"
 	"microbe/internal/runtime"
 )
 
@@ -25,10 +26,17 @@ func newUpCmd() *cobra.Command {
 			r := cmdrun.Shell()
 			if dryRun {
 				r = cmdrun.Dry(os.Stdout)
-			} else if geteuid() != 0 {
-				// Non-root: provisioning commands (ip/iptables) run via `sudo -n`,
-				// permitted by the host module's sudoers rule for the microbe group.
-				r = cmdrun.Sudo(r, "ip", "iptables")
+			}
+			var ops provisiond.Ops
+			if dryRun {
+				ops = printOps{out: os.Stdout}
+			} else if !noProvision {
+				c, err := provisiond.Dial(provisiond.SocketPath)
+				if err != nil {
+					return err
+				}
+				defer c.Close()
+				ops = c
 			}
 			return upRun(args, upOptions{
 				file:        file,
@@ -36,6 +44,7 @@ func newUpCmd() *cobra.Command {
 				noProvision: noProvision,
 				base:        ".microbe",
 				runner:      r,
+				ops:         ops,
 				out:         os.Stdout,
 			})
 		},
@@ -50,6 +59,7 @@ type upOptions struct {
 	noProvision bool
 	base        string
 	runner      cmdrun.Runner
+	ops         provisiond.Ops
 	out         io.Writer
 }
 
@@ -105,7 +115,7 @@ func upRun(args []string, o upOptions) error {
 		if err != nil {
 			return err
 		}
-		if err := provisionHost(o.runner, st.Name, st, nets, taps, ports); err != nil {
+		if err := provisionHost(o.ops, st.Name, st, nets, taps, ports); err != nil {
 			return err
 		}
 	}

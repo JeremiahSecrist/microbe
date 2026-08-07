@@ -14,6 +14,7 @@ import (
 	"microbe/internal/config"
 	"microbe/internal/hostnet"
 	"microbe/internal/nix/flakegen"
+	"microbe/internal/provisiond"
 	"microbe/internal/runtime"
 	"microbe/internal/state"
 )
@@ -27,8 +28,17 @@ func newDownCmd() *cobra.Command {
 			r := cmdrun.Shell()
 			if dryRun {
 				r = cmdrun.Dry(os.Stdout)
-			} else if geteuid() != 0 {
-				r = cmdrun.Sudo(r, "ip", "iptables")
+			}
+			var ops provisiond.Ops
+			if dryRun {
+				ops = printOps{out: os.Stdout}
+			} else {
+				c, err := provisiond.Dial(provisiond.SocketPath)
+				if err != nil {
+					return err
+				}
+				defer c.Close()
+				ops = c
 			}
 			return downRun(args, downOptions{
 				file:          file,
@@ -36,6 +46,7 @@ func newDownCmd() *cobra.Command {
 				removeVolumes: removeVolumes,
 				base:          ".microbe",
 				runner:        r,
+				ops:           ops,
 				out:           os.Stdout,
 			})
 		},
@@ -50,6 +61,7 @@ type downOptions struct {
 	removeVolumes bool
 	base          string
 	runner        cmdrun.Runner
+	ops           provisiond.Ops
 	out           io.Writer
 }
 
@@ -106,7 +118,7 @@ func downRun(args []string, o downOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := teardownHost(o.runner, st.Name, st, nets, taps, ports); err != nil {
+	if err := teardownHost(o.ops, st.Name, st, nets, taps, ports); err != nil {
 		return err
 	}
 
