@@ -191,7 +191,7 @@ func upRun(args []string, opts upOptions) error {
 	}
 
 	if !opts.dryRun {
-		store := buildStore(cfg, st, pids, filepath.Join(opts.base, "runners"))
+		store := buildStore(cfg, st, pids, nil, filepath.Join(opts.base, "runners"))
 		if err := store.Save(filepath.Join(opts.base, "state.json")); err != nil {
 			return err
 		}

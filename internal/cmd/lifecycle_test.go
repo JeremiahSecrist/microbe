@@ -410,12 +410,28 @@ func TestUpRunNoProvision(t *testing.T) {
 	}
 }
 
+func TestBuildStoreAppliesHealthStatuses(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+	cfg, st := loadStack(t, cfgPath)
+
+	statuses := map[string]string{"db": serviceStatusHealthy}
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, statuses, filepath.Join(base, "runners"))
+
+	if got := store.Services["db"].Status; got != serviceStatusHealthy {
+		t.Errorf("db status = %q, want %q", got, serviceStatusHealthy)
+	}
+	if got := store.Services["web"].Status; got != serviceStatusRunning {
+		t.Errorf("web status = %q, want %q (no override)", got, serviceStatusRunning)
+	}
+}
+
 func TestDownRunOrderingAndState(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, filepath.Join(base, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(base, "runners"))
 	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +485,7 @@ func TestDownRunRemoveVolumes(t *testing.T) {
 	base := t.TempDir()
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000}, filepath.Join(base, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, filepath.Join(base, "runners"))
 	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +528,7 @@ func TestRmRequiresConfirmation(t *testing.T) {
 	base := t.TempDir()
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, filepath.Join(base, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(base, "runners"))
 	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +554,7 @@ func TestRmForceRemovesDisksAndState(t *testing.T) {
 	base := t.TempDir()
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000}, filepath.Join(base, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, filepath.Join(base, "runners"))
 	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +587,7 @@ func TestPsRunPrintsTable(t *testing.T) {
 	base := t.TempDir()
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, filepath.Join(base, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(base, "runners"))
 	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
 		t.Fatal(err)
 	}

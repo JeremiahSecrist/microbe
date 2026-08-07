@@ -177,16 +177,23 @@ func tapSpecs(st *flakegen.Stack) []hostnet.TapSpec {
 	return specs
 }
 
+// primaryNetwork returns a service's first declared network: the one that
+// gets the default route (see Stack.Networks) and is used as the address
+// for DNAT targets and healthchecks. "" if the service has no networks.
+func primaryNetwork(svc flakegen.Service) string {
+	if len(svc.Networks) == 0 {
+		return ""
+	}
+	return svc.Networks[0]
+}
+
 // portSpecs derives one PortSpec per published port, in sorted service order.
 // The DNAT target is the service's primary network IP.
 func portSpecs(cfg *config.Compose, st *flakegen.Stack) ([]hostnet.PortSpec, error) {
 	var specs []hostnet.PortSpec
 	for _, name := range st.Names() {
 		svc := st.Services[name]
-		primary := ""
-		if len(svc.Networks) > 0 {
-			primary = svc.Networks[0]
-		}
+		primary := primaryNetwork(svc)
 		for _, portMapping := range cfg.Services[name].Ports {
 			host, guest, err := parsePort(portMapping)
 			if err != nil {
@@ -246,13 +253,18 @@ func startOrder(cfg *config.Compose, selected []string) ([]string, error) {
 // Volume type and service status sentinels shared across the lifecycle
 // commands (up/down/ps state rendering).
 const (
-	volumeTypeDisk       = "disk"
-	serviceStatusRunning = "running"
-	serviceStatusStopped = "stopped"
+	volumeTypeDisk        = "disk"
+	serviceStatusRunning  = "running"
+	serviceStatusStopped  = "stopped"
+	serviceStatusHealthy  = "healthy"
+	serviceStatusDegraded = "degraded"
 )
 
 // buildStore assembles the persisted state from the stack and recorded PIDs.
-func buildStore(cfg *config.Compose, st *flakegen.Stack, pids map[string]int, runnerDir string) *state.Store {
+// statuses overrides the default pid-based running/stopped computation for
+// any service present in the map (e.g. healthy/degraded from a
+// healthcheck); a nil map or a missing entry leaves that computation as-is.
+func buildStore(cfg *config.Compose, st *flakegen.Stack, pids map[string]int, statuses map[string]string, runnerDir string) *state.Store {
 	store := &state.Store{
 		Stack:    cfg.Name,
 		Networks: map[string]state.NetworkState{},
@@ -280,6 +292,9 @@ func buildStore(cfg *config.Compose, st *flakegen.Stack, pids map[string]int, ru
 		status := serviceStatusStopped
 		if pid > 0 {
 			status = serviceStatusRunning
+		}
+		if override, ok := statuses[name]; ok {
+			status = override
 		}
 		store.Services[name] = state.ServiceState{
 			IP:      svc.IPs,
