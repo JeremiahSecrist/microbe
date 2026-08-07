@@ -118,7 +118,7 @@ func delLinkByName(name string) error {
 // spec: a mismatch means it was created by a different (often root) caller
 // and must be deleted + recreated so the spec's uid can attach to it.
 func tapNeedsRecreate(spec hostnet.TapSpec, existing *netlink.Tuntap) bool {
-	return existing.Owner != uint32(spec.Owner)
+	return existing.Owner != uint32(spec.Owner) || existing.Group != uint32(spec.Group)
 }
 
 // tapLink builds a persistent tap device the VM process can reopen: root's
@@ -132,6 +132,7 @@ func tapLink(t hostnet.TapSpec) netlink.Link {
 		LinkAttrs: netlink.LinkAttrs{Name: t.Name},
 		Mode:      netlink.TUNTAP_MODE_TAP,
 		Owner:     uint32(t.Owner),
+		Group:     uint32(t.Group),
 		Flags:     netlink.TUNTAP_NO_PI | netlink.TUNTAP_VNET_HDR,
 	}
 }

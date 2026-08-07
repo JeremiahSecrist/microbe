@@ -170,6 +170,7 @@ func tapSpecs(st *flakegen.Stack) []hostnet.TapSpec {
 			Name:   st.Services[p.svc].Taps[p.net],
 			Bridge: hostnet.BridgeName(st.Name, p.net),
 			Owner:  os.Getuid(),
+			Group:  os.Getgid(),
 		})
 	}
 	return out

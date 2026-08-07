@@ -26,6 +26,9 @@ type TapSpec struct {
 	Name   string // tap id, e.g. "mvc-...-backend" (≤15 chars)
 	Bridge string // bridge id, e.g. "br-<stack>-backend"
 	Owner  int    // uid that may reopen the tap (the VM process), 0 = root
+	Group  int    // gid that may reopen the tap; the kernel checks this
+	// independently of Owner (TUNSETGROUP), so a zero-value Group pins the
+	// tap to the root group even when Owner is correct.
 }
 
 // PortSpec is one published port: DNAT from HostPort to the guest.

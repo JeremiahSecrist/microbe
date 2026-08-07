@@ -17,7 +17,7 @@ import (
 // TUNSETOWNER/TUNSETGROUP unconditionally, so an Owner of 0 pins the tap to
 // root and the VM cannot attach.
 func TestTapLinkOwnership(t *testing.T) {
-	link := tapLink(hostnet.TapSpec{Name: "mvc-test", Owner: 1000})
+	link := tapLink(hostnet.TapSpec{Name: "mvc-test", Owner: 1000, Group: 100})
 	tap, ok := link.(*netlink.Tuntap)
 	if !ok {
 		t.Fatalf("tapLink returned %T, want *netlink.Tuntap", link)
@@ -27,6 +27,9 @@ func TestTapLinkOwnership(t *testing.T) {
 	}
 	if tap.Owner != 1000 {
 		t.Errorf("Owner = %d, want 1000 (reopen by cloud-hypervisor)", tap.Owner)
+	}
+	if tap.Group != 100 {
+		t.Errorf("Group = %d, want 100 (kernel checks TUNSETGROUP independently of TUNSETOWNER)", tap.Group)
 	}
 	if tap.NonPersist {
 		t.Error("NonPersist set; tap must survive the daemon connection")
@@ -41,13 +44,16 @@ func TestTapLinkOwnership(t *testing.T) {
 // must be recreated so cloud-hypervisor (running as the invoking uid) can
 // attach via TUNSETIFF; a tap already owned by the spec's uid must be kept.
 func TestTapNeedsRecreate(t *testing.T) {
-	spec := hostnet.TapSpec{Name: "mvc-test", Owner: 1000}
+	spec := hostnet.TapSpec{Name: "mvc-test", Owner: 1000, Group: 100}
 
-	if !tapNeedsRecreate(spec, &netlink.Tuntap{Owner: 0}) {
+	if !tapNeedsRecreate(spec, &netlink.Tuntap{Owner: 0, Group: 100}) {
 		t.Error("root-owned tap (Owner=0) vs spec Owner=1000: want recreate")
 	}
-	if tapNeedsRecreate(spec, &netlink.Tuntap{Owner: 1000}) {
-		t.Error("tap already owned by spec Owner=1000: want keep")
+	if !tapNeedsRecreate(spec, &netlink.Tuntap{Owner: 1000, Group: 0}) {
+		t.Error("root-group tap (Group=0) vs spec Group=100: want recreate")
+	}
+	if tapNeedsRecreate(spec, &netlink.Tuntap{Owner: 1000, Group: 100}) {
+		t.Error("tap already owned by spec Owner=1000/Group=100: want keep")
 	}
 }
 
