@@ -166,7 +166,11 @@ func upRun(args []string, o upOptions) error {
 			if v.Type != "disk" {
 				continue
 			}
-			path, err := runtime.EnsureVolume(o.runner, o.base, cfg.Name, v.Name, v.Size)
+			fsType := v.FsType
+			if fsType == "" {
+				fsType = "ext4"
+			}
+			path, err := runtime.EnsureVolume(o.runner, o.base, cfg.Name, v.Name, v.Size, fsType)
 			if err != nil {
 				return err
 			}

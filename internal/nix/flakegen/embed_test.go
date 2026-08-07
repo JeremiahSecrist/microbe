@@ -35,7 +35,7 @@ func TestRendererNixHasRequiredMarkers(t *testing.T) {
 		"systemd.network.networks = gen.networkd",
 		"environment.etc.hosts = lib.mkForce",
 		"gen.volumes",
-		"imageType = \"qcow2\"",
+		"imageType = \"raw\"",
 		"autoCreate = false",
 	} {
 		if !strings.Contains(content, marker) {

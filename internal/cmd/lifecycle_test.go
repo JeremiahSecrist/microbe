@@ -228,18 +228,25 @@ func TestUpRunProvision(t *testing.T) {
 		t.Errorf("provision ports = %v", hr.ports)
 	}
 
-	// Volume image was requested via qemu-img.
-	var found bool
+	// Volume image was requested via qemu-img and formatted with mkfs.
+	volPath := filepath.Join(base, "volumes", "test-net", "db-data.qcow2")
+	var foundCreate, foundMkfs bool
 	for _, c := range rec.calls {
 		if len(c) > 0 && c[0] == "qemu-img" {
-			found = true
-			if !reflect.DeepEqual(c, []string{"qemu-img", "create", "-f", "qcow2", "-o", "size=2048M", filepath.Join(base, "volumes", "test-net", "db-data.qcow2")}) {
+			foundCreate = true
+			if !reflect.DeepEqual(c, []string{"qemu-img", "create", "-f", "raw", "-o", "size=2048M", volPath}) {
 				t.Errorf("qemu-img call = %v", c)
 			}
 		}
+		if reflect.DeepEqual(c, []string{"mkfs.ext4", volPath}) {
+			foundMkfs = true
+		}
 	}
-	if !found {
+	if !foundCreate {
 		t.Errorf("no qemu-img call; runner saw %v", rec.calls)
+	}
+	if !foundMkfs {
+		t.Errorf("no mkfs.ext4 call; runner saw %v", rec.calls)
 	}
 
 	store, err := state.Load(filepath.Join(base, "state.json"))

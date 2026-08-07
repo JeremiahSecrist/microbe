@@ -45,7 +45,7 @@ let
     mountPoint = v.target;
     size = sizeToMiB (v.size or (throw "microbe: service '${svcName}': disk '${v.name}' needs a size"));
     fsType = v.fsType or "ext4";
-    imageType = "qcow2";
+    imageType = "raw";
     autoCreate = false;
   }) (builtins.filter (v: v.type == "disk") svc.volumes));
 

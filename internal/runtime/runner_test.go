@@ -55,7 +55,7 @@ func TestParseVolumeSize(t *testing.T) {
 func TestEnsureVolumeQemuImgCommandShape(t *testing.T) {
 	dir := t.TempDir()
 	rec := &recorder{}
-	path, err := EnsureVolume(rec.run, dir, "test-net", "db-data", "2G")
+	path, err := EnsureVolume(rec.run, dir, "test-net", "db-data", "2G", "ext4")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,10 @@ func TestEnsureVolumeQemuImgCommandShape(t *testing.T) {
 	if path != wantPath {
 		t.Errorf("path = %q, want %q", path, wantPath)
 	}
-	want := [][]string{{"qemu-img", "create", "-f", "qcow2", "-o", "size=2048M", wantPath}}
+	want := [][]string{
+		{"qemu-img", "create", "-f", "raw", "-o", "size=2048M", wantPath},
+		{"mkfs.ext4", wantPath},
+	}
 	if !reflect.DeepEqual(rec.calls, want) {
 		t.Errorf("calls = %v, want %v", rec.calls, want)
 	}
@@ -79,7 +82,7 @@ func TestEnsureVolumeSkipsExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := &recorder{}
-	got, err := EnsureVolume(rec.run, dir, "test-net", "db-data", "2G")
+	got, err := EnsureVolume(rec.run, dir, "test-net", "db-data", "2G", "ext4")
 	if err != nil {
 		t.Fatal(err)
 	}
