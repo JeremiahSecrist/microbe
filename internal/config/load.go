@@ -57,6 +57,17 @@ func applyDefaults(c *Compose) {
 				}
 			}
 		}
+		if svc.Healthcheck != nil {
+			if svc.Healthcheck.Interval == "" {
+				svc.Healthcheck.Interval = "5s"
+			}
+			if svc.Healthcheck.Timeout == "" {
+				svc.Healthcheck.Timeout = "2s"
+			}
+			if svc.Healthcheck.StartPeriod == "" {
+				svc.Healthcheck.StartPeriod = "10s"
+			}
+		}
 		c.Services[name] = svc
 	}
 }

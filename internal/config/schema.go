@@ -74,10 +74,12 @@ func (a *Attach) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// Healthcheck configures a Service's liveness probe command and timing.
+// Healthcheck configures a Service's TCP-socket liveness probe: the CLI
+// dials Port on the service's primary network IP every Interval until it
+// accepts a connection or StartPeriod elapses.
 type Healthcheck struct {
-	Interval    string   `json:"interval"`
-	Timeout     string   `json:"timeout"`
-	StartPeriod string   `json:"startPeriod"`
-	Command     []string `json:"command"`
+	Interval    string `json:"interval"`
+	Timeout     string `json:"timeout"`
+	StartPeriod string `json:"startPeriod"`
+	Port        int    `json:"port"`
 }
