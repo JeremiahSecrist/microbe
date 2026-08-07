@@ -32,7 +32,7 @@ func (st *Stack) RenderGenerated() (string, error) {
 		for _, net := range s.Networks {
 			taps[net] = s.Taps[net]
 		}
-		services[name] = map[string]any{
+		svc := map[string]any{
 			"cid":      s.CID,
 			"macs":     s.MACs,
 			"ips":      s.IPs,
@@ -42,6 +42,14 @@ func (st *Stack) RenderGenerated() (string, error) {
 			"networkd": networkd,
 			"taps":     taps,
 		}
+		if len(s.VolumeImages) > 0 {
+			volumes := map[string]any{}
+			for volName, path := range s.VolumeImages {
+				volumes[volName] = map[string]any{"image": path}
+			}
+			svc["volumes"] = volumes
+		}
+		services[name] = svc
 	}
 	return nixify(map[string]any{"services": services}) + "\n", nil
 }

@@ -8,6 +8,17 @@ import (
 	"testing"
 )
 
+// withVolumeImages populates the generated image path for the db-data disk
+// declared in testdata/microbe.nix, matching what up.go would compute from
+// the CLI's base dir.
+func withVolumeImages(base string, st *Stack) {
+	db := st.Services["db"]
+	db.VolumeImages = map[string]string{
+		"db-data": filepath.Join(base, "volumes", st.Name, "db-data.qcow2"),
+	}
+	st.Services["db"] = db
+}
+
 // TestGeneratedStackEvaluates is the M2 exit-criteria check: the rendered
 // stack must evaluate against real microvm.nix so that every service has a
 // declaredRunner derivation. It only evaluates (cheap); it does not realize
@@ -27,6 +38,7 @@ func TestGeneratedStackEvaluates(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := mustStack(t, fixtureConfig())
+	withVolumeImages(dir, st)
 	if err := WriteStack(dir, st, userPath); err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +77,7 @@ func TestDefaultHypervisorIsCloudHypervisor(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := mustStack(t, fixtureConfig())
+	withVolumeImages(dir, st)
 	if err := WriteStack(dir, st, userPath); err != nil {
 		t.Fatal(err)
 	}

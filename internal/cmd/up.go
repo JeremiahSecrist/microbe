@@ -63,6 +63,34 @@ type upOptions struct {
 	out         io.Writer
 }
 
+// attachVolumeImages populates each service's disk volumes with the absolute
+// on-host qcow2 path (runtime.VolumeImagePath is relative to o.base), so
+// generated.nix carries a path renderer.nix can use regardless of the
+// runner's CWD.
+func attachVolumeImages(base string, cfg *config.Compose, st *flakegen.Stack) error {
+	for name, svcCfg := range cfg.Services {
+		s, ok := st.Services[name]
+		if !ok {
+			continue
+		}
+		for _, v := range svcCfg.Volumes {
+			if v.Type != "disk" {
+				continue
+			}
+			abs, err := filepath.Abs(runtime.VolumeImagePath(base, cfg.Name, v.Name))
+			if err != nil {
+				return err
+			}
+			if s.VolumeImages == nil {
+				s.VolumeImages = map[string]string{}
+			}
+			s.VolumeImages[v.Name] = abs
+		}
+		st.Services[name] = s
+	}
+	return nil
+}
+
 func upRun(args []string, o upOptions) error {
 	cfg, err := config.Load(o.file)
 	if err != nil {
@@ -77,6 +105,9 @@ func upRun(args []string, o upOptions) error {
 	}
 	st, err := flakegen.FromConfig(cfg, plan)
 	if err != nil {
+		return err
+	}
+	if err := attachVolumeImages(o.base, cfg, st); err != nil {
 		return err
 	}
 

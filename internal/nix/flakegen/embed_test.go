@@ -34,6 +34,9 @@ func TestRendererNixHasRequiredMarkers(t *testing.T) {
 		"vsock.cid = gen.cid",
 		"systemd.network.networks = gen.networkd",
 		"environment.etc.hosts = lib.mkForce",
+		"gen.volumes",
+		"imageType = \"qcow2\"",
+		"autoCreate = false",
 	} {
 		if !strings.Contains(content, marker) {
 			t.Errorf("renderer.nix missing marker %q", marker)

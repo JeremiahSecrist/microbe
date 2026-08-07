@@ -40,11 +40,13 @@ let
         or (throw "microbe: service '${svcName}': unsupported volume size unit '${unit}' in '${size}' (use M, G, or T)"));
 
   volumes = lib.optionals (svc ? volumes) (map (v: {
-    image = "${compose.name}/${v.name}.qcow2";
+    image = gen.volumes.${v.name}.image
+      or (throw "microbe: service '${svcName}': no generated image path for volume '${v.name}'");
     mountPoint = v.target;
     size = sizeToMiB (v.size or (throw "microbe: service '${svcName}': disk '${v.name}' needs a size"));
     fsType = v.fsType or "ext4";
-    autoCreate = true;
+    imageType = "qcow2";
+    autoCreate = false;
   }) (builtins.filter (v: v.type == "disk") svc.volumes));
 
   shares = lib.optionals (svc ? volumes) (map (v: {

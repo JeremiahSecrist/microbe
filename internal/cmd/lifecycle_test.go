@@ -267,6 +267,42 @@ func TestUpRunProvision(t *testing.T) {
 	}
 }
 
+func TestUpRunGeneratedNixHasAbsoluteVolumeImage(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+
+	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
+	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
+	buildRunner = func(dir, svc, outLink string) (string, error) {
+		return filepath.Join(dir, "runners", svc), nil
+	}
+	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	defer func() {
+		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
+	}()
+
+	rec := &cmdRecorder{}
+	var buf bytes.Buffer
+	if err := upRun(nil, upOptions{
+		file: cfgPath, base: base, runner: rec.run, out: &buf,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	generated, err := os.ReadFile(filepath.Join(base, "generated.nix"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(base, "volumes", "test-net", "db-data.qcow2")
+	absWant, err := filepath.Abs(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), absWant) {
+		t.Errorf("generated.nix missing absolute volume image %q:\n%s", absWant, generated)
+	}
+}
+
 func TestProvisionHostSeamForwardsToOps(t *testing.T) {
 	cfg, st := loadStack(t, writeConfig(t))
 	nets := netSpecs(st)

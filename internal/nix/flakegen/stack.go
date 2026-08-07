@@ -27,6 +27,11 @@ type Service struct {
 	Gateway  map[string]string
 	Prefix   map[string]int
 	Taps     map[string]string // net -> host tap id (≤15 chars)
+
+	// VolumeImages maps disk volume name to its absolute qcow2 path on the
+	// host, populated by the caller (up.go knows the CLI's base dir). Empty
+	// unless the service declares disk volumes.
+	VolumeImages map[string]string
 }
 
 // Host is one /etc/hosts entry shared by every guest.
