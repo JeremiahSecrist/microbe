@@ -28,6 +28,10 @@ func (st *Stack) RenderGenerated() (string, error) {
 		if err != nil {
 			return "", err
 		}
+		taps := map[string]string{}
+		for _, net := range s.Networks {
+			taps[net] = TapID(st.Name, name, net)
+		}
 		services[name] = map[string]any{
 			"cid":      s.CID,
 			"macs":     s.MACs,
@@ -36,6 +40,7 @@ func (st *Stack) RenderGenerated() (string, error) {
 			"prefix":   s.Prefix,
 			"hosts":    hostsVal,
 			"networkd": networkd,
+			"taps":     taps,
 		}
 	}
 	return nixify(map[string]any{"services": services}) + "\n", nil

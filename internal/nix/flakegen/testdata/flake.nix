@@ -7,6 +7,7 @@
   outputs = { nixpkgs, microvm, ... }:
     let
       system = "x86_64-linux";
+      compose = import ./microbe.nix;
 
       mkSvc = name:
         nixpkgs.lib.nixosSystem {
@@ -16,12 +17,11 @@
             ./modules/renderer.nix
             ./modules/guest-base.nix
             ./modules/${name}.nix
-            (import ./microbe.nix)
-            ./generated.nix
+            (compose.services.${name}.config or ({ ... }: { }))
           ];
         };
     in
     {
-      nixosConfigurations = builtins.mapAttrs (_: mkSvc) { db = null; jump = null; web = null; };
+      nixosConfigurations = builtins.mapAttrs (name: _: mkSvc name) { db = null; jump = null; web = null; };
     };
 }

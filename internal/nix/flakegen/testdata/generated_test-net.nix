@@ -52,6 +52,9 @@
       prefix = {
         backend = 24;
       };
+      taps = {
+        backend = "mvc-40a9dc4d8a4";
+      };
     };
     jump = {
       cid = 4;
@@ -124,6 +127,10 @@
         backend = 24;
         frontend = 24;
       };
+      taps = {
+        backend = "mvc-16cc6d57ae0";
+        frontend = "mvc-4ee3cc8069e";
+      };
     };
     web = {
       cid = 5;
@@ -195,6 +202,10 @@
       prefix = {
         backend = 24;
         frontend = 24;
+      };
+      taps = {
+        backend = "mvc-860c125936d";
+        frontend = "mvc-0bb5796d55c";
       };
     };
   };

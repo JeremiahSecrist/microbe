@@ -1,6 +1,8 @@
 package flakegen
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -13,6 +15,7 @@ import (
 // Stack is the CLI-side model of a rendered stack: enough data to emit
 // generated.nix (spec §9.2) and the flake (spec §9.3).
 type Stack struct {
+	Name     string
 	Services map[string]Service
 }
 
@@ -35,7 +38,7 @@ type Host struct {
 // plan. CIDs are assigned 3, 4, ... in service-name order (vsock convention
 // reserves 0-2 for host/services).
 func FromConfig(cfg *config.Compose, plan *hostnet.NetworkPlan) (*Stack, error) {
-	st := &Stack{Services: map[string]Service{}}
+	st := &Stack{Name: cfg.Name, Services: map[string]Service{}}
 	names := make([]string, 0, len(cfg.Services))
 	for name := range cfg.Services {
 		names = append(names, name)
@@ -70,6 +73,18 @@ func declaredNets(svc config.Service) []string {
 		out = append(out, a.Name)
 	}
 	return out
+}
+
+// TapID returns the host-side tap name for a service's interface: readable
+// "mvc-<stack>-<svc>-<net>" when it fits, else a deterministic 15-char
+// hash-based name (Linux interface names are capped at IFNAMSIZ=15).
+func TapID(stack, svc, net string) string {
+	full := "mvc-" + stack + "-" + svc + "-" + net
+	if len(full) <= 15 {
+		return full
+	}
+	sum := sha256.Sum256([]byte(full))
+	return "mvc-" + hex.EncodeToString(sum[:])[:11]
 }
 
 // Hosts returns the /etc/hosts entries shared by every guest, ordered by
