@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -168,6 +169,7 @@ func tapSpecs(st *flakegen.Stack) []hostnet.TapSpec {
 		out = append(out, hostnet.TapSpec{
 			Name:   st.Services[p.svc].Taps[p.net],
 			Bridge: hostnet.BridgeName(st.Name, p.net),
+			Owner:  os.Getuid(),
 		})
 	}
 	return out

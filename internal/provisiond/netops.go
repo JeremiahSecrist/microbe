@@ -63,11 +63,7 @@ func (NetOps) EnsureTaps(taps []hostnet.TapSpec) error {
 			if !isLinkNotFound(err) {
 				return fmt.Errorf("provisiond: look up tap %s: %w", t.Name, err)
 			}
-			link = &netlink.Tuntap{
-				LinkAttrs:  netlink.LinkAttrs{Name: t.Name},
-				Mode:       netlink.TUNTAP_MODE_TAP,
-				NonPersist: true,
-			}
+			link = tapLink(t)
 			if err := netlink.LinkAdd(link); err != nil {
 				return fmt.Errorf("provisiond: create tap %s: %w", t.Name, err)
 			}
@@ -108,4 +104,19 @@ func delLinkByName(name string) error {
 		return err
 	}
 	return netlink.LinkDel(link)
+}
+
+// tapLink builds a persistent tap device the VM process can reopen: root's
+// LinkAdd calls TUNSETOWNER/TUNSETGROUP unconditionally, so the caller's uid
+// must be set explicitly (a 0 owner pins the tap to root). Flags match
+// `ip tuntap add ... mode tap user <u> vnet_hdr` (IFF_NO_PI | IFF_VNET_HDR),
+// the shape cloud-hypervisor's virtio-net expects. The tap persists across
+// the daemon connection so the later-launched VM can attach by name.
+func tapLink(t hostnet.TapSpec) netlink.Link {
+	return &netlink.Tuntap{
+		LinkAttrs: netlink.LinkAttrs{Name: t.Name},
+		Mode:      netlink.TUNTAP_MODE_TAP,
+		Owner:     uint32(t.Owner),
+		Flags:     netlink.TUNTAP_NO_PI | netlink.TUNTAP_VNET_HDR,
+	}
 }

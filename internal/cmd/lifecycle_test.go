@@ -105,9 +105,9 @@ func TestHostSpecSlices(t *testing.T) {
 	back := hostnet.BridgeName("test-net", "backend")
 	front := hostnet.BridgeName("test-net", "frontend")
 	wantTaps := []hostnet.TapSpec{
-		{Name: flakegen.TapID("test-net", "db", "backend"), Bridge: back},
-		{Name: flakegen.TapID("test-net", "web", "backend"), Bridge: back},
-		{Name: flakegen.TapID("test-net", "web", "frontend"), Bridge: front},
+		{Name: flakegen.TapID("test-net", "db", "backend"), Bridge: back, Owner: os.Getuid()},
+		{Name: flakegen.TapID("test-net", "web", "backend"), Bridge: back, Owner: os.Getuid()},
+		{Name: flakegen.TapID("test-net", "web", "frontend"), Bridge: front, Owner: os.Getuid()},
 	}
 	if !reflect.DeepEqual(taps, wantTaps) {
 		t.Errorf("tapSpecs = %v, want %v", taps, wantTaps)
