@@ -160,6 +160,8 @@ func upRun(args []string, opts upOptions) error {
 	}
 
 	pids := map[string]int{}
+	statuses := map[string]string{}
+	var healthErr error
 	for _, svc := range order {
 		if opts.dryRun {
 			fmt.Fprintf(opts.out, "start %s\n", svc)
@@ -188,14 +190,34 @@ func upRun(args []string, opts upOptions) error {
 		}
 		pids[svc] = pid
 		fmt.Fprintf(opts.out, "started %s (pid %d)\n", svc, pid)
+
+		if hc := cfg.Services[svc].Healthcheck; hc != nil {
+			ip := st.Services[svc].IPs[primaryNetwork(st.Services[svc])]
+			healthy, err := probeHealth(*hc, ip)
+			if err != nil {
+				return err
+			}
+			if healthy {
+				statuses[svc] = serviceStatusHealthy
+				fmt.Fprintf(opts.out, "healthy %s\n", svc)
+			} else {
+				statuses[svc] = serviceStatusDegraded
+				healthErr = fmt.Errorf("service %q did not become healthy within %s", svc, hc.StartPeriod)
+				fmt.Fprintf(opts.out, "degraded %s: %v\n", svc, healthErr)
+				break
+			}
+		}
 	}
 
 	if !opts.dryRun {
-		store := buildStore(cfg, st, pids, nil, filepath.Join(opts.base, "runners"))
+		store := buildStore(cfg, st, pids, statuses, filepath.Join(opts.base, "runners"))
 		if err := store.Save(filepath.Join(opts.base, "state.json")); err != nil {
 			return err
 		}
 		printStore(opts.out, store)
+	}
+	if healthErr != nil {
+		return healthErr
 	}
 	return nil
 }

@@ -274,6 +274,96 @@ func TestUpRunProvision(t *testing.T) {
 	}
 }
 
+const healthcheckConfigJSON = `{
+  "schemaVersion": 1,
+  "name": "test-net",
+  "networks": { "backend": { "subnet": "192.168.51.0/24" } },
+  "services": {
+    "db": {
+      "networks": [ { "name": "backend", "ip": "192.168.51.2" } ],
+      "healthcheck": { "port": 5432 }
+    },
+    "web": {
+      "networks": [ { "name": "backend", "ip": "192.168.51.3" } ],
+      "dependsOn": [ "db" ]
+    }
+  }
+}`
+
+func writeHealthcheckConfig(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "microbe.json")
+	if err := os.WriteFile(p, []byte(healthcheckConfigJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestUpRunHealthGatingHealthy(t *testing.T) {
+	cfgPath := writeHealthcheckConfig(t)
+	base := t.TempDir()
+
+	origProvision, origBuild, origStart, origWaitHealthy := provisionHost, buildRunner, startService, waitHealthy
+	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
+	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	waitHealthy = func(string, time.Duration, time.Duration, time.Duration) bool { return true }
+	defer func() {
+		provisionHost, buildRunner, startService, waitHealthy = origProvision, origBuild, origStart, origWaitHealthy
+	}()
+
+	var buf bytes.Buffer
+	if err := upRun(nil, upOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatalf("upRun: %v", err)
+	}
+
+	store, err := state.Load(filepath.Join(base, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Services["db"].Status; got != serviceStatusHealthy {
+		t.Errorf("db status = %q, want %q", got, serviceStatusHealthy)
+	}
+	if got := store.Services["web"].Status; got != serviceStatusRunning {
+		t.Errorf("web status = %q, want %q", got, serviceStatusRunning)
+	}
+	if store.Services["web"].PID == 0 {
+		t.Error("web never started despite db healthy")
+	}
+}
+
+func TestUpRunHealthGatingDegraded(t *testing.T) {
+	cfgPath := writeHealthcheckConfig(t)
+	base := t.TempDir()
+
+	origProvision, origBuild, origStart, origWaitHealthy := provisionHost, buildRunner, startService, waitHealthy
+	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
+	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	waitHealthy = func(string, time.Duration, time.Duration, time.Duration) bool { return false }
+	defer func() {
+		provisionHost, buildRunner, startService, waitHealthy = origProvision, origBuild, origStart, origWaitHealthy
+	}()
+
+	var buf bytes.Buffer
+	err := upRun(nil, upOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf})
+	if err == nil {
+		t.Fatal("upRun: want error when db never becomes healthy, got nil")
+	}
+
+	store, loadErr := state.Load(filepath.Join(base, "state.json"))
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if got := store.Services["db"].Status; got != serviceStatusDegraded {
+		t.Errorf("db status = %q, want %q", got, serviceStatusDegraded)
+	}
+	if pid := store.Services["web"].PID; pid != 0 {
+		t.Errorf("web PID = %d, want 0 (never started, db degraded)", pid)
+	}
+}
+
 func TestUpRunGeneratedNixHasAbsoluteVolumeImage(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
