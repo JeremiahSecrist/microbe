@@ -32,7 +32,7 @@ func BuildRunner(dir, svc, outLink string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command("nix", "build", "--no-write-lock-file", "--out-link", absOut, target)
+	cmd := exec.Command("nix", "build", "--no-write-lock-file", "--print-out-paths", "--out-link", absOut, target)
 	cmd.Dir = stage
 	var stderr strings.Builder
 	cmd.Stderr = &stderr

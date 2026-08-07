@@ -272,22 +272,26 @@ func TestUpRunDryRunNoRootNoStart(t *testing.T) {
 	}
 }
 
-func TestUpRunRequiresRootForProvision(t *testing.T) {
+func TestUpRunProvisionsAsNonRoot(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
 
-	origProvision, origBuild, origGeteuid := provisionHost, buildRunner, geteuid
-	provisionHost = func(r cmdrun.Runner, stack string, st *flakegen.Stack, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
-		return nil
-	}
+	var hr hostRecorder
+	origProvision, origBuild, origStart, origGeteuid := provisionHost, buildRunner, startService, geteuid
+	provisionHost = recordHost(&hr, nil, "provision")
 	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	startService = func(context.Context, string, string, string) (int, error) { return 1, nil }
 	geteuid = func() int { return 1000 }
-	defer func() { provisionHost, buildRunner, geteuid = origProvision, origBuild, origGeteuid }()
+	defer func() {
+		provisionHost, buildRunner, startService, geteuid = origProvision, origBuild, origStart, origGeteuid
+	}()
 
 	var buf bytes.Buffer
-	err := upRun(nil, upOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf})
-	if err == nil || !strings.Contains(err.Error(), "root") {
-		t.Fatalf("want root error, got %v", err)
+	if err := upRun(nil, upOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatalf("non-root up errored (sudo path should be transparent): %v", err)
+	}
+	if hr.calls != 1 {
+		t.Errorf("provisionHost calls = %d, want 1 (provisioning must run as non-root)", hr.calls)
 	}
 }
 

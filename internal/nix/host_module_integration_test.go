@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -46,6 +47,19 @@ func TestHostModuleConfiguresHost(t *testing.T) {
         system = "x86_64-linux";
         modules = [ ./host.nix ];
       };
+      # docker.nix pins net.ipv4.conf.{all,default}.forwarding at priority 98;
+      # microbe must coexist with it instead of hard-colliding.
+      withDocker = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        modules = [
+          ./host.nix
+          {
+            virtualisation.docker.enable = true;
+            virtualisation.microbe.enable = true;
+            virtualisation.microbe.package = nixpkgs.legacyPackages.x86_64-linux.hello;
+          }
+        ];
+      };
     in {
       eval = {
         kernelModules = on.config.boot.kernelModules;
@@ -60,6 +74,8 @@ func TestHostModuleConfiguresHost(t *testing.T) {
         tunRule = builtins.match ".*KERNEL==\"tun\".*" on.config.services.udev.extraRules != null;
         aliceGroups = on.config.users.users.alice.extraGroups;
         disabledGroup = off.config.users.groups ? microbe;
+        dockerForwarding = withDocker.config.boot.kernel.sysctl."net.ipv4.conf.all.forwarding";
+        sudoRules = builtins.concatLists (map (r: map (c: { cmd = c.command; noPasswd = builtins.elem "NOPASSWD" c.options; }) r.commands) on.config.security.sudo.extraRules);
       };
     };
 }`
@@ -90,6 +106,11 @@ func TestHostModuleConfiguresHost(t *testing.T) {
 		TunRule       bool
 		AliceGroups   []string
 		DisabledGroup bool
+		DockerFwd     any `json:"dockerForwarding"`
+		SudoRules     []struct {
+			Cmd      string `json:"cmd"`
+			NoPasswd bool   `json:"noPasswd"`
+		} `json:"sudoRules"`
 	}
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("decode eval: %v\n%s", err, out)
@@ -134,6 +155,25 @@ func TestHostModuleConfiguresHost(t *testing.T) {
 	}
 	if got.DisabledGroup {
 		t.Error("microbe group present when module is disabled")
+	}
+	if !isTruthy(got.DockerFwd) {
+		t.Errorf("net.ipv4.conf.all.forwarding with docker enabled = %v, want true (no priority conflict)", got.DockerFwd)
+	}
+	wantCmds := map[string]bool{"/bin/ip": false, "/bin/xtables-nft-multi": false}
+	for _, r := range got.SudoRules {
+		for suffix := range wantCmds {
+			if strings.HasSuffix(r.Cmd, suffix) {
+				wantCmds[suffix] = true
+				if !r.NoPasswd {
+					t.Errorf("sudoers command %s missing NOPASSWD", r.Cmd)
+				}
+			}
+		}
+	}
+	for cmd, found := range wantCmds {
+		if !found {
+			t.Errorf("sudoers rule missing %s for the microbe group", cmd)
+		}
 	}
 }
 

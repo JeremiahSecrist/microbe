@@ -27,6 +27,8 @@ func newDownCmd() *cobra.Command {
 			r := cmdrun.Shell()
 			if dryRun {
 				r = cmdrun.Dry(os.Stdout)
+			} else if geteuid() != 0 {
+				r = cmdrun.Sudo(r, "ip", "iptables")
 			}
 			return downRun(args, downOptions{
 				file:          file,
@@ -83,9 +85,6 @@ func downRun(args []string, o downOptions) error {
 		store.Services[name] = svc
 	}
 
-	if !o.dryRun && geteuid() != 0 {
-		return fmt.Errorf("down: host teardown requires root; re-run with sudo")
-	}
 	cfg, err := config.Load(o.file)
 	if err != nil {
 		return err

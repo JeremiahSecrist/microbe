@@ -25,6 +25,10 @@ func newUpCmd() *cobra.Command {
 			r := cmdrun.Shell()
 			if dryRun {
 				r = cmdrun.Dry(os.Stdout)
+			} else if geteuid() != 0 {
+				// Non-root: provisioning commands (ip/iptables) run via `sudo -n`,
+				// permitted by the host module's sudoers rule for the microbe group.
+				r = cmdrun.Sudo(r, "ip", "iptables")
 			}
 			return upRun(args, upOptions{
 				file:        file,
@@ -95,9 +99,6 @@ func upRun(args []string, o upOptions) error {
 	}
 
 	if !o.noProvision {
-		if !o.dryRun && geteuid() != 0 {
-			return fmt.Errorf("up: host provisioning requires root; re-run with sudo or pass --no-provision")
-		}
 		nets := netSpecs(st)
 		taps := tapSpecs(st)
 		ports, err := portSpecs(cfg, st)

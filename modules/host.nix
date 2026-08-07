@@ -68,8 +68,11 @@ in
       boot.kernel.sysctl = {
         # Priority 98 (as docker does) so user config can override these.
         "net.ipv4.ip_forward" = mkOverride 98 true;
-        "net.ipv4.conf.all.forwarding" = mkOverride 98 true;
-        "net.ipv4.conf.default.forwarding" = mkOverride 98 true;
+        # docker.nix pins these two at priority 98 too, so mkOverride 98 would
+        # hard-collide with an enabled docker module. mkDefault defers to
+        # docker's (identical) setting and still defaults to true standalone.
+        "net.ipv4.conf.all.forwarding" = mkDefault true;
+        "net.ipv4.conf.default.forwarding" = mkDefault true;
         "net.bridge.bridge-nf-call-iptables" = mkOverride 98 true;
         "net.bridge.bridge-nf-call-ip6tables" = mkOverride 98 true;
       };
@@ -91,6 +94,21 @@ in
         KERNEL=="tun", GROUP="microbe", MODE="0660", OPTIONS+="static_node=net/tun"
         KERNEL=="kvm", GROUP="kvm", MODE="0660", OPTIONS+="static_node=kvm"
       '';
+
+      # Members of the microbe group can run microbe's provisioning commands
+      # (ip, iptables) without a password so `microbe up`/`down` work without
+      # sudo. Same trust model as the docker group: group members get network
+      # admin. `iptables` resolves to xtables-nft-multi (its symlink target);
+      # sudo matches on the canonical path.
+      security.sudo.extraRules = [
+        {
+          groups = [ "microbe" ];
+          commands = [
+            { command = "${pkgs.iproute2}/bin/ip"; options = [ "NOPASSWD" ]; }
+            { command = "${pkgs.iptables}/bin/xtables-nft-multi"; options = [ "NOPASSWD" ]; }
+          ];
+        }
+      ];
     }
   ]);
 }
