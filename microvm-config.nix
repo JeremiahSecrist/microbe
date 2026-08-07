@@ -8,6 +8,7 @@
 
   networking.hostName = "microvm";
 
+
   microvm = {
     hypervisor = "cloud-hypervisor";
     vcpu = 2;
