@@ -14,7 +14,7 @@ type Network struct {
 }
 
 type Service struct {
-	VCpus       int          `json:"vcpu"`
+	VCPUs       int          `json:"vcpu"`
 	Mem         int          `json:"mem"`
 	Hypervisor  string       `json:"hypervisor"`
 	Config      interface{}  `json:"config"`

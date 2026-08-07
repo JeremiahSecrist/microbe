@@ -30,8 +30,8 @@ func TestFixtureNetworkingValidates(t *testing.T) {
 	if len(db.Ports) != 1 || db.Ports[0] != "5432:5432" {
 		t.Errorf("db ports = %v, want [5432:5432]", db.Ports)
 	}
-	if db.VCpus != 1 || db.Mem != 512 {
-		t.Errorf("db defaults not applied: vcpu=%d mem=%d", db.VCpus, db.Mem)
+	if db.VCPUs != 1 || db.Mem != 512 {
+		t.Errorf("db defaults not applied: vcpu=%d mem=%d", db.VCPUs, db.Mem)
 	}
 	if db.Hypervisor != "cloud-hypervisor" {
 		t.Errorf("db hypervisor default = %q", db.Hypervisor)

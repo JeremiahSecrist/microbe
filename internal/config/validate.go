@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"micro-compose/internal/netutil"
 )
 
 var nameRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
@@ -50,6 +52,7 @@ func (c *Compose) Validate() error {
 }
 
 func (c *Compose) validateSubnets() error {
+	prefixes := make(map[string]netip.Prefix, len(c.Networks))
 	for name, net := range c.Networks {
 		p, err := netip.ParsePrefix(net.Subnet)
 		if err != nil {
@@ -58,6 +61,7 @@ func (c *Compose) validateSubnets() error {
 		if !p.Addr().Is4() || p.Bits() < 16 || p.Bits() > 30 {
 			return fmt.Errorf("config: network %q: subnet must be an IPv4 /16../30", name)
 		}
+		prefixes[name] = p
 	}
 	names := make([]string, 0, len(c.Networks))
 	for name := range c.Networks {
@@ -65,9 +69,7 @@ func (c *Compose) validateSubnets() error {
 	}
 	for i := 0; i < len(names); i++ {
 		for j := i + 1; j < len(names); j++ {
-			a := c.Networks[names[i]]
-			b := c.Networks[names[j]]
-			if prefixesOverlap(a.Subnet, b.Subnet) {
+			if prefixes[names[i]].Overlaps(prefixes[names[j]]) {
 				return fmt.Errorf("config: networks %q and %q overlap", names[i], names[j])
 			}
 		}
@@ -100,7 +102,7 @@ func (c *Compose) validateAttaches() error {
 			if !p.Contains(ip) {
 				return fmt.Errorf("config: service %q: ip %q outside %q", svcName, a.IP, net.Subnet)
 			}
-			if ip == p.Masked().Addr() || ip == gateway(p) || ip == broadcast(p) {
+			if ip == p.Masked().Addr() || ip == netutil.Gateway(p) || ip == netutil.Broadcast(p) {
 				return fmt.Errorf("config: service %q: ip %q is reserved in %q", svcName, a.IP, net.Subnet)
 			}
 			if prev, dup := staticByNet[a.Name][a.IP]; dup {
@@ -207,44 +209,6 @@ func (c *Compose) validateVolumes() error {
 		}
 	}
 	return nil
-}
-
-func prefixesOverlap(a, b string) bool {
-	pa, err := netip.ParsePrefix(a)
-	if err != nil {
-		return false
-	}
-	pb, err := netip.ParsePrefix(b)
-	if err != nil {
-		return false
-	}
-	return pa.Overlaps(pb)
-}
-
-func gateway(p netip.Prefix) netip.Addr {
-	a := p.Masked().Addr().As4()
-	a[3]++
-	return netip.AddrFrom4(a)
-}
-
-func broadcast(p netip.Prefix) netip.Addr {
-	a := p.Masked().Addr().As4()
-	bits := p.Bits()
-	for i := 3; i >= 0; i-- {
-		hostBits := (i+1)*8 - bits
-		if hostBits <= 0 {
-			break
-		}
-		if hostBits > 8 {
-			hostBits = 8
-		}
-		var mask uint8
-		for k := 0; k < hostBits; k++ {
-			mask |= 1 << k
-		}
-		a[i] |= mask
-	}
-	return netip.AddrFrom4(a)
 }
 
 func hostPort(pm string) string {

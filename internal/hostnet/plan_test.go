@@ -110,6 +110,13 @@ func TestFixtureNetworkingDNSOrder(t *testing.T) {
 	}
 }
 
+func TestNextFreeSkipsBroadcast(t *testing.T) {
+	got, err := nextFree("10.0.0.0/30", map[string]bool{"10.0.0.2": true})
+	if err == nil {
+		t.Fatalf("nextFree returned %q for exhausted /30, want error (broadcast 10.0.0.3 must not be handed out)", got)
+	}
+}
+
 func validLocalMAC(mac string) bool {
 	parts := strings.Split(mac, ":")
 	if len(parts) != 6 {

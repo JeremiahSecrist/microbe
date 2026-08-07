@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"micro-compose/internal/config"
+	"micro-compose/internal/netutil"
 )
 
 type NetworkPlan struct {
@@ -14,15 +15,18 @@ type NetworkPlan struct {
 }
 
 func Plan(cfg *config.Compose) (*NetworkPlan, error) {
-	p := &NetworkPlan{
-		IPs:  map[string]map[string]string{},
-		MACs: map[string]map[string]string{},
+	ips, err := allocateIPs(cfg)
+	if err != nil {
+		return nil, err
 	}
-	for svc := range cfg.Services {
-		p.IPs[svc] = map[string]string{}
-		p.MACs[svc] = map[string]string{}
-	}
+	return &NetworkPlan{IPs: ips, MACs: allocateMACs(cfg)}, nil
+}
 
+func allocateIPs(cfg *config.Compose) (map[string]map[string]string, error) {
+	ips := map[string]map[string]string{}
+	for svc := range cfg.Services {
+		ips[svc] = map[string]string{}
+	}
 	for netName, net := range cfg.Networks {
 		members := servicesOn(cfg, netName)
 		used := map[string]bool{}
@@ -33,7 +37,7 @@ func Plan(cfg *config.Compose) (*NetworkPlan, error) {
 		}
 		for _, svcName := range members {
 			if ip := staticIP(cfg.Services[svcName], netName); ip != "" {
-				p.IPs[svcName][netName] = ip
+				ips[svcName][netName] = ip
 				continue
 			}
 			ip, err := nextFree(net.Subnet, used)
@@ -41,10 +45,17 @@ func Plan(cfg *config.Compose) (*NetworkPlan, error) {
 				return nil, fmt.Errorf("network %q: %w", netName, err)
 			}
 			used[ip] = true
-			p.IPs[svcName][netName] = ip
+			ips[svcName][netName] = ip
 		}
 	}
+	return ips, nil
+}
 
+func allocateMACs(cfg *config.Compose) map[string]map[string]string {
+	macs := map[string]map[string]string{}
+	for svc := range cfg.Services {
+		macs[svc] = map[string]string{}
+	}
 	type pair struct{ svc, net string }
 	var pairs []pair
 	for svcName, svc := range cfg.Services {
@@ -59,9 +70,9 @@ func Plan(cfg *config.Compose) (*NetworkPlan, error) {
 		return pairs[i].net < pairs[j].net
 	})
 	for i, pr := range pairs {
-		p.MACs[pr.svc][pr.net] = fmt.Sprintf("02:00:00:00:00:%02x", i+1)
+		macs[pr.svc][pr.net] = fmt.Sprintf("02:00:00:00:00:%02x", i+1)
 	}
-	return p, nil
+	return macs
 }
 
 func RenderHosts(p *NetworkPlan) []string {
@@ -72,8 +83,13 @@ func RenderHosts(p *NetworkPlan) []string {
 	sort.Strings(svcs)
 	var out []string
 	for _, svc := range svcs {
-		for net, ip := range p.IPs[svc] {
-			out = append(out, fmt.Sprintf("%s %s %s.%s", ip, svc, svc, net))
+		var nets []string
+		for net := range p.IPs[svc] {
+			nets = append(nets, net)
+		}
+		sort.Strings(nets)
+		for _, net := range nets {
+			out = append(out, fmt.Sprintf("%s %s %s.%s", p.IPs[svc][net], svc, svc, net))
 		}
 	}
 	return out
@@ -107,41 +123,13 @@ func nextFree(subnet string, used map[string]bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	base := p.Masked().Addr().As4()
-	bcast := broadcast(p).As4()
-	for i := 1; i < 255; i++ {
-		if i == 1 {
-			continue
-		}
-		a := base
-		a[3] += byte(i)
-		if a[3] > bcast[3] {
-			break
-		}
-		ip := netip.AddrFrom4(a).String()
-		if !used[ip] {
-			return ip, nil
+	start := netutil.Gateway(p).Next()
+	end := netutil.Broadcast(p).Prev()
+	for a := start; a.IsValid() && a.Compare(end) <= 0; a = a.Next() {
+		s := a.String()
+		if !used[s] {
+			return s, nil
 		}
 	}
 	return "", fmt.Errorf("no free host in %s", subnet)
-}
-
-func broadcast(p netip.Prefix) netip.Addr {
-	a := p.Masked().Addr().As4()
-	bits := p.Bits()
-	for i := 3; i >= 0; i-- {
-		hostBits := (i+1)*8 - bits
-		if hostBits <= 0 {
-			break
-		}
-		if hostBits > 8 {
-			hostBits = 8
-		}
-		var mask uint8
-		for k := 0; k < hostBits; k++ {
-			mask |= 1 << k
-		}
-		a[i] |= mask
-	}
-	return netip.AddrFrom4(a)
 }

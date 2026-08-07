@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	DefaultVCpus      = 1
+	DefaultVCPUs      = 1
 	DefaultMem        = 512
 	DefaultHypervisor = "cloud-hypervisor"
 )
@@ -25,8 +25,8 @@ func applyDefaults(c *Compose) {
 		c.SchemaVersion = 1
 	}
 	for name, svc := range c.Services {
-		if svc.VCpus == 0 {
-			svc.VCpus = DefaultVCpus
+		if svc.VCPUs == 0 {
+			svc.VCPUs = DefaultVCPUs
 		}
 		if svc.Mem == 0 {
 			svc.Mem = DefaultMem
