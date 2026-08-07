@@ -1,0 +1,96 @@
+package flakegen
+
+import (
+	"fmt"
+	"net/netip"
+	"sort"
+
+	"microbe/internal/config"
+	"microbe/internal/hostnet"
+	"microbe/internal/netutil"
+)
+
+// Stack is the CLI-side model of a rendered stack: enough data to emit
+// generated.nix (spec §9.2) and the flake (spec §9.3).
+type Stack struct {
+	Services map[string]Service
+}
+
+type Service struct {
+	CID      int
+	Networks []string // declared order (first is primary default route)
+	MACs     map[string]string
+	IPs      map[string]string
+	Gateway  map[string]string
+	Prefix   map[string]int
+}
+
+// Host is one /etc/hosts entry shared by every guest.
+type Host struct {
+	IP    string
+	Names []string
+}
+
+// FromConfig builds a Stack from a validated compose file and its network
+// plan. CIDs are assigned 3, 4, ... in service-name order (vsock convention
+// reserves 0-2 for host/services).
+func FromConfig(cfg *config.Compose, plan *hostnet.NetworkPlan) (*Stack, error) {
+	st := &Stack{Services: map[string]Service{}}
+	names := make([]string, 0, len(cfg.Services))
+	for name := range cfg.Services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for i, name := range names {
+		svcCfg := cfg.Services[name]
+		s := Service{
+			CID:      i + 3,
+			Networks: declaredNets(svcCfg),
+			MACs:     plan.MACs[name],
+			IPs:      plan.IPs[name],
+			Gateway:  map[string]string{},
+			Prefix:   map[string]int{},
+		}
+		for _, netName := range s.Networks {
+			p, err := netip.ParsePrefix(cfg.Networks[netName].Subnet)
+			if err != nil {
+				return nil, fmt.Errorf("service %q network %q: %w", name, netName, err)
+			}
+			s.Gateway[netName] = netutil.Gateway(p).String()
+			s.Prefix[netName] = p.Bits()
+		}
+		st.Services[name] = s
+	}
+	return st, nil
+}
+
+func declaredNets(svc config.Service) []string {
+	out := make([]string, 0, len(svc.Networks))
+	for _, a := range svc.Networks {
+		out = append(out, a.Name)
+	}
+	return out
+}
+
+// Hosts returns the /etc/hosts entries shared by every guest, ordered by
+// service then network.
+func (st *Stack) Hosts() []Host {
+	svcs := make([]string, 0, len(st.Services))
+	for name := range st.Services {
+		svcs = append(svcs, name)
+	}
+	sort.Strings(svcs)
+	var out []Host
+	for _, name := range svcs {
+		s := st.Services[name]
+		nets := append([]string(nil), s.Networks...)
+		sort.Strings(nets)
+		for _, net := range nets {
+			out = append(out, Host{
+				IP:    s.IPs[net],
+				Names: []string{name, name + "." + net},
+			})
+		}
+	}
+	return out
+}
