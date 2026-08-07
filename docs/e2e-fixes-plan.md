@@ -1,6 +1,11 @@
 # Live E2E Fix Plan — cloud-hypervisor can't attach taps; volume path broken
 
-Status: **planned** (both bugs root-caused, fixes not yet implemented)
+Status: **done** — live E2E passes on lappy: `microbe up` boots db/jump/web,
+`psql` round-trips against db over its published port, web's Apache is
+reachable via DNAT. See "Outcome" below for what actually shipped, which
+diverges from this plan in two places (imageType, and two bugs found only
+once the planned fixes were live).
+
 Companion spec: `docs/microbe-plan.md` (§13.1, §9.2, §6). Docs consulted:
 `microvm.nix.pdf` (tap + volumes reference).
 
@@ -200,3 +205,83 @@ declare qcow2**
 - CLI-only changes → `go build -o /tmp/microbe .` (host rebuild does NOT
   update `/tmp/microbe`).
 - Run live as `sg microbe -c '/tmp/microbe up …'` from `/tmp/e2e`.
+
+## Outcome
+
+Both planned bugs were fixed as designed, but fixing them exposed two more
+bugs that only manifest once taps and volume paths are correct — this plan's
+"Live verification" steps were where they surfaced, not in unit tests. All
+six fixes below shipped as separate TDD commits (failing test → minimal fix →
+green `go build/vet/test`), in this order:
+
+1. `ad3cfc9` fix: reconcile tap ownership in EnsureTaps (Work Item 1, as planned)
+2. `6a5010c` fix: carry absolute volume image paths into generated.nix
+   (Work Item 2A, as planned)
+3. `f411c38` fix: set tap group ownership, not just owner (**new bug**, found live)
+4. `d947f1c` fix: format volumes as raw with mkfs, not empty qcow2
+   (Work Item 2B, **diverges from plan** — see below)
+5. `82bc5ba` fix: add e2fsprogs to host systemPackages for mkfs.ext4
+   (**new gap**, found live, needed by #4)
+6. (later) revert: restore postgres fixture, made it actually reachable with
+   `enableTCPIP` + a trust rule (not a microbe bug — a test-fixture gap; a
+   sqlite detour was tried and reverted per request, see git log)
+
+### New bug: tap *group* ownership (#3)
+
+Work Item 1's fix (owner reconciliation) was necessary but not sufficient.
+The kernel checks a persistent tap's group independently of its owner
+(`TUNSETGROUP` vs `TUNSETOWNER`) — `netlink.Tuntap.Group` defaulted to 0
+(root) because `TapSpec` never set it, so cloud-hypervisor still got `EPERM`
+on `TUNSETIFF` even after the owner fix landed and taps showed `owner=1000`
+in sysfs. Fix: `TapSpec` gained a `Group` field (CLI populates it with
+`os.Getgid()`), `tapLink` sets `Tuntap.Group`, and `tapNeedsRecreate`
+reconciles both owner and group. Confirmed live: `owner=1000 group=970`
+(the `microbe` group's gid), all three VMs got past `OpenTap`.
+
+### Divergence: `imageType = "raw"`, not `"qcow2"` (#4)
+
+The plan's Work Item 2 called for `imageType = "qcow2"` with `EnsureVolume`
+creating a real qcow2 via `qemu-img create -f qcow2`. That part worked, but
+nobody ever put a filesystem *in* the qcow2 — with `autoCreate = false`
+(required to stop microvm.nix stomping the image), nothing formats it, so
+the guest's mount failed: `EXT4-fs (vdb): VFS: Can't find ext4 filesystem`.
+
+Formatting a real qcow2 container from the host requires `qemu-nbd` to
+expose it as a block device first, and that needs root — which would violate
+the "qemu-img, unprivileged" constraint from `docs/microbe-plan.md` §9.2
+(line 538). `mkfs.<fsType>` run directly on a **raw** file's bytes works
+unprivileged. So `EnsureVolume` switched to `qemu-img create -f raw` +
+`mkfs.<fsType>`, and `renderer.nix` declares `imageType = "raw"` (not
+`"qcow2"`) to match. The on-disk filename keeps its `.qcow2` suffix per the
+path contract in `docs/microbe-plan.md` (§9.2, §8.4) even though the bytes
+are raw — cloud-hypervisor uses the explicit `imageType` flag, not extension
+sniffing, so this is cosmetic, not a correctness issue.
+
+### New gap: `mkfs.ext4` not on host `$PATH` (#5)
+
+`modules/host.nix` added `pkgs.qemu-utils` to `environment.systemPackages`
+for `qemu-img`, but never added `pkgs.e2fsprogs` for `mkfs.ext4`. Once
+`EnsureVolume` started calling `mkfs.ext4` (fix #4), `up` failed with
+`exec: "mkfs.ext4": executable file not found in $PATH`. One-line fix, needed
+a host rebuild like any other `modules/host.nix` change.
+
+### Live verification results (lappy, `/tmp/e2e`)
+
+- `microbe up` boots all three VMs; `microbe ps` shows all `running` and stays
+  that way (checked at 10-12s post-boot, no crash-loop).
+- Taps: `cat /sys/class/net/mvc-*/owner` → `1000`, `.../group` → `970`.
+- db: `dd`-verified ext4 superblock magic (`53 ef`) present in the volume
+  image; guest log shows `Started PostgreSQL Server`; `nix shell
+  nixpkgs#postgresql -c psql -h 192.168.51.2 -p 5432 -U postgres -d postgres
+  -c "select 1;"` → `1`.
+- web: guest log shows `Started Apache HTTPD`; reachable directly on
+  `192.168.51.3:80`.
+- `sudo nft list ruleset` confirms the DNAT rules installed correctly:
+  `tcp dport 5432 dnat to 192.168.51.2:5432`, `tcp dport 8080 dnat to
+  192.168.51.3:80`.
+- Note: `curl localhost:8080` / connecting to the host's own LAN IP from
+  itself both fail — not a microbe bug. `ip route get <own-ip>` shows the
+  kernel routes self-destined traffic via `lo`, which bypasses the nftables
+  `prerouting` DNAT hook entirely (classic Linux hairpin-NAT limitation).
+  Verified instead via direct guest-IP connections and the `nft ruleset`
+  dump above; full external reachability would need a second LAN host.
