@@ -80,7 +80,7 @@ in
     networking.nameservers = lib.mkDefault [ "1.1.1.1" ];
 
     microvm = {
-      hypervisor = lib.mkDefault (svc.hypervisor or "qemu");
+      hypervisor = lib.mkDefault (svc.hypervisor or "cloud-hypervisor");
       vcpu = lib.mkDefault (svc.vcpu or 1);
       mem = lib.mkDefault (svc.mem or 512);
       vsock.cid = gen.cid;

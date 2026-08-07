@@ -46,3 +46,39 @@ func TestGeneratedStackEvaluates(t *testing.T) {
 		}
 	}
 }
+
+// TestDefaultHypervisorIsCloudHypervisor pins the renderer's default when a
+// compose service omits `hypervisor`: it must fall back to cloud-hypervisor
+// (matching config.DefaultHypervisor), not qemu.
+func TestDefaultHypervisorIsCloudHypervisor(t *testing.T) {
+	if _, err := exec.LookPath("nix"); err != nil {
+		t.Skip("nix not in PATH")
+	}
+
+	dir := t.TempDir()
+	userPath := filepath.Join(dir, "src.nix")
+	user, err := os.ReadFile("testdata/microbe.nix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, user, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st := mustStack(t, fixtureConfig())
+	if err := WriteStack(dir, st, userPath); err != nil {
+		t.Fatal(err)
+	}
+
+	target := ".#nixosConfigurations.db.config.microvm.hypervisor"
+	cmd := exec.Command("nix", "eval", "--json", "--no-write-lock-file", target)
+	cmd.Dir = dir
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("eval %s: %v\n%s", target, err, stderr.String())
+	}
+	if got := strings.TrimSpace(string(out)); got != `"cloud-hypervisor"` {
+		t.Errorf("default hypervisor = %s, want \"cloud-hypervisor\"", got)
+	}
+}
