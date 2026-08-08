@@ -168,13 +168,27 @@ func netSpecs(st *flakegen.Stack) []hostnet.NetSpec {
 type svcNetPair struct{ service, network string }
 
 // tapSpecs derives one TapSpec per service/network attachment, sorted by
-// service then network. cfg supplies each service's vcpu count: TapSpec.
-// MultiQueue must match microvm.nix's cloud-hypervisor.nix `tapMultiQueue =
-// vcpu > 1` exactly, or cloud-hypervisor refuses to attach (see
-// provisiond's tapLink/tapNeedsRecreate).
-func tapSpecs(cfg *config.Compose, st *flakegen.Stack) []hostnet.TapSpec {
+// service then network, for exactly the services named in selected. cfg
+// supplies each service's vcpu count: TapSpec.MultiQueue must match
+// microvm.nix's cloud-hypervisor.nix `tapMultiQueue = vcpu > 1` exactly, or
+// cloud-hypervisor refuses to attach (see provisiond's
+// tapLink/tapNeedsRecreate).
+//
+// Callers must scope selected to only the services actually being
+// (re)provisioned this run: EnsureTaps deletes and recreates a mismatched
+// tap, and doing that to a service not part of this run would yank the
+// network out from under an already-running VM (observed corrupting
+// web/jump while only db was being retried after a failed up).
+func tapSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) []hostnet.TapSpec {
+	isSelected := map[string]bool{}
+	for _, name := range selected {
+		isSelected[name] = true
+	}
 	var pairs []svcNetPair
 	for name, svc := range st.Services {
+		if !isSelected[name] {
+			continue
+		}
 		for _, netName := range svc.Networks {
 			pairs = append(pairs, svcNetPair{name, netName})
 		}

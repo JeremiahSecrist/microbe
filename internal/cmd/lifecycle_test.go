@@ -102,7 +102,7 @@ func TestHostSpecSlices(t *testing.T) {
 		t.Errorf("netSpecs = %v, want %v", nets, wantNets)
 	}
 
-	taps := tapSpecs(cfg, st)
+	taps := tapSpecs(cfg, st, []string{"db", "web"})
 	back := hostnet.BridgeName("test-net", "backend")
 	front := hostnet.BridgeName("test-net", "frontend")
 	wantTaps := []hostnet.TapSpec{
@@ -112,6 +112,17 @@ func TestHostSpecSlices(t *testing.T) {
 	}
 	if !reflect.DeepEqual(taps, wantTaps) {
 		t.Errorf("tapSpecs = %v, want %v", taps, wantTaps)
+	}
+
+	// A partial selection must not touch other services' taps: re-running
+	// `up db` after a failure must never recreate web's tap out from under
+	// an already-running VM.
+	dbOnly := tapSpecs(cfg, st, []string{"db"})
+	wantDbOnly := []hostnet.TapSpec{
+		{Name: flakegen.TapID("test-net", "db", "backend"), Bridge: back, Owner: os.Getuid(), Group: os.Getgid()},
+	}
+	if !reflect.DeepEqual(dbOnly, wantDbOnly) {
+		t.Errorf("tapSpecs(db only) = %v, want %v", dbOnly, wantDbOnly)
 	}
 
 	ports, err := portSpecs(cfg, st)
@@ -222,8 +233,8 @@ func TestUpRunProvision(t *testing.T) {
 	if !reflect.DeepEqual(hr.nets, netSpecs(st)) {
 		t.Errorf("provision nets = %v, want %v", hr.nets, netSpecs(st))
 	}
-	if !reflect.DeepEqual(hr.taps, tapSpecs(cfg, st)) {
-		t.Errorf("provision taps = %v, want %v", hr.taps, tapSpecs(cfg, st))
+	if !reflect.DeepEqual(hr.taps, tapSpecs(cfg, st, st.Names())) {
+		t.Errorf("provision taps = %v, want %v", hr.taps, tapSpecs(cfg, st, st.Names()))
 	}
 	if !reflect.DeepEqual(hr.ports, []hostnet.PortSpec{{HostPort: 8080, GuestIP: "192.168.51.3", GuestPort: 80}}) {
 		t.Errorf("provision ports = %v", hr.ports)
@@ -566,7 +577,7 @@ func TestUpRunDryRunSkipsSSHKeypair(t *testing.T) {
 func TestProvisionHostSeamForwardsToOps(t *testing.T) {
 	cfg, st := loadStack(t, writeConfig(t))
 	nets := netSpecs(st)
-	taps := tapSpecs(cfg, st)
+	taps := tapSpecs(cfg, st, st.Names())
 	ports, err := portSpecs(cfg, st)
 	if err != nil {
 		t.Fatal(err)
@@ -712,7 +723,7 @@ func TestDownRunOrderingAndState(t *testing.T) {
 	if hr.calls != 1 || hr.stack != "test-net" {
 		t.Fatalf("teardownHost calls = %d (stack %q), want 1", hr.calls, hr.stack)
 	}
-	if !reflect.DeepEqual(hr.nets, netSpecs(st)) || !reflect.DeepEqual(hr.taps, tapSpecs(cfg, st)) {
+	if !reflect.DeepEqual(hr.nets, netSpecs(st)) || !reflect.DeepEqual(hr.taps, tapSpecs(cfg, st, st.Names())) {
 		t.Errorf("teardown slices mismatch: nets %v taps %v", hr.nets, hr.taps)
 	}
 	if events[len(events)-1] != "teardown" {
