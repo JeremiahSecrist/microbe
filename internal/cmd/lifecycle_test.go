@@ -90,6 +90,38 @@ func TestParsePort(t *testing.T) {
 	}
 }
 
+func TestNetSpecsCarriesInternal(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "microbe.json")
+	airgapConfigJSON := `{
+	  "schemaVersion": 1,
+	  "name": "airgap-net",
+	  "networks": {
+	    "public": { "subnet": "192.168.62.0/24" },
+	    "secure": { "subnet": "192.168.63.0/24", "internal": true }
+	  },
+	  "services": {
+	    "db": { "networks": [ { "name": "secure" } ] }
+	  }
+	}`
+	if err := os.WriteFile(p, []byte(airgapConfigJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, st := loadStack(t, p)
+
+	specs := netSpecs(st)
+	byName := map[string]hostnet.NetSpec{}
+	for _, s := range specs {
+		byName[s.Name] = s
+	}
+	if !byName["secure"].Internal {
+		t.Errorf("netSpecs()[secure].Internal = false, want true")
+	}
+	if byName["public"].Internal {
+		t.Errorf("netSpecs()[public].Internal = true, want false")
+	}
+}
+
 func TestHostSpecSlices(t *testing.T) {
 	cfgPath := writeConfig(t)
 	cfg, st := loadStack(t, cfgPath)

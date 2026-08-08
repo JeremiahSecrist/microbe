@@ -33,6 +33,34 @@ func fixtureConfig() *config.Compose {
 	}
 }
 
+func TestFromConfigStackInternal(t *testing.T) {
+	cfg := &config.Compose{
+		SchemaVersion: 1,
+		Name:          "airgap-test",
+		Networks: map[string]config.Network{
+			"public": {Subnet: "192.168.60.0/24"},
+			"secure": {Subnet: "192.168.61.0/24", Internal: true},
+		},
+		Services: map[string]config.Service{
+			"db": {Networks: []config.Attach{{Name: "secure"}}},
+		},
+	}
+	plan, err := hostnet.Plan(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := FromConfig(cfg, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Internal["secure"] != true {
+		t.Errorf("st.Internal[secure] = %v, want true", st.Internal["secure"])
+	}
+	if st.Internal["public"] != false {
+		t.Errorf("st.Internal[public] = %v, want false", st.Internal["public"])
+	}
+}
+
 func TestFromConfigStack(t *testing.T) {
 	cfg := fixtureConfig()
 	plan, err := hostnet.Plan(cfg)

@@ -156,7 +156,12 @@ func netSpecs(st *flakegen.Stack) []hostnet.NetSpec {
 	for _, netName := range names {
 		for _, svc := range st.Services {
 			if gateway, ok := svc.Gateway[netName]; ok {
-				specs = append(specs, hostnet.NetSpec{Name: netName, Gateway: gateway, Prefix: svc.Prefix[netName]})
+				specs = append(specs, hostnet.NetSpec{
+					Name:     netName,
+					Gateway:  gateway,
+					Prefix:   svc.Prefix[netName],
+					Internal: st.Internal[netName],
+				})
 				break
 			}
 		}

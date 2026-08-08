@@ -31,6 +31,11 @@ type NetSpec struct {
 	Name    string // network name, e.g. "backend"
 	Gateway string // bridge address, e.g. "192.168.51.1"
 	Prefix  int    // gateway prefix length, e.g. 24
+
+	// Internal, when true, skips masquerade/outbound-forward provisioning
+	// for this network (see config.Network.Internal) — an airgapped
+	// network. Published-port DNAT is unaffected.
+	Internal bool
 }
 
 // TapSpec is one tap interface, enslaved to its network's bridge.

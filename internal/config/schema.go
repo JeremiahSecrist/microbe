@@ -19,6 +19,13 @@ type Compose struct {
 // Network is a single virtual network a stack's services can attach to.
 type Network struct {
 	Subnet string `json:"subnet"`
+
+	// Internal, when true, airgaps this network from the host's own
+	// internet access: no masquerade, so services on it can't dial out.
+	// Published ports (Service.Ports) still work — that's an explicit,
+	// per-service opt-in to inbound reachability, orthogonal to outbound
+	// egress. Mirrors docker-compose's `internal: true`.
+	Internal bool `json:"internal,omitempty"`
 }
 
 // Service is one VM's worth of configuration within a stack: sizing,

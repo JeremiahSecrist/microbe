@@ -164,11 +164,25 @@ func userDataFingerprint(ud []byte, prefix string) string {
 	return string(ud)
 }
 
-// EnsureMasquerade installs one masquerade rule per network, so traffic
-// sourced from a stack's bridge subnet gets SNAT'd to whatever address the
-// host's own routing picks for its egress interface — giving guests a path
-// to the internet the same way a DNAT rule gives the host a path to a
-// guest's published port. Idempotent, mirrors ApplyPorts.
+// masqEligible returns the subset of nets that should get a masquerade
+// rule: internal networks (config.Network.Internal) are airgapped from
+// outbound access by omission — they get no masquerade rule at all, so
+// guest-initiated traffic leaving the bridge has no path out.
+func masqEligible(nets []hostnet.NetSpec) []hostnet.NetSpec {
+	var out []hostnet.NetSpec
+	for _, n := range nets {
+		if !n.Internal {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// EnsureMasquerade installs one masquerade rule per non-internal network,
+// so traffic sourced from a stack's bridge subnet gets SNAT'd to whatever
+// address the host's own routing picks for its egress interface — giving
+// guests a path to the internet the same way a DNAT rule gives the host a
+// path to a guest's published port. Idempotent, mirrors ApplyPorts.
 func (NetOps) EnsureMasquerade(nets []hostnet.NetSpec) error {
 	c, err := nftables.New()
 	if err != nil {
@@ -188,7 +202,7 @@ func (NetOps) EnsureMasquerade(nets []hostnet.NetSpec) error {
 			have[tag] = true
 		}
 	}
-	for _, n := range nets {
+	for _, n := range masqEligible(nets) {
 		cidr, err := subnetCIDR(n.Gateway, n.Prefix)
 		if err != nil {
 			return err
@@ -244,14 +258,39 @@ func (NetOps) TeardownMasquerade(nets []hostnet.NetSpec) error {
 	return c.Flush()
 }
 
-// EnsureForwardAccept installs two forward-chain accept rules per network —
-// one matching traffic sourced from the subnet (guest -> internet), one
-// matching traffic destined to it (the return path back to the guest) — so
-// microbe's own nftables table doesn't drop its guests' forwarded traffic
-// in either direction. Defense-in-depth only: it guarantees this table
-// doesn't block its own stacks, not that some other table on the host (e.g.
-// a consuming flake that enables NixOS's networking.firewall.filterForward)
-// won't. Idempotent, mirrors ApplyPorts.
+// forwardDir is one direction of forward-accept rule EnsureForwardAccept
+// can install for a network.
+type forwardDir struct {
+	suffix string
+	build  func(string) ([]expr.Any, error)
+}
+
+var (
+	forwardDirSrc = forwardDir{":src", forwardAcceptSrcExprs}
+	forwardDirDst = forwardDir{":dst", forwardAcceptDstExprs}
+)
+
+// forwardDirsFor returns the forward-accept directions to install for a
+// network: an internal network (airgapped, see masqEligible) gets only the
+// inbound ":dst" accept, so published-port DNAT can still reach it, but no
+// ":src" accept, since that direction is what would let its own
+// guest-initiated traffic pass the forward chain outbound.
+func forwardDirsFor(internal bool) []forwardDir {
+	if internal {
+		return []forwardDir{forwardDirDst}
+	}
+	return []forwardDir{forwardDirSrc, forwardDirDst}
+}
+
+// EnsureForwardAccept installs forward-chain accept rules per network —
+// matching traffic sourced from the subnet (guest -> internet) and traffic
+// destined to it (the return path back to the guest, or inbound DNAT'd
+// published-port traffic) — so microbe's own nftables table doesn't drop
+// its guests' forwarded traffic. See forwardDirsFor for the internal-network
+// exception. Defense-in-depth only: it guarantees this table doesn't block
+// its own stacks, not that some other table on the host (e.g. a consuming
+// flake that enables NixOS's networking.firewall.filterForward) won't.
+// Idempotent, mirrors ApplyPorts.
 func (NetOps) EnsureForwardAccept(nets []hostnet.NetSpec) error {
 	c, err := nftables.New()
 	if err != nil {
@@ -276,13 +315,7 @@ func (NetOps) EnsureForwardAccept(nets []hostnet.NetSpec) error {
 		if err != nil {
 			return err
 		}
-		for _, dir := range []struct {
-			suffix string
-			build  func(string) ([]expr.Any, error)
-		}{
-			{":src", forwardAcceptSrcExprs},
-			{":dst", forwardAcceptDstExprs},
-		} {
+		for _, dir := range forwardDirsFor(n.Internal) {
 			fp := fwdUserDataPrefix + cidr + dir.suffix
 			if have[fp] {
 				continue

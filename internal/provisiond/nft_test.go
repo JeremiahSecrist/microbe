@@ -142,6 +142,49 @@ func TestForwardAcceptExprsShape(t *testing.T) {
 	}
 }
 
+func TestMasqEligibleSkipsInternal(t *testing.T) {
+	nets := []hostnet.NetSpec{
+		{Name: "backend", Gateway: "192.168.51.1", Prefix: 24},
+		{Name: "airgap", Gateway: "192.168.52.1", Prefix: 24, Internal: true},
+		{Name: "frontend", Gateway: "192.168.50.1", Prefix: 24},
+	}
+	got := masqEligible(nets)
+	if len(got) != 2 {
+		t.Fatalf("masqEligible = %d nets, want 2 (internal excluded)", len(got))
+	}
+	for _, n := range got {
+		if n.Name == "airgap" {
+			t.Errorf("masqEligible included internal network %q", n.Name)
+		}
+	}
+}
+
+func TestForwardDirsForInternal(t *testing.T) {
+	dirs := forwardDirsFor(true)
+	if len(dirs) != 1 || dirs[0].suffix != ":dst" {
+		t.Errorf("forwardDirsFor(internal) = %v, want only [:dst]", dirsSuffixes(dirs))
+	}
+}
+
+func TestForwardDirsForNotInternal(t *testing.T) {
+	dirs := forwardDirsFor(false)
+	if len(dirs) != 2 {
+		t.Fatalf("forwardDirsFor(not internal) = %d dirs, want 2", len(dirs))
+	}
+	suffixes := dirsSuffixes(dirs)
+	if suffixes[0] != ":src" || suffixes[1] != ":dst" {
+		t.Errorf("forwardDirsFor(not internal) = %v, want [:src :dst]", suffixes)
+	}
+}
+
+func dirsSuffixes(dirs []forwardDir) []string {
+	out := make([]string, len(dirs))
+	for i, d := range dirs {
+		out[i] = d.suffix
+	}
+	return out
+}
+
 func TestMasqFingerprintRoundTrip(t *testing.T) {
 	fp := masqUserDataPrefix + "192.168.51.0/24"
 	if got := userDataFingerprint([]byte(fp), masqUserDataPrefix); got != fp {

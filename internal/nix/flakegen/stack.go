@@ -36,6 +36,10 @@ type Stack struct {
 	Name     string
 	Services map[string]Service
 
+	// Internal marks which networks are airgapped from outbound access
+	// (config.Network.Internal), keyed by network name.
+	Internal map[string]bool
+
 	// SSHPublicKey, if set, is authorized for root in every guest (see
 	// guest-base.nix) so `microbe exec`/`microbe shell` can reach them.
 	SSHPublicKey string
@@ -65,7 +69,10 @@ type Host struct {
 // FromConfig builds a Stack from a validated compose file and its network
 // plan. CIDs are assigned starting at firstGuestCID in service-name order.
 func FromConfig(cfg *config.Compose, plan *hostnet.NetworkPlan) (*Stack, error) {
-	st := &Stack{Name: cfg.Name, Services: map[string]Service{}}
+	st := &Stack{Name: cfg.Name, Services: map[string]Service{}, Internal: map[string]bool{}}
+	for netName, net := range cfg.Networks {
+		st.Internal[netName] = net.Internal
+	}
 	names := make([]string, 0, len(cfg.Services))
 	for name := range cfg.Services {
 		names = append(names, name)
