@@ -125,7 +125,7 @@ func TestHostSpecSlices(t *testing.T) {
 		t.Errorf("tapSpecs(db only) = %v, want %v", dbOnly, wantDbOnly)
 	}
 
-	ports, err := portSpecs(cfg, st)
+	ports, err := portSpecs(cfg, st, []string{"db", "web"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,6 +134,27 @@ func TestHostSpecSlices(t *testing.T) {
 	}
 	if !reflect.DeepEqual(ports, wantPorts) {
 		t.Errorf("portSpecs = %v, want %v", ports, wantPorts)
+	}
+
+	// Scoping to a selection without web's port must exclude it: tearing
+	// down db alone must never touch web's still-live DNAT rule.
+	dbOnlyPorts, err := portSpecs(cfg, st, []string{"db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dbOnlyPorts) != 0 {
+		t.Errorf("portSpecs(db only) = %v, want empty (web's port excluded)", dbOnlyPorts)
+	}
+
+	// A bridge still used by a non-selected (still-running) service must
+	// survive teardown: web alone must not take backend down under db.
+	webOnlyNets := netSpecsForTeardown(st, []string{"web"})
+	if !reflect.DeepEqual(webOnlyNets, []hostnet.NetSpec{{Name: "frontend", Gateway: "192.168.50.1", Prefix: 24}}) {
+		t.Errorf("netSpecsForTeardown(web only) = %v, want only frontend (backend still used by db)", webOnlyNets)
+	}
+	allNets := netSpecsForTeardown(st, []string{"db", "web"})
+	if !reflect.DeepEqual(allNets, wantNets) {
+		t.Errorf("netSpecsForTeardown(all) = %v, want %v (nothing left using them)", allNets, wantNets)
 	}
 }
 
@@ -578,7 +599,7 @@ func TestProvisionHostSeamForwardsToOps(t *testing.T) {
 	cfg, st := loadStack(t, writeConfig(t))
 	nets := netSpecs(st)
 	taps := tapSpecs(cfg, st, st.Names())
-	ports, err := portSpecs(cfg, st)
+	ports, err := portSpecs(cfg, st, st.Names())
 	if err != nil {
 		t.Fatal(err)
 	}

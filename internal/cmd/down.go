@@ -126,9 +126,9 @@ func downRun(args []string, opts downOptions) error {
 	if err != nil {
 		return err
 	}
-	nets := netSpecs(st)
+	nets := netSpecsForTeardown(st, selected)
 	taps := tapSpecs(cfg, st, selected)
-	ports, err := portSpecs(cfg, st)
+	ports, err := portSpecs(cfg, st, selected)
 	if err != nil {
 		return err
 	}

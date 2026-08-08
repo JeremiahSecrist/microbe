@@ -164,6 +164,33 @@ func netSpecs(st *flakegen.Stack) []hostnet.NetSpec {
 	return specs
 }
 
+// netSpecsForTeardown returns the subset of netSpecs(st) safe to actually
+// tear down: a network still used by a service outside selected (i.e.
+// staying up) must survive, or TeardownNetworks would delete a bridge a
+// still-running service depends on out from under it.
+func netSpecsForTeardown(st *flakegen.Stack, selected []string) []hostnet.NetSpec {
+	isSelected := map[string]bool{}
+	for _, name := range selected {
+		isSelected[name] = true
+	}
+	inUseByOthers := map[string]bool{}
+	for name, svc := range st.Services {
+		if isSelected[name] {
+			continue
+		}
+		for _, netName := range svc.Networks {
+			inUseByOthers[netName] = true
+		}
+	}
+	var specs []hostnet.NetSpec
+	for _, spec := range netSpecs(st) {
+		if !inUseByOthers[spec.Name] {
+			specs = append(specs, spec)
+		}
+	}
+	return specs
+}
+
 // svcNetPair identifies one service's attachment to one network.
 type svcNetPair struct{ service, network string }
 
@@ -222,11 +249,22 @@ func primaryNetwork(svc flakegen.Service) string {
 	return svc.Networks[0]
 }
 
-// portSpecs derives one PortSpec per published port, in sorted service order.
-// The DNAT target is the service's primary network IP.
-func portSpecs(cfg *config.Compose, st *flakegen.Stack) ([]hostnet.PortSpec, error) {
+// portSpecs derives one PortSpec per published port belonging to a service
+// in selected, in sorted service order. The DNAT target is the service's
+// primary network IP. Callers tearing down ports must scope selected to the
+// services actually being brought down: TeardownPorts deletes by exact
+// match, so an unscoped call would delete a still-running service's DNAT
+// rule too.
+func portSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) ([]hostnet.PortSpec, error) {
+	isSelected := map[string]bool{}
+	for _, name := range selected {
+		isSelected[name] = true
+	}
 	var specs []hostnet.PortSpec
 	for _, name := range st.Names() {
+		if !isSelected[name] {
+			continue
+		}
 		svc := st.Services[name]
 		primary := primaryNetwork(svc)
 		for _, portMapping := range cfg.Services[name].Ports {
