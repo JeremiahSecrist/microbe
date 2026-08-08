@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 
 	"microbe/internal/cmdrun"
 	"microbe/internal/config"
@@ -140,17 +141,34 @@ func upRun(args []string, opts upOptions) error {
 		}
 	}
 
-	for _, svc := range selected {
-		outLink := filepath.Join(opts.base, "runners", svc)
-		if opts.dryRun {
+	if opts.dryRun {
+		for _, svc := range selected {
+			outLink := filepath.Join(opts.base, "runners", svc)
 			fmt.Fprintf(opts.out, "nix build .#nixosConfigurations.%s.config.microvm.declaredRunner -> %s\n", svc, outLink)
-			continue
 		}
-		path, err := buildRunner(opts.base, svc, outLink)
-		if err != nil {
+	} else {
+		// Each service's derivation is independent, so build them concurrently
+		// instead of paying N sequential `nix build` round trips; nix's own
+		// daemon serializes/parallelizes the underlying store realizations.
+		paths := make([]string, len(selected))
+		var g errgroup.Group
+		for i, svc := range selected {
+			i, svc := i, svc
+			g.Go(func() error {
+				path, err := buildRunner(opts.base, svc, filepath.Join(opts.base, "runners", svc))
+				if err != nil {
+					return err
+				}
+				paths[i] = path
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
 			return err
 		}
-		fmt.Fprintf(opts.out, "%s -> %s\n", svc, path)
+		for i, svc := range selected {
+			fmt.Fprintf(opts.out, "%s -> %s\n", svc, paths[i])
+		}
 	}
 
 	if !opts.noProvision {

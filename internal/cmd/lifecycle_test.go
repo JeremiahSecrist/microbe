@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -271,6 +272,61 @@ func TestUpRunProvision(t *testing.T) {
 	}
 	if got := store.Ports["8080"]; got != (state.PortState{Service: "web", Guest: 80}) {
 		t.Errorf("port state = %+v", got)
+	}
+}
+
+// TestUpRunBuildsConcurrently proves the per-service nix builds overlap
+// rather than running one after another: each fake build blocks until both
+// are in flight, so a sequential implementation deadlocks (caught by the
+// timeout) instead of reaching maxInFlight == 2.
+func TestUpRunBuildsConcurrently(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+
+	var mu sync.Mutex
+	inFlight, maxInFlight := 0, 0
+	bothInFlight := make(chan struct{})
+	var once sync.Once
+
+	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
+	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+		return nil
+	}
+	buildRunner = func(dir, svc, outLink string) (string, error) {
+		mu.Lock()
+		inFlight++
+		if inFlight > maxInFlight {
+			maxInFlight = inFlight
+		}
+		n := inFlight
+		mu.Unlock()
+		if n == 2 {
+			once.Do(func() { close(bothInFlight) })
+		}
+		select {
+		case <-bothInFlight:
+		case <-time.After(2 * time.Second):
+		}
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		return outLink, nil
+	}
+	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	defer func() {
+		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
+	}()
+
+	rec := &cmdRecorder{}
+	var buf bytes.Buffer
+	if err := upRun(nil, upOptions{
+		file: cfgPath, base: base, runner: rec.run, out: &buf,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if maxInFlight < 2 {
+		t.Errorf("max concurrent builds = %d, want 2 (builds should run in parallel)", maxInFlight)
 	}
 }
 
