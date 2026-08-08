@@ -10,7 +10,7 @@ func TestFixedModulesEmbedded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"renderer.nix", "guest-base.nix"} {
+	for _, name := range []string{"renderer.nix", "guest-base.nix", "virtiofsd-run.nix"} {
 		content, ok := mods[name]
 		if !ok {
 			t.Errorf("missing fixed module %q", name)
@@ -41,6 +41,44 @@ func TestRendererNixHasRequiredMarkers(t *testing.T) {
 	} {
 		if !strings.Contains(content, marker) {
 			t.Errorf("renderer.nix missing marker %q", marker)
+		}
+	}
+}
+
+// TestVirtiofsdRunNixHasNoRootRequirement is the regression gate for the
+// live blocker this module exists to fix: microvm.nix's own generated
+// virtiofsd-run hardcodes `user = "root"` in its supervisord config, which
+// makes supervisord refuse to start when launched unprivileged (exactly
+// how microbe launches every process). This override must never
+// reintroduce that.
+func TestVirtiofsdRunNixHasNoRootRequirement(t *testing.T) {
+	content, err := FixedModule("virtiofsd-run.nix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{`user = "root"`, `user="root"`} {
+		if strings.Contains(content, forbidden) {
+			t.Errorf("virtiofsd-run.nix contains %q; supervisord will refuse to start unprivileged", forbidden)
+		}
+	}
+}
+
+func TestVirtiofsdRunNixHasRequiredMarkers(t *testing.T) {
+	content, err := FixedModule("virtiofsd-run.nix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{
+		"flake.nixosModules.virtiofsd-run",
+		"microvm.binScripts.virtiofsd-run",
+		"lib.mkForce",
+		"config.microvm.shares",
+		"--socket-path=",
+		"--shared-dir=",
+		"supervisord",
+	} {
+		if !strings.Contains(content, marker) {
+			t.Errorf("virtiofsd-run.nix missing marker %q", marker)
 		}
 	}
 }

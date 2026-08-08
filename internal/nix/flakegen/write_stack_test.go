@@ -20,6 +20,7 @@ func TestWriteStackWritesAllArtifacts(t *testing.T) {
 		"generated.json",
 		"parts/renderer.nix",
 		"parts/guest-base.nix",
+		"parts/virtiofsd-run.nix",
 		"parts/db.nix",
 		"parts/jump.nix",
 		"parts/web.nix",

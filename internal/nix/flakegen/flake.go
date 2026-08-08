@@ -30,9 +30,10 @@ func (st *Stack) RenderFlake() string {
 // ServicePart emits the per-service flake-parts module: the whole
 // nixosSystem for name, self-registered as flake.nixosConfigurations.<name>
 // rather than built by a shared factory function. config.flake.nixosModules.
-// renderer/.guest-base resolve to the fixed modules' own self-registered
-// values (flake-parts' shared module-system config, no explicit imports
-// needed — same mechanism as the Dendritic pattern's cross-part references).
+// renderer/.guest-base/.virtiofsd-run resolve to the fixed modules' own
+// self-registered values (flake-parts' shared module-system config, no
+// explicit imports needed — same mechanism as the Dendritic pattern's
+// cross-part references).
 func ServicePart(name string) string {
 	q := nixQuote(name)
 	return `{ inputs, config, ... }:
@@ -46,6 +47,7 @@ in
       inputs.microvm.nixosModules.microvm
       config.flake.nixosModules.renderer
       config.flake.nixosModules.guest-base
+      config.flake.nixosModules.virtiofsd-run
       { microCompose.serviceName = ` + q + `; }
       (compose.services.` + name + `.config or ({ ... }: { }))
     ];

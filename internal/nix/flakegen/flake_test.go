@@ -30,6 +30,7 @@ in
       inputs.microvm.nixosModules.microvm
       config.flake.nixosModules.renderer
       config.flake.nixosModules.guest-base
+      config.flake.nixosModules.virtiofsd-run
       { microCompose.serviceName = "db"; }
       (compose.services.db.config or ({ ... }: { }))
     ];
