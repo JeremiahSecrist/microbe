@@ -21,6 +21,9 @@
         version = "0.1.0";
         src = ./.;
         vendorHash = null;
+        # ssh-keygen: internal/sshkey's tests generate a real throwaway
+        # keypair (no fake for a binary this cheap to actually run).
+        nativeCheckInputs = [ pkgs.openssh ];
       };
 
       # The ISO image is built from this configuration. It is the intended

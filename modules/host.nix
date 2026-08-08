@@ -81,6 +81,7 @@ in
       environment.systemPackages = [
         pkgs.qemu-utils # qemu-img for VM volume images
         pkgs.e2fsprogs # mkfs.ext4 to format them (EnsureVolume, unprivileged)
+        pkgs.openssh # ssh-keygen (up.go) + ssh (exec/shell) to reach guests
       ] ++ optionals (cfg.package != null) [ cfg.package ];
 
       users.groups.microbe = { };

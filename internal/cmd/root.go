@@ -31,6 +31,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newPsCmd())
 	root.AddCommand(newLogsCmd())
 	root.AddCommand(newExecCmd())
+	root.AddCommand(newShellCmd())
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newBuildCmd())
 	root.AddCommand(newRmCmd())

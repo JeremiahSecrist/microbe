@@ -52,6 +52,8 @@ func TestGuestBaseNixHasRequiredMarkers(t *testing.T) {
 	for _, marker := range []string{
 		"services.openssh",
 		"microvm.optimize.enable",
+		"import ../generated.nix",
+		"users.users.root.openssh.authorizedKeys.keys",
 	} {
 		if !strings.Contains(content, marker) {
 			t.Errorf("guest-base.nix missing marker %q", marker)

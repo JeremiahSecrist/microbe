@@ -114,6 +114,17 @@ func upRun(args []string, opts upOptions) error {
 		return err
 	}
 
+	if !opts.dryRun {
+		// Always the real shell runner: key generation is independent of
+		// opts.runner (which tests fake out for qemu-img/mkfs volume
+		// commands) and needs ssh-keygen to actually run.
+		_, pub, err := ensureSSHKeypair(cmdrun.Shell(), filepath.Join(opts.base, "ssh"))
+		if err != nil {
+			return err
+		}
+		st.SSHPublicKey = pub
+	}
+
 	if err := flakegen.WriteStack(opts.base, st, opts.file); err != nil {
 		return err
 	}

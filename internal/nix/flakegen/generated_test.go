@@ -49,6 +49,33 @@ func TestRenderGeneratedIncludesAbsoluteVolumeImage(t *testing.T) {
 	}
 }
 
+func TestRenderGeneratedOmitsSSHPublicKeyWhenUnset(t *testing.T) {
+	cfg := fixtureConfig()
+	st := mustStack(t, cfg)
+
+	got, err := st.RenderGenerated()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "sshPublicKey") {
+		t.Errorf("RenderGenerated() should omit sshPublicKey when unset:\n%s", got)
+	}
+}
+
+func TestRenderGeneratedIncludesSSHPublicKey(t *testing.T) {
+	cfg := fixtureConfig()
+	st := mustStack(t, cfg)
+	st.SSHPublicKey = "ssh-ed25519 AAAAfake microbe"
+
+	got, err := st.RenderGenerated()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `sshPublicKey = "ssh-ed25519 AAAAfake microbe";`) {
+		t.Errorf("RenderGenerated() missing sshPublicKey:\n%s", got)
+	}
+}
+
 func mustStack(t *testing.T, cfg *config.Compose) *Stack {
 	t.Helper()
 	plan, err := hostnet.Plan(cfg)

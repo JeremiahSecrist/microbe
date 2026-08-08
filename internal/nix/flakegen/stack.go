@@ -35,6 +35,10 @@ const (
 type Stack struct {
 	Name     string
 	Services map[string]Service
+
+	// SSHPublicKey, if set, is authorized for root in every guest (see
+	// guest-base.nix) so `microbe exec`/`microbe shell` can reach them.
+	SSHPublicKey string
 }
 
 type Service struct {

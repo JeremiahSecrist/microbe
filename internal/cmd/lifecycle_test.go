@@ -400,6 +400,70 @@ func TestUpRunGeneratedNixHasAbsoluteVolumeImage(t *testing.T) {
 	}
 }
 
+func TestUpRunGeneratesSSHKeyAndInjectsPublicKey(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+
+	origProvision, origBuild, origStart, origKeypair := provisionHost, buildRunner, startService, ensureSSHKeypair
+	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
+	buildRunner = func(dir, svc, outLink string) (string, error) {
+		return filepath.Join(dir, "runners", svc), nil
+	}
+	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	var gotDir string
+	ensureSSHKeypair = func(run cmdrun.Runner, dir string) (string, string, error) {
+		gotDir = dir
+		return filepath.Join(dir, "id_ed25519"), "ssh-ed25519 AAAAfake microbe", nil
+	}
+	defer func() {
+		provisionHost, buildRunner, startService, ensureSSHKeypair = origProvision, origBuild, origStart, origKeypair
+	}()
+
+	rec := &cmdRecorder{}
+	var buf bytes.Buffer
+	if err := upRun(nil, upOptions{
+		file: cfgPath, base: base, runner: rec.run, out: &buf,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if gotDir != filepath.Join(base, "ssh") {
+		t.Errorf("ensureSSHKeypair dir = %q, want %q", gotDir, filepath.Join(base, "ssh"))
+	}
+	generated, err := os.ReadFile(filepath.Join(base, "generated.nix"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), `sshPublicKey = "ssh-ed25519 AAAAfake microbe";`) {
+		t.Errorf("generated.nix missing sshPublicKey:\n%s", generated)
+	}
+}
+
+func TestUpRunDryRunSkipsSSHKeypair(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+
+	origProvision, origStart, origKeypair := provisionHost, startService, ensureSSHKeypair
+	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
+	startService = func(context.Context, string, string, string) (int, error) { return 0, nil }
+	called := false
+	ensureSSHKeypair = func(run cmdrun.Runner, dir string) (string, string, error) {
+		called = true
+		return "", "", nil
+	}
+	defer func() { provisionHost, startService, ensureSSHKeypair = origProvision, origStart, origKeypair }()
+
+	var buf bytes.Buffer
+	if err := upRun(nil, upOptions{
+		file: cfgPath, base: base, dryRun: true, runner: cmdrun.Dry(&buf), ops: printOps{out: &buf}, out: &buf,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Error("dry-run invoked ensureSSHKeypair")
+	}
+}
+
 func TestProvisionHostSeamForwardsToOps(t *testing.T) {
 	cfg, st := loadStack(t, writeConfig(t))
 	nets := netSpecs(st)

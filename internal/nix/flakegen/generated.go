@@ -51,7 +51,11 @@ func (st *Stack) RenderGenerated() (string, error) {
 		}
 		services[name] = svc
 	}
-	return nixify(map[string]any{"services": services}) + "\n", nil
+	root := map[string]any{"services": services}
+	if st.SSHPublicKey != "" {
+		root["sshPublicKey"] = st.SSHPublicKey
+	}
+	return nixify(root) + "\n", nil
 }
 
 func renderNetworkd(svcName string, s Service) (map[string]any, error) {
