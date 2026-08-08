@@ -1,0 +1,273 @@
+{
+  "services": {
+    "db": {
+      "cid": 3,
+      "gateway": {
+        "backend": "192.168.51.1"
+      },
+      "hosts": [
+        {
+          "ip": "192.168.51.2",
+          "names": [
+            "db",
+            "db.backend"
+          ]
+        },
+        {
+          "ip": "192.168.51.4",
+          "names": [
+            "jump",
+            "jump.backend"
+          ]
+        },
+        {
+          "ip": "192.168.50.2",
+          "names": [
+            "jump",
+            "jump.frontend"
+          ]
+        },
+        {
+          "ip": "192.168.51.3",
+          "names": [
+            "web",
+            "web.backend"
+          ]
+        },
+        {
+          "ip": "192.168.50.3",
+          "names": [
+            "web",
+            "web.frontend"
+          ]
+        }
+      ],
+      "ips": {
+        "backend": "192.168.51.2"
+      },
+      "macs": {
+        "backend": "02:00:00:00:00:01"
+      },
+      "networkd": {
+        "mvc-db-backend": {
+          "address": [
+            "192.168.51.2/24"
+          ],
+          "linkConfig": {
+            "RequiredForOnline": "no"
+          },
+          "matchConfig": {
+            "MACAddress": "02:00:00:00:00:01"
+          },
+          "routes": [
+            {
+              "Gateway": "192.168.51.1"
+            }
+          ]
+        }
+      },
+      "prefix": {
+        "backend": 24
+      },
+      "taps": {
+        "backend": "mvc-40a9dc4d8a4"
+      },
+      "volumes": {
+        "db-data": {
+          "image": "/var/lib/microbe/test-net/volumes/db-data.qcow2"
+        }
+      }
+    },
+    "jump": {
+      "cid": 4,
+      "gateway": {
+        "backend": "192.168.51.1",
+        "frontend": "192.168.50.1"
+      },
+      "hosts": [
+        {
+          "ip": "192.168.51.2",
+          "names": [
+            "db",
+            "db.backend"
+          ]
+        },
+        {
+          "ip": "192.168.51.4",
+          "names": [
+            "jump",
+            "jump.backend"
+          ]
+        },
+        {
+          "ip": "192.168.50.2",
+          "names": [
+            "jump",
+            "jump.frontend"
+          ]
+        },
+        {
+          "ip": "192.168.51.3",
+          "names": [
+            "web",
+            "web.backend"
+          ]
+        },
+        {
+          "ip": "192.168.50.3",
+          "names": [
+            "web",
+            "web.frontend"
+          ]
+        }
+      ],
+      "ips": {
+        "backend": "192.168.51.4",
+        "frontend": "192.168.50.2"
+      },
+      "macs": {
+        "backend": "02:00:00:00:00:02",
+        "frontend": "02:00:00:00:00:03"
+      },
+      "networkd": {
+        "mvc-jump-backend": {
+          "address": [
+            "192.168.51.4/24"
+          ],
+          "linkConfig": {
+            "RequiredForOnline": "no"
+          },
+          "matchConfig": {
+            "MACAddress": "02:00:00:00:00:02"
+          },
+          "routes": [
+            {
+              "Destination": "192.168.51.0/24",
+              "Gateway": "192.168.51.1"
+            }
+          ]
+        },
+        "mvc-jump-frontend": {
+          "address": [
+            "192.168.50.2/24"
+          ],
+          "linkConfig": {
+            "RequiredForOnline": "no"
+          },
+          "matchConfig": {
+            "MACAddress": "02:00:00:00:00:03"
+          },
+          "routes": [
+            {
+              "Gateway": "192.168.50.1"
+            }
+          ]
+        }
+      },
+      "prefix": {
+        "backend": 24,
+        "frontend": 24
+      },
+      "taps": {
+        "backend": "mvc-16cc6d57ae0",
+        "frontend": "mvc-4ee3cc8069e"
+      }
+    },
+    "web": {
+      "cid": 5,
+      "gateway": {
+        "backend": "192.168.51.1",
+        "frontend": "192.168.50.1"
+      },
+      "hosts": [
+        {
+          "ip": "192.168.51.2",
+          "names": [
+            "db",
+            "db.backend"
+          ]
+        },
+        {
+          "ip": "192.168.51.4",
+          "names": [
+            "jump",
+            "jump.backend"
+          ]
+        },
+        {
+          "ip": "192.168.50.2",
+          "names": [
+            "jump",
+            "jump.frontend"
+          ]
+        },
+        {
+          "ip": "192.168.51.3",
+          "names": [
+            "web",
+            "web.backend"
+          ]
+        },
+        {
+          "ip": "192.168.50.3",
+          "names": [
+            "web",
+            "web.frontend"
+          ]
+        }
+      ],
+      "ips": {
+        "backend": "192.168.51.3",
+        "frontend": "192.168.50.3"
+      },
+      "macs": {
+        "backend": "02:00:00:00:00:04",
+        "frontend": "02:00:00:00:00:05"
+      },
+      "networkd": {
+        "mvc-web-backend": {
+          "address": [
+            "192.168.51.3/24"
+          ],
+          "linkConfig": {
+            "RequiredForOnline": "no"
+          },
+          "matchConfig": {
+            "MACAddress": "02:00:00:00:00:04"
+          },
+          "routes": [
+            {
+              "Gateway": "192.168.51.1"
+            }
+          ]
+        },
+        "mvc-web-frontend": {
+          "address": [
+            "192.168.50.3/24"
+          ],
+          "linkConfig": {
+            "RequiredForOnline": "no"
+          },
+          "matchConfig": {
+            "MACAddress": "02:00:00:00:00:05"
+          },
+          "routes": [
+            {
+              "Destination": "192.168.50.0/24",
+              "Gateway": "192.168.50.1"
+            }
+          ]
+        }
+      },
+      "prefix": {
+        "backend": 24,
+        "frontend": 24
+      },
+      "taps": {
+        "backend": "mvc-860c125936d",
+        "frontend": "mvc-0bb5796d55c"
+      }
+    }
+  },
+  "sshPublicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDpJr2dOBlfn6XhlOmy36Je2SygbiBarqCHm+YZiQSoW microbe"
+}
