@@ -12,6 +12,7 @@ import (
 
 	"microbe/internal/cmdrun"
 	"microbe/internal/config"
+	"microbe/internal/datadir"
 	"microbe/internal/hostnet"
 	"microbe/internal/nix/flakegen"
 	"microbe/internal/provisiond"
@@ -44,7 +45,6 @@ func newDownCmd() *cobra.Command {
 				file:          file,
 				dryRun:        dryRun,
 				removeVolumes: removeVolumes,
-				base:          ".microbe",
 				runner:        runner,
 				ops:           ops,
 				out:           os.Stdout,
@@ -59,14 +59,22 @@ type downOptions struct {
 	file          string
 	dryRun        bool
 	removeVolumes bool
-	base          string
 	runner        cmdrun.Runner
 	ops           provisiond.Ops
 	out           io.Writer
 }
 
 func downRun(args []string, opts downOptions) error {
-	store, err := state.Load(filepath.Join(opts.base, "state.json"))
+	cfg, err := config.Load(opts.file)
+	if err != nil {
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	dataDir := datadir.Dir(cfg.Name)
+
+	store, err := state.Load(filepath.Join(dataDir, "state.json"))
 	if err != nil {
 		return err
 	}
@@ -96,7 +104,7 @@ func downRun(args []string, opts downOptions) error {
 			// prior partial `up` that never recorded it) while its VM is
 			// still actually alive. There's no PID to stop by, but this is
 			// worth surfacing instead of silently claiming a clean stop.
-			if chState, err := vmState(vmSocketPath(opts.base, name)); err == nil && chState != "" {
+			if chState, err := vmState(vmSocketPath(dataDir, name)); err == nil && chState != "" {
 				fmt.Fprintf(opts.out, "warning: %s has no tracked pid but its VM is untracked-live (%s); stop it manually\n", name, chState)
 			}
 		}
@@ -105,19 +113,12 @@ func downRun(args []string, opts downOptions) error {
 		store.Services[name] = svc
 
 		if !opts.dryRun {
-			if err := os.RemoveAll(filepath.Join(opts.base, "runs", name)); err != nil {
+			if err := os.RemoveAll(filepath.Join(dataDir, "runs", name)); err != nil {
 				return err
 			}
 		}
 	}
 
-	cfg, err := config.Load(opts.file)
-	if err != nil {
-		return err
-	}
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
 	plan, err := hostnet.Plan(cfg)
 	if err != nil {
 		return err
@@ -140,7 +141,7 @@ func downRun(args []string, opts downOptions) error {
 		for _, name := range selected {
 			svc := store.Services[name]
 			for _, vol := range svc.Volumes {
-				path := runtime.VolumeImagePath(opts.base, store.Stack, vol)
+				path := runtime.VolumeImagePath(dataDir, vol)
 				fmt.Fprintf(opts.out, "removing volume %s\n", path)
 				if !opts.dryRun {
 					if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -156,7 +157,7 @@ func downRun(args []string, opts downOptions) error {
 	}
 
 	if !opts.dryRun {
-		if err := store.Save(filepath.Join(opts.base, "state.json")); err != nil {
+		if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 			return err
 		}
 	}

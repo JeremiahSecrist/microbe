@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"microbe/internal/config"
+	"microbe/internal/datadir"
 	"microbe/internal/hostnet"
 	"microbe/internal/nix"
 	"microbe/internal/nix/flakegen"
@@ -15,7 +16,7 @@ import (
 func newBuildCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "build [services...]",
-		Short: "Render .microbe/ and build runner derivations",
+		Short: "Render the project's flake and build runner derivations",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(file)
 			if err != nil {
@@ -33,8 +34,9 @@ func newBuildCmd() *cobra.Command {
 				return err
 			}
 
-			dir := ".microbe"
-			if err := flakegen.WriteStack(dir, st, file); err != nil {
+			dir := filepath.Dir(file)
+			dataDir := datadir.Dir(cfg.Name)
+			if err := flakegen.WriteStack(dir, st); err != nil {
 				return err
 			}
 			fmt.Printf("rendered %s\n", dir)
@@ -47,7 +49,7 @@ func newBuildCmd() *cobra.Command {
 				if _, ok := st.Services[svc]; !ok {
 					return fmt.Errorf("no service %q", svc)
 				}
-				outLink := filepath.Join(dir, "runners", svc)
+				outLink := filepath.Join(dataDir, "runners", svc)
 				if dryRun {
 					fmt.Printf("nix build .#nixosConfigurations.%s.config.microvm.declaredRunner -> %s\n", svc, outLink)
 					continue

@@ -13,6 +13,7 @@ import (
 
 	"microbe/internal/cmdrun"
 	"microbe/internal/config"
+	"microbe/internal/datadir"
 	"microbe/internal/hostnet"
 	"microbe/internal/nix/flakegen"
 	"microbe/internal/provisiond"
@@ -227,6 +228,8 @@ func recordHost(hr *hostRecorder, events *[]string, tag string) func(provisiond.
 func TestUpRunProvision(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
 	var hr hostRecorder
@@ -243,7 +246,7 @@ func TestUpRunProvision(t *testing.T) {
 	rec := &cmdRecorder{}
 	var buf bytes.Buffer
 	if err := upRun(nil, upOptions{
-		file: cfgPath, base: base, runner: rec.run, out: &buf,
+		file: cfgPath, runner: rec.run, out: &buf,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +265,7 @@ func TestUpRunProvision(t *testing.T) {
 	}
 
 	// Volume image was requested via qemu-img and formatted with mkfs.
-	volPath := filepath.Join(base, "volumes", "test-net", "db-data.qcow2")
+	volPath := filepath.Join(dataDir, "volumes", "db-data.qcow2")
 	var foundCreate, foundMkfs bool
 	for _, c := range rec.calls {
 		if len(c) > 0 && c[0] == "qemu-img" {
@@ -282,7 +285,7 @@ func TestUpRunProvision(t *testing.T) {
 		t.Errorf("no mkfs.ext4 call; runner saw %v", rec.calls)
 	}
 
-	store, err := state.Load(filepath.Join(base, "state.json"))
+	store, err := state.Load(filepath.Join(dataDir, "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +293,7 @@ func TestUpRunProvision(t *testing.T) {
 	if db.Status != "running" || db.PID != 1000 {
 		t.Errorf("db state = %+v, want running pid 1000", db)
 	}
-	if db.Runner != filepath.Join(base, "runners", "db") {
+	if db.Runner != filepath.Join(dataDir, "runners", "db") {
 		t.Errorf("db runner = %q", db.Runner)
 	}
 	if db.CID != 3 || db.MACs["backend"] != "02:00:00:00:00:01" || db.IP["backend"] != "192.168.51.2" {
@@ -314,6 +317,7 @@ func TestUpRunProvision(t *testing.T) {
 func TestUpRunBuildsConcurrently(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
 
 	var mu sync.Mutex
 	inFlight, maxInFlight := 0, 0
@@ -352,7 +356,7 @@ func TestUpRunBuildsConcurrently(t *testing.T) {
 	rec := &cmdRecorder{}
 	var buf bytes.Buffer
 	if err := upRun(nil, upOptions{
-		file: cfgPath, base: base, runner: rec.run, out: &buf,
+		file: cfgPath, runner: rec.run, out: &buf,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -391,6 +395,8 @@ func writeHealthcheckConfig(t *testing.T) string {
 func TestUpRunHealthGatingHealthy(t *testing.T) {
 	cfgPath := writeHealthcheckConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 
 	origProvision, origBuild, origStart, origWaitHealthy := provisionHost, buildRunner, startService, waitHealthy
 	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
@@ -402,11 +408,11 @@ func TestUpRunHealthGatingHealthy(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := upRun(nil, upOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatalf("upRun: %v", err)
 	}
 
-	store, err := state.Load(filepath.Join(base, "state.json"))
+	store, err := state.Load(filepath.Join(dataDir, "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,6 +430,8 @@ func TestUpRunHealthGatingHealthy(t *testing.T) {
 func TestUpRunHealthGatingDegraded(t *testing.T) {
 	cfgPath := writeHealthcheckConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 
 	origProvision, origBuild, origStart, origWaitHealthy := provisionHost, buildRunner, startService, waitHealthy
 	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
@@ -435,12 +443,12 @@ func TestUpRunHealthGatingDegraded(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	err := upRun(nil, upOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf})
+	err := upRun(nil, upOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf})
 	if err == nil {
 		t.Fatal("upRun: want error when db never becomes healthy, got nil")
 	}
 
-	store, loadErr := state.Load(filepath.Join(base, "state.json"))
+	store, loadErr := state.Load(filepath.Join(dataDir, "state.json"))
 	if loadErr != nil {
 		t.Fatal(loadErr)
 	}
@@ -459,6 +467,8 @@ func TestUpRunHealthGatingDegraded(t *testing.T) {
 func TestUpRunStopsProcessOnHealthcheckFailure(t *testing.T) {
 	cfgPath := writeHealthcheckConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 
 	var stopCalls, stoppedPID int
 	origProvision, origBuild, origStart, origStop, origWaitHealthy :=
@@ -478,7 +488,7 @@ func TestUpRunStopsProcessOnHealthcheckFailure(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf}); err == nil {
+	if err := upRun(nil, upOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err == nil {
 		t.Fatal("upRun: want error when db never becomes healthy, got nil")
 	}
 
@@ -486,7 +496,7 @@ func TestUpRunStopsProcessOnHealthcheckFailure(t *testing.T) {
 		t.Errorf("stopService calls = %d, pid = %d, want 1 call with pid 1234", stopCalls, stoppedPID)
 	}
 
-	store, err := state.Load(filepath.Join(base, "state.json"))
+	store, err := state.Load(filepath.Join(dataDir, "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,6 +508,8 @@ func TestUpRunStopsProcessOnHealthcheckFailure(t *testing.T) {
 func TestUpRunGeneratedNixHasAbsoluteVolumeImage(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 
 	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
 	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
@@ -512,28 +524,30 @@ func TestUpRunGeneratedNixHasAbsoluteVolumeImage(t *testing.T) {
 	rec := &cmdRecorder{}
 	var buf bytes.Buffer
 	if err := upRun(nil, upOptions{
-		file: cfgPath, base: base, runner: rec.run, out: &buf,
+		file: cfgPath, runner: rec.run, out: &buf,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	generated, err := os.ReadFile(filepath.Join(base, "generated.nix"))
+	generated, err := os.ReadFile(filepath.Join(filepath.Dir(cfgPath), "generated.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(base, "volumes", "test-net", "db-data.qcow2")
+	want := filepath.Join(dataDir, "volumes", "db-data.qcow2")
 	absWant, err := filepath.Abs(want)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(generated), absWant) {
-		t.Errorf("generated.nix missing absolute volume image %q:\n%s", absWant, generated)
+		t.Errorf("generated.json missing absolute volume image %q:\n%s", absWant, generated)
 	}
 }
 
 func TestUpRunGeneratesSSHKeyAndInjectsPublicKey(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 
 	origProvision, origBuild, origStart, origKeypair := provisionHost, buildRunner, startService, ensureSSHKeypair
 	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
@@ -553,26 +567,27 @@ func TestUpRunGeneratesSSHKeyAndInjectsPublicKey(t *testing.T) {
 	rec := &cmdRecorder{}
 	var buf bytes.Buffer
 	if err := upRun(nil, upOptions{
-		file: cfgPath, base: base, runner: rec.run, out: &buf,
+		file: cfgPath, runner: rec.run, out: &buf,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if gotDir != filepath.Join(base, "ssh") {
-		t.Errorf("ensureSSHKeypair dir = %q, want %q", gotDir, filepath.Join(base, "ssh"))
+	if gotDir != filepath.Join(dataDir, "ssh") {
+		t.Errorf("ensureSSHKeypair dir = %q, want %q", gotDir, filepath.Join(dataDir, "ssh"))
 	}
-	generated, err := os.ReadFile(filepath.Join(base, "generated.nix"))
+	generated, err := os.ReadFile(filepath.Join(filepath.Dir(cfgPath), "generated.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(generated), `sshPublicKey = "ssh-ed25519 AAAAfake microbe";`) {
-		t.Errorf("generated.nix missing sshPublicKey:\n%s", generated)
+	if !strings.Contains(string(generated), `"sshPublicKey": "ssh-ed25519 AAAAfake microbe"`) {
+		t.Errorf("generated.json missing sshPublicKey:\n%s", generated)
 	}
 }
 
 func TestUpRunDryRunSkipsSSHKeypair(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
 
 	origProvision, origStart, origKeypair := provisionHost, startService, ensureSSHKeypair
 	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
@@ -586,7 +601,7 @@ func TestUpRunDryRunSkipsSSHKeypair(t *testing.T) {
 
 	var buf bytes.Buffer
 	if err := upRun(nil, upOptions{
-		file: cfgPath, base: base, dryRun: true, runner: cmdrun.Dry(&buf), ops: printOps{out: &buf}, out: &buf,
+		file: cfgPath, dryRun: true, runner: cmdrun.Dry(&buf), ops: printOps{out: &buf}, out: &buf,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -618,6 +633,8 @@ func TestProvisionHostSeamForwardsToOps(t *testing.T) {
 func TestUpRunDryRunNoRootNoStart(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 
 	var hr hostRecorder
 	started := false
@@ -632,14 +649,14 @@ func TestUpRunDryRunNoRootNoStart(t *testing.T) {
 	var buf bytes.Buffer
 	// dry-run must not require a daemon; printOps prints the intended actions.
 	if err := upRun(nil, upOptions{
-		file: cfgPath, base: base, dryRun: true, runner: cmdrun.Dry(&buf), ops: printOps{out: &buf}, out: &buf,
+		file: cfgPath, dryRun: true, runner: cmdrun.Dry(&buf), ops: printOps{out: &buf}, out: &buf,
 	}); err != nil {
 		t.Fatalf("dry-run up errored: %v", err)
 	}
 	if started {
 		t.Error("dry-run started a service")
 	}
-	if _, err := os.Stat(filepath.Join(base, "state.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dataDir, "state.json")); !os.IsNotExist(err) {
 		t.Error("dry-run wrote state.json")
 	}
 	if hr.calls != 1 {
@@ -653,6 +670,7 @@ func TestUpRunDryRunNoRootNoStart(t *testing.T) {
 func TestUpRunProvisionsViaDaemon(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
 
 	var hr hostRecorder
 	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
@@ -665,7 +683,7 @@ func TestUpRunProvisionsViaDaemon(t *testing.T) {
 
 	var buf bytes.Buffer
 	ops := &fakeOps{}
-	if err := upRun(nil, upOptions{file: cfgPath, base: base, ops: ops, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := upRun(nil, upOptions{file: cfgPath, ops: ops, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatalf("up errored: %v", err)
 	}
 	if hr.calls != 1 {
@@ -676,6 +694,7 @@ func TestUpRunProvisionsViaDaemon(t *testing.T) {
 func TestUpRunNoProvision(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
 
 	var hr hostRecorder
 	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
@@ -687,7 +706,7 @@ func TestUpRunNoProvision(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{file: cfgPath, base: base, noProvision: true, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := upRun(nil, upOptions{file: cfgPath, noProvision: true, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 	if hr.calls != 0 {
@@ -698,10 +717,12 @@ func TestUpRunNoProvision(t *testing.T) {
 func TestBuildStoreAppliesHealthStatuses(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
 	statuses := map[string]string{"db": serviceStatusHealthy}
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, statuses, filepath.Join(base, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, statuses, filepath.Join(dataDir, "runners"))
 
 	if got := store.Services["db"].Status; got != serviceStatusHealthy {
 		t.Errorf("db status = %q, want %q", got, serviceStatusHealthy)
@@ -714,10 +735,12 @@ func TestBuildStoreAppliesHealthStatuses(t *testing.T) {
 func TestDownRunOrderingAndState(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(base, "runners"))
-	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(dataDir, "runners"))
+	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -734,7 +757,7 @@ func TestDownRunOrderingAndState(t *testing.T) {
 	defer func() { teardownHost, stopService = origTeardown, origStop }()
 
 	var buf bytes.Buffer
-	if err := downRun(nil, downOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := downRun(nil, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -751,7 +774,7 @@ func TestDownRunOrderingAndState(t *testing.T) {
 		t.Errorf("teardown not last: %v", events)
 	}
 
-	got, err := state.Load(filepath.Join(base, "state.json"))
+	got, err := state.Load(filepath.Join(dataDir, "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -768,13 +791,15 @@ func TestDownRunOrderingAndState(t *testing.T) {
 func TestDownRunRemoveVolumes(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, filepath.Join(base, "runners"))
-	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
+	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, filepath.Join(dataDir, "runners"))
+	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
-	volPath := filepath.Join(base, "volumes", "test-net", "db-data.qcow2")
+	volPath := filepath.Join(dataDir, "volumes", "db-data.qcow2")
 	if err := os.MkdirAll(filepath.Dir(volPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -789,7 +814,7 @@ func TestDownRunRemoveVolumes(t *testing.T) {
 	defer func() { teardownHost, stopService = origTeardown, origStop }()
 
 	var buf bytes.Buffer
-	if err := downRun(nil, downOptions{file: cfgPath, base: base, removeVolumes: true, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := downRun(nil, downOptions{file: cfgPath, removeVolumes: true, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -799,7 +824,7 @@ func TestDownRunRemoveVolumes(t *testing.T) {
 	if hr.calls != 1 {
 		t.Error("teardownHost not called with --remove-volumes")
 	}
-	got, err := state.Load(filepath.Join(base, "state.json"))
+	got, err := state.Load(filepath.Join(dataDir, "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -815,14 +840,16 @@ func TestDownRunRemoveVolumes(t *testing.T) {
 func TestDownRunCleansRunDir(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(base, "runners"))
-	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(dataDir, "runners"))
+	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
 	for _, svc := range []string{"db", "web"} {
-		runDir := filepath.Join(base, "runs", svc)
+		runDir := filepath.Join(dataDir, "runs", svc)
 		if err := os.MkdirAll(runDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -840,12 +867,12 @@ func TestDownRunCleansRunDir(t *testing.T) {
 	defer func() { teardownHost, stopService = origTeardown, origStop }()
 
 	var buf bytes.Buffer
-	if err := downRun(nil, downOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := downRun(nil, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 
 	for _, svc := range []string{"db", "web"} {
-		if _, err := os.Stat(filepath.Join(base, "runs", svc)); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(dataDir, "runs", svc)); !os.IsNotExist(err) {
 			t.Errorf("run dir for %s still exists after down (stale socket left behind)", svc)
 		}
 	}
@@ -861,10 +888,12 @@ func TestDownRunCleansRunDir(t *testing.T) {
 func TestDownRunWarnsOnUntrackedLiveVM(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{}, nil, filepath.Join(base, "runners"))
-	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
+	store := buildStore(cfg, st, map[string]int{}, nil, filepath.Join(dataDir, "runners"))
+	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -878,7 +907,7 @@ func TestDownRunWarnsOnUntrackedLiveVM(t *testing.T) {
 	defer func() { teardownHost, stopService, vmState = origTeardown, origStop, origVMState }()
 
 	var buf bytes.Buffer
-	if err := downRun(nil, downOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := downRun(nil, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "db") || !strings.Contains(buf.String(), "untracked") {
@@ -889,21 +918,23 @@ func TestDownRunWarnsOnUntrackedLiveVM(t *testing.T) {
 func TestRmRequiresConfirmation(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(base, "runners"))
-	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(dataDir, "runners"))
+	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
 
 	var buf bytes.Buffer
-	if err := rmRun(nil, rmOptions{base: base, stdin: strings.NewReader("n\n"), out: &buf}); err != nil {
+	if err := rmRun(nil, rmOptions{file: cfgPath, stdin: strings.NewReader("n\n"), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "aborted") {
 		t.Errorf("output = %q, want abort message", buf.String())
 	}
-	got, err := state.Load(filepath.Join(base, "state.json"))
+	got, err := state.Load(filepath.Join(dataDir, "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -915,13 +946,15 @@ func TestRmRequiresConfirmation(t *testing.T) {
 func TestRmForceRemovesDisksAndState(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, filepath.Join(base, "runners"))
-	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
+	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, filepath.Join(dataDir, "runners"))
+	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
-	volPath := filepath.Join(base, "volumes", "test-net", "db-data.qcow2")
+	volPath := filepath.Join(dataDir, "volumes", "db-data.qcow2")
 	if err := os.MkdirAll(filepath.Dir(volPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -930,13 +963,13 @@ func TestRmForceRemovesDisksAndState(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := rmRun(nil, rmOptions{base: base, force: true, out: &buf}); err != nil {
+	if err := rmRun(nil, rmOptions{file: cfgPath, force: true, out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(volPath); !os.IsNotExist(err) {
 		t.Error("disk not removed")
 	}
-	got, err := state.Load(filepath.Join(base, "state.json"))
+	got, err := state.Load(filepath.Join(dataDir, "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -948,10 +981,12 @@ func TestRmForceRemovesDisksAndState(t *testing.T) {
 func TestPsRunPrintsTable(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(base, "runners"))
-	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(dataDir, "runners"))
+	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -960,7 +995,7 @@ func TestPsRunPrintsTable(t *testing.T) {
 	defer func() { vmState = origVMState }()
 
 	var buf bytes.Buffer
-	if err := psRun(base, &buf); err != nil {
+	if err := psRun(cfgPath, &buf); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()

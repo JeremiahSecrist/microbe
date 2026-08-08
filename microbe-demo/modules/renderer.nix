@@ -1,15 +1,15 @@
 # renderer.nix — fixed module shipped with microbe.
 #
 # Maps a compose service onto microvm.nix options. Reads:
-#   - ../microbe.nix     the user's compose file (native render view)
-#   - ../generated.json  CLI-assigned cid/macs/ips/hosts/networkd (spec 9.2)
+#   - ../microbe.nix    the user's compose file (native render view)
+#   - ../generated.nix  CLI-assigned cid/macs/ips/hosts/networkd (spec 9.2)
 # The per-service module modules/<svc>.nix sets microCompose.serviceName so
 # this module knows which slice of the compose file and generated data to use.
 { config, lib, pkgs, ... }:
 
 let
   compose = import ../microbe.nix;
-  generated = builtins.fromJSON (builtins.readFile ../generated.json);
+  generated = import ../generated.nix;
 
   svcName = config.microCompose.serviceName;
   svc = compose.services.${svcName}
@@ -58,7 +58,7 @@ let
   }) (builtins.filter (v: v.type == "share") svc.volumes));
 
   # One tap interface per attached network; id is the host-side tap name the
-  # CLI creates (spec 8.2), resolved from generated.json so both sides agree.
+  # CLI creates (spec 8.2), resolved from generated.nix so both sides agree.
   interfaces = lib.mapAttrsToList (net: mac: {
     type = "tap";
     id = gen.taps.${net}

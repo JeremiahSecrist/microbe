@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"testing"
 
+	"microbe/internal/datadir"
 	"microbe/internal/state"
 )
 
@@ -49,30 +50,34 @@ func writeState(t *testing.T, base string, store *state.Store) {
 func TestResolveGuestSSHUsesPrimaryNetworkIP(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
-	writeState(t, base, &state.Store{
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
+	writeState(t, dataDir, &state.Store{
 		Services: map[string]state.ServiceState{
 			"web": {IP: map[string]string{"backend": "192.168.51.3", "frontend": "192.168.50.3"}, Status: "running"},
 		},
 	})
 
-	ip, privPath, err := resolveGuestSSH(cfgPath, base, "web")
+	ip, privPath, err := resolveGuestSSH(cfgPath, "web")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ip != "192.168.51.3" {
 		t.Errorf("ip = %q, want backend (primary) IP 192.168.51.3", ip)
 	}
-	if privPath != filepath.Join(base, "ssh", "id_ed25519") {
-		t.Errorf("privPath = %q, want %q", privPath, filepath.Join(base, "ssh", "id_ed25519"))
+	if privPath != filepath.Join(dataDir, "ssh", "id_ed25519") {
+		t.Errorf("privPath = %q, want %q", privPath, filepath.Join(dataDir, "ssh", "id_ed25519"))
 	}
 }
 
 func TestResolveGuestSSHUnknownService(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
-	writeState(t, base, &state.Store{Services: map[string]state.ServiceState{}})
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
+	writeState(t, dataDir, &state.Store{Services: map[string]state.ServiceState{}})
 
-	if _, _, err := resolveGuestSSH(cfgPath, base, "nope"); err == nil {
+	if _, _, err := resolveGuestSSH(cfgPath, "nope"); err == nil {
 		t.Error("resolveGuestSSH() with unknown service = nil error, want error")
 	}
 }
@@ -80,9 +85,11 @@ func TestResolveGuestSSHUnknownService(t *testing.T) {
 func TestResolveGuestSSHNotRunning(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
-	writeState(t, base, &state.Store{Services: map[string]state.ServiceState{}})
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
+	writeState(t, dataDir, &state.Store{Services: map[string]state.ServiceState{}})
 
-	if _, _, err := resolveGuestSSH(cfgPath, base, "web"); err == nil {
+	if _, _, err := resolveGuestSSH(cfgPath, "web"); err == nil {
 		t.Error("resolveGuestSSH() for unstarted service = nil error, want error")
 	}
 }
@@ -90,7 +97,9 @@ func TestResolveGuestSSHNotRunning(t *testing.T) {
 func TestExecRunInvokesSSHWithResolvedArgsAndStdio(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
-	writeState(t, base, &state.Store{
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
+	writeState(t, dataDir, &state.Store{
 		Services: map[string]state.ServiceState{
 			"db": {IP: map[string]string{"backend": "192.168.51.2"}, Status: "running"},
 		},
@@ -110,13 +119,13 @@ func TestExecRunInvokesSSHWithResolvedArgsAndStdio(t *testing.T) {
 	defer cleanup()
 
 	if err := execRun(execOptions{
-		file: cfgPath, base: base, service: "db", command: []string{"echo", "hi"},
+		file: cfgPath, service: "db", command: []string{"echo", "hi"},
 		stdin: os.Stdin, stdout: w, stderr: w,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	wantArgs := sshArgs(filepath.Join(base, "ssh", "id_ed25519"), "192.168.51.2", []string{"echo", "hi"})
+	wantArgs := sshArgs(filepath.Join(dataDir, "ssh", "id_ed25519"), "192.168.51.2", []string{"echo", "hi"})
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Errorf("runSSH args = %v, want %v", gotArgs, wantArgs)
 	}

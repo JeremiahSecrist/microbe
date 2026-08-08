@@ -90,6 +90,13 @@ in
         extraGroups = [ "microbe" "kvm" ];
       });
 
+      # Daemon-owned data dir (state.json, ssh keys, volumes, logs, VM run
+      # sockets), one subdir per stack name — mirrors /var/lib/docker.
+      # Setgid + group microbe so unprivileged group members can create
+      # their stack's subdir themselves; no daemon round-trip needed for
+      # plain file I/O, matching the existing group-membership trust model.
+      systemd.tmpfiles.rules = [ "d /var/lib/microbe 2775 root microbe -" ];
+
       services.udev.extraRules = ''
         # Tap devices for the microbe group, KVM accelerator for the kvm group.
         KERNEL=="tun", GROUP="microbe", MODE="0660", OPTIONS+="static_node=net/tun"

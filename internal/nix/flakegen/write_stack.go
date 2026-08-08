@@ -2,21 +2,26 @@ package flakegen
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
+
+	"microbe/internal/fsutil"
 )
 
-// WriteStack renders the full .microbe/ tree for a stack: flake.nix,
-// microbe.nix (the user's compose file, verbatim), generated.nix, the fixed
-// modules, and one per-service module. Idempotent.
-func WriteStack(dir string, st *Stack, userConfigPath string) error {
+// WriteStack renders flake.nix, generated.json, the fixed modules, and one
+// per-service module directly into the project directory dir (the same
+// directory that holds the user's microbe.nix), so the real Nix behind a
+// stack is visible and git-trackable rather than hidden in a build-only
+// side directory. Each file is only written if its content actually
+// changed, so unrelated files keep a stable mtime/hash across runs and
+// nix's flake eval cache can hit on them.
+func WriteStack(dir string, st *Stack) error {
 	generated, err := st.RenderGenerated()
 	if err != nil {
 		return fmt.Errorf("write stack: %w", err)
 	}
 	files := map[string]string{
-		"flake.nix":     st.RenderFlake(),
-		"generated.nix": generated,
+		"flake.nix":      st.RenderFlake(),
+		"generated.json": generated,
 	}
 	mods, err := FixedModules()
 	if err != nil {
@@ -30,19 +35,9 @@ func WriteStack(dir string, st *Stack, userConfigPath string) error {
 	}
 	for path, content := range files {
 		p := filepath.Join(dir, path)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		if _, err := fsutil.WriteFileIfChanged(p, []byte(content), 0o644); err != nil {
 			return fmt.Errorf("write stack: %w", err)
 		}
-	}
-	user, err := os.ReadFile(userConfigPath)
-	if err != nil {
-		return fmt.Errorf("write stack: read %s: %w", userConfigPath, err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "microbe.nix"), user, 0o644); err != nil {
-		return fmt.Errorf("write stack: %w", err)
 	}
 	return nil
 }

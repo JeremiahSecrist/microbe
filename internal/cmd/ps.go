@@ -8,6 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"microbe/internal/config"
+	"microbe/internal/datadir"
 	"microbe/internal/state"
 )
 
@@ -16,12 +18,17 @@ func newPsCmd() *cobra.Command {
 		Use:   "ps",
 		Short: "List services, status, IPs and ports",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return psRun(".microbe", os.Stdout)
+			return psRun(file, os.Stdout)
 		},
 	}
 }
 
-func psRun(base string, out io.Writer) error {
+func psRun(configFile string, out io.Writer) error {
+	cfg, err := config.Load(configFile)
+	if err != nil {
+		return err
+	}
+	base := datadir.Dir(cfg.Name)
 	store, err := state.Load(filepath.Join(base, "state.json"))
 	if err != nil {
 		return err

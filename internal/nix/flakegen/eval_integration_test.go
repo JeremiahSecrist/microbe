@@ -10,11 +10,11 @@ import (
 
 // withVolumeImages populates the generated image path for the db-data disk
 // declared in testdata/microbe.nix, matching what up.go would compute from
-// the CLI's base dir.
-func withVolumeImages(base string, st *Stack) {
+// the CLI's data dir.
+func withVolumeImages(dataDir string, st *Stack) {
 	db := st.Services["db"]
 	db.VolumeImages = map[string]string{
-		"db-data": filepath.Join(base, "volumes", st.Name, "db-data.qcow2"),
+		"db-data": filepath.Join(dataDir, "volumes", "db-data.qcow2"),
 	}
 	st.Services["db"] = db
 }
@@ -29,17 +29,16 @@ func TestGeneratedStackEvaluates(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	userPath := filepath.Join(dir, "src.nix")
 	user, err := os.ReadFile("testdata/microbe.nix")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(userPath, user, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "microbe.nix"), user, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	st := mustStack(t, fixtureConfig())
 	withVolumeImages(dir, st)
-	if err := WriteStack(dir, st, userPath); err != nil {
+	if err := WriteStack(dir, st); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,17 +67,16 @@ func TestDefaultHypervisorIsCloudHypervisor(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	userPath := filepath.Join(dir, "src.nix")
 	user, err := os.ReadFile("testdata/microbe.nix")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(userPath, user, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "microbe.nix"), user, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	st := mustStack(t, fixtureConfig())
 	withVolumeImages(dir, st)
-	if err := WriteStack(dir, st, userPath); err != nil {
+	if err := WriteStack(dir, st); err != nil {
 		t.Fatal(err)
 	}
 

@@ -12,6 +12,7 @@ import (
 
 	"microbe/internal/cmdrun"
 	"microbe/internal/config"
+	"microbe/internal/datadir"
 	"microbe/internal/hostnet"
 	"microbe/internal/nix/flakegen"
 	"microbe/internal/provisiond"
@@ -43,7 +44,6 @@ func newUpCmd() *cobra.Command {
 				file:        file,
 				dryRun:      dryRun,
 				noProvision: noProvision,
-				base:        ".microbe",
 				runner:      runner,
 				ops:         ops,
 				out:         os.Stdout,
@@ -58,17 +58,16 @@ type upOptions struct {
 	file        string
 	dryRun      bool
 	noProvision bool
-	base        string
 	runner      cmdrun.Runner
 	ops         provisiond.Ops
 	out         io.Writer
 }
 
 // attachVolumeImages populates each service's disk volumes with the absolute
-// on-host qcow2 path (runtime.VolumeImagePath is relative to base), so
-// generated.nix carries a path renderer.nix can use regardless of the
+// on-host qcow2 path (runtime.VolumeImagePath is relative to dataDir), so
+// generated.json carries a path renderer.nix can use regardless of the
 // runner's CWD.
-func attachVolumeImages(base string, cfg *config.Compose, st *flakegen.Stack) error {
+func attachVolumeImages(dataDir string, cfg *config.Compose, st *flakegen.Stack) error {
 	for name, svcCfg := range cfg.Services {
 		svc, ok := st.Services[name]
 		if !ok {
@@ -78,7 +77,7 @@ func attachVolumeImages(base string, cfg *config.Compose, st *flakegen.Stack) er
 			if vol.Type != volumeTypeDisk {
 				continue
 			}
-			abs, err := filepath.Abs(runtime.VolumeImagePath(base, cfg.Name, vol.Name))
+			abs, err := filepath.Abs(runtime.VolumeImagePath(dataDir, vol.Name))
 			if err != nil {
 				return err
 			}
@@ -111,7 +110,9 @@ func upRun(args []string, opts upOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := attachVolumeImages(opts.base, cfg, st); err != nil {
+	projectDir := filepath.Dir(opts.file)
+	dataDir := datadir.Dir(cfg.Name)
+	if err := attachVolumeImages(dataDir, cfg, st); err != nil {
 		return err
 	}
 
@@ -119,17 +120,17 @@ func upRun(args []string, opts upOptions) error {
 		// Always the real shell runner: key generation is independent of
 		// opts.runner (which tests fake out for qemu-img/mkfs volume
 		// commands) and needs ssh-keygen to actually run.
-		_, pub, err := ensureSSHKeypair(cmdrun.Shell(), filepath.Join(opts.base, "ssh"))
+		_, pub, err := ensureSSHKeypair(cmdrun.Shell(), filepath.Join(dataDir, "ssh"))
 		if err != nil {
 			return err
 		}
 		st.SSHPublicKey = pub
 	}
 
-	if err := flakegen.WriteStack(opts.base, st, opts.file); err != nil {
+	if err := flakegen.WriteStack(projectDir, st); err != nil {
 		return err
 	}
-	fmt.Fprintf(opts.out, "rendered %s\n", opts.base)
+	fmt.Fprintf(opts.out, "rendered %s\n", projectDir)
 
 	selected := args
 	if len(selected) == 0 {
@@ -143,7 +144,7 @@ func upRun(args []string, opts upOptions) error {
 
 	if opts.dryRun {
 		for _, svc := range selected {
-			outLink := filepath.Join(opts.base, "runners", svc)
+			outLink := filepath.Join(dataDir, "runners", svc)
 			fmt.Fprintf(opts.out, "nix build .#nixosConfigurations.%s.config.microvm.declaredRunner -> %s\n", svc, outLink)
 		}
 	} else {
@@ -155,7 +156,7 @@ func upRun(args []string, opts upOptions) error {
 		for i, svc := range selected {
 			i, svc := i, svc
 			g.Go(func() error {
-				path, err := buildRunner(opts.base, svc, filepath.Join(opts.base, "runners", svc))
+				path, err := buildRunner(projectDir, svc, filepath.Join(dataDir, "runners", svc))
 				if err != nil {
 					return err
 				}
@@ -204,16 +205,16 @@ func upRun(args []string, opts upOptions) error {
 			if fsType == "" {
 				fsType = defaultVolumeFsType
 			}
-			path, err := runtime.EnsureVolume(opts.runner, opts.base, cfg.Name, vol.Name, vol.Size, fsType)
+			path, err := runtime.EnsureVolume(opts.runner, dataDir, vol.Name, vol.Size, fsType)
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(opts.out, "volume %s\n", path)
 		}
 		pid, err := startService(context.Background(),
-			filepath.Join(opts.base, "runners", svc),
-			filepath.Join(opts.base, "runs", svc),
-			filepath.Join(opts.base, "logs", svc+".log"))
+			filepath.Join(dataDir, "runners", svc),
+			filepath.Join(dataDir, "runs", svc),
+			filepath.Join(dataDir, "logs", svc+".log"))
 		if err != nil {
 			return err
 		}
@@ -247,8 +248,8 @@ func upRun(args []string, opts upOptions) error {
 	}
 
 	if !opts.dryRun {
-		store := buildStore(cfg, st, pids, statuses, filepath.Join(opts.base, "runners"))
-		if err := store.Save(filepath.Join(opts.base, "state.json")); err != nil {
+		store := buildStore(cfg, st, pids, statuses, filepath.Join(dataDir, "runners"))
+		if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 			return err
 		}
 		printStore(opts.out, store)

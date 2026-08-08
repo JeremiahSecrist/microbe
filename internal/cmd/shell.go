@@ -17,7 +17,6 @@ func newShellCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return execRun(execOptions{
 				file:    file,
-				base:    ".microbe",
 				service: args[0],
 				stdin:   os.Stdin,
 				stdout:  os.Stdout,

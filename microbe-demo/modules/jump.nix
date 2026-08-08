@@ -1,0 +1,4 @@
+{ ... }:
+{
+  microCompose.serviceName = "jump";
+}

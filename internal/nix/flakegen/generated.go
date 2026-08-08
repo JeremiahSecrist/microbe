@@ -1,16 +1,19 @@
 package flakegen
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"sort"
 	"strconv"
 )
 
-// RenderGenerated emits the generated.nix bridge file (spec §9.2): per-service
+// RenderGenerated emits the generated.json bridge file (spec §9.2): per-service
 // cid/macs/ips/gateway/prefix/hosts plus the systemd-networkd units (spec
 // §8.3). The first declared network gets a bare gateway default route; later
-// networks get explicit subnet routes only.
+// networks get explicit subnet routes only. Plain JSON, not Nix: the .json
+// extension signals at a glance that it's CLI-emitted data, not something to
+// hand-edit, and it's read back with builtins.fromJSON (see modules/renderer.nix).
 func (st *Stack) RenderGenerated() (string, error) {
 	hosts := st.Hosts()
 	hostsVal := make([]any, 0, len(hosts))
@@ -55,7 +58,11 @@ func (st *Stack) RenderGenerated() (string, error) {
 	if st.SSHPublicKey != "" {
 		root["sshPublicKey"] = st.SSHPublicKey
 	}
-	return nixify(root) + "\n", nil
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("render generated: %w", err)
+	}
+	return string(out) + "\n", nil
 }
 
 func renderNetworkd(svcName string, s Service) (map[string]any, error) {

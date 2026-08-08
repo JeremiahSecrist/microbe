@@ -31,7 +31,7 @@ const (
 )
 
 // Stack is the CLI-side model of a rendered stack: enough data to emit
-// generated.nix (spec §9.2) and the flake (spec §9.3).
+// generated.json (spec §9.2) and the flake (spec §9.3).
 type Stack struct {
 	Name     string
 	Services map[string]Service

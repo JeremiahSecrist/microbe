@@ -29,7 +29,7 @@ func TestRendererNixHasRequiredMarkers(t *testing.T) {
 	}
 	for _, marker := range []string{
 		"microCompose.serviceName",
-		"import ../generated.nix",
+		"builtins.fromJSON (builtins.readFile ../generated.json)",
 		"import ../microbe.nix",
 		"vsock.cid = gen.cid",
 		"systemd.network.networks = gen.networkd",
@@ -52,7 +52,7 @@ func TestGuestBaseNixHasRequiredMarkers(t *testing.T) {
 	for _, marker := range []string{
 		"services.openssh",
 		"microvm.optimize.enable",
-		"import ../generated.nix",
+		"builtins.fromJSON (builtins.readFile ../generated.json)",
 		"users.users.root.openssh.authorizedKeys.keys",
 	} {
 		if !strings.Contains(content, marker) {

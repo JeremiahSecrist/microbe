@@ -17,7 +17,7 @@ func TestRenderGeneratedMatchesGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := os.ReadFile("testdata/generated_test-net.nix")
+	want, err := os.ReadFile("testdata/generated_test-net.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,13 +38,13 @@ func TestRenderGeneratedIncludesAbsoluteVolumeImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, `volumes = {`) {
-		t.Errorf("RenderGenerated() missing volumes attrset:\n%s", got)
+	if !strings.Contains(got, `"volumes": {`) {
+		t.Errorf("RenderGenerated() missing volumes object:\n%s", got)
 	}
-	if !strings.Contains(got, `db-data = {`) {
+	if !strings.Contains(got, `"db-data": {`) {
 		t.Errorf("RenderGenerated() missing db-data volume entry:\n%s", got)
 	}
-	if !strings.Contains(got, `image = "/abs/base/volumes/test-net/db-data.qcow2";`) {
+	if !strings.Contains(got, `"image": "/abs/base/volumes/test-net/db-data.qcow2"`) {
 		t.Errorf("RenderGenerated() missing absolute image path:\n%s", got)
 	}
 }
@@ -71,7 +71,7 @@ func TestRenderGeneratedIncludesSSHPublicKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, `sshPublicKey = "ssh-ed25519 AAAAfake microbe";`) {
+	if !strings.Contains(got, `"sshPublicKey": "ssh-ed25519 AAAAfake microbe"`) {
 		t.Errorf("RenderGenerated() missing sshPublicKey:\n%s", got)
 	}
 }

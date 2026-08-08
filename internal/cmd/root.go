@@ -26,6 +26,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	root.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "print actions without executing")
 
+	root.AddCommand(newInitCmd())
 	root.AddCommand(newUpCmd())
 	root.AddCommand(newDownCmd())
 	root.AddCommand(newPsCmd())

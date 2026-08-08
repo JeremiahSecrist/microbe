@@ -52,8 +52,10 @@ func ParseVolumeSize(size string) (int, error) {
 // VolumeImagePath is the on-disk volume location for a named volume. The
 // path keeps a ".qcow2" suffix per the CLI-managed volume dir contract, but
 // the image is raw (see EnsureVolume) so mkfs can format it without root.
-func VolumeImagePath(base, stack, name string) string {
-	return filepath.Join(base, "volumes", stack, name+".qcow2")
+// base is already stack-scoped (see internal/datadir), so no separate stack
+// subdirectory is needed here.
+func VolumeImagePath(base, name string) string {
+	return filepath.Join(base, "volumes", name+".qcow2")
 }
 
 // EnsureVolume creates a raw image with qemu-img and formats it with mkfs
@@ -62,8 +64,8 @@ func VolumeImagePath(base, stack, name string) string {
 // for a raw layout — a qcow2 container needs qemu-nbd (root) to expose it as
 // a block device first. The renderer declares imageType = "raw" to match.
 // The command goes through run so tests can record it.
-func EnsureVolume(run cmdrun.Runner, base, stack, name, size, fsType string) (string, error) {
-	path := VolumeImagePath(base, stack, name)
+func EnsureVolume(run cmdrun.Runner, base, name, size, fsType string) (string, error) {
+	path := VolumeImagePath(base, name)
 	if _, err := os.Stat(path); err == nil {
 		return path, nil
 	}

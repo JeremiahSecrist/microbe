@@ -4,7 +4,7 @@ import "strings"
 
 // RenderFlake emits the generated stack flake (spec §9.3): one nixosSystem
 // per service, all importing the renderer, guest base, the user config, and
-// generated.nix.
+// generated.json.
 func (st *Stack) RenderFlake() string {
 	var b strings.Builder
 	b.WriteString(`{
@@ -47,7 +47,15 @@ func servicesAttrset(st *Stack) string {
 }
 
 // ServiceModule emits the per-service module that tells the renderer which
-// slice of generated.nix and microbe.nix this configuration is.
+// slice of generated.json and microbe.nix this configuration is.
 func ServiceModule(name string) string {
 	return "{ ... }:\n{\n  microCompose.serviceName = " + nixQuote(name) + ";\n}\n"
+}
+
+// nixQuote renders s as a double-quoted Nix string literal. name is
+// regex-validated (see config.Validate) to [a-z][a-z0-9_-]*, so this only
+// needs to escape the two characters that could ever appear literally.
+func nixQuote(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	return `"` + r.Replace(s) + `"`
 }

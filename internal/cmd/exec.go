@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"microbe/internal/config"
+	"microbe/internal/datadir"
 	"microbe/internal/state"
 )
 
@@ -20,7 +21,6 @@ func newExecCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return execRun(execOptions{
 				file:    file,
-				base:    ".microbe",
 				service: args[0],
 				command: args[1:],
 				stdin:   os.Stdin,
@@ -32,10 +32,10 @@ func newExecCmd() *cobra.Command {
 }
 
 type execOptions struct {
-	file, base, service string
-	command             []string
-	stdin               *os.File
-	stdout, stderr      *os.File
+	file, service  string
+	command        []string
+	stdin          *os.File
+	stdout, stderr *os.File
 }
 
 // runSSH runs the ssh(1) client with args, wiring stdio straight through
@@ -48,7 +48,7 @@ var runSSH = func(args []string, stdin, stdout, stderr *os.File) error {
 }
 
 func execRun(opts execOptions) error {
-	ip, privPath, err := resolveGuestSSH(opts.file, opts.base, opts.service)
+	ip, privPath, err := resolveGuestSSH(opts.file, opts.service)
 	if err != nil {
 		return err
 	}
@@ -56,10 +56,10 @@ func execRun(opts execOptions) error {
 }
 
 // resolveGuestSSH loads the compose config (for the service's declared
-// network order) and the running state (for its assigned IPs) to find the
-// address to reach svc on, plus the CLI's own keypair for it (see
-// internal/sshkey, injected into every guest by up.go/guest-base.nix).
-func resolveGuestSSH(file, base, svc string) (ip, privKeyPath string, err error) {
+// network order and stack name) and the running state (for its assigned
+// IPs) to find the address to reach svc on, plus the CLI's own keypair for
+// it (see internal/sshkey, injected into every guest by up.go/guest-base.nix).
+func resolveGuestSSH(file, svc string) (ip, privKeyPath string, err error) {
 	cfg, err := config.Load(file)
 	if err != nil {
 		return "", "", err
@@ -71,6 +71,7 @@ func resolveGuestSSH(file, base, svc string) (ip, privKeyPath string, err error)
 	if len(svcCfg.Networks) == 0 {
 		return "", "", fmt.Errorf("service %q has no networks", svc)
 	}
+	base := datadir.Dir(cfg.Name)
 	store, err := state.Load(filepath.Join(base, "state.json"))
 	if err != nil {
 		return "", "", err

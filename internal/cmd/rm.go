@@ -12,6 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"microbe/internal/config"
+	"microbe/internal/datadir"
 	"microbe/internal/runtime"
 	"microbe/internal/state"
 )
@@ -23,7 +25,7 @@ func newRmCmd() *cobra.Command {
 		Short: "Remove disks and state for services",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return rmRun(args, rmOptions{
-				base:  ".microbe",
+				file:  file,
 				force: force,
 				stdin: os.Stdin,
 				out:   os.Stdout,
@@ -35,14 +37,20 @@ func newRmCmd() *cobra.Command {
 }
 
 type rmOptions struct {
-	base  string
+	file  string
 	force bool
 	stdin io.Reader
 	out   io.Writer
 }
 
 func rmRun(args []string, opts rmOptions) error {
-	store, err := state.Load(filepath.Join(opts.base, "state.json"))
+	cfg, err := config.Load(opts.file)
+	if err != nil {
+		return err
+	}
+	base := datadir.Dir(cfg.Name)
+
+	store, err := state.Load(filepath.Join(base, "state.json"))
 	if err != nil {
 		return err
 	}
@@ -78,7 +86,7 @@ func rmRun(args []string, opts rmOptions) error {
 			return fmt.Errorf("no service %q in state", name)
 		}
 		for _, vol := range svc.Volumes {
-			path := runtime.VolumeImagePath(opts.base, store.Stack, vol)
+			path := runtime.VolumeImagePath(base, vol)
 			fmt.Fprintf(opts.out, "removing %s\n", path)
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return err
@@ -90,5 +98,5 @@ func rmRun(args []string, opts rmOptions) error {
 		}
 	}
 
-	return store.Save(filepath.Join(opts.base, "state.json"))
+	return store.Save(filepath.Join(base, "state.json"))
 }
