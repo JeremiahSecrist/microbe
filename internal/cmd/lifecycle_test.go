@@ -420,6 +420,49 @@ func TestUpRunHealthGatingDegraded(t *testing.T) {
 	}
 }
 
+// TestUpRunStopsProcessOnHealthcheckFailure guards against orphaning the VM
+// a failed healthcheck leaves running: a prior version left it alive, so a
+// second `up` would start a competing instance and collide over the same
+// microvm API socket/tap (observed corrupting the tap device entirely).
+func TestUpRunStopsProcessOnHealthcheckFailure(t *testing.T) {
+	cfgPath := writeHealthcheckConfig(t)
+	base := t.TempDir()
+
+	var stopCalls, stoppedPID int
+	origProvision, origBuild, origStart, origStop, origWaitHealthy :=
+		provisionHost, buildRunner, startService, stopService, waitHealthy
+	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
+	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	startService = func(context.Context, string, string, string) (int, error) { return 1234, nil }
+	waitHealthy = func(string, time.Duration, time.Duration, time.Duration) bool { return false }
+	stopService = func(_ context.Context, pid int, _ time.Duration) error {
+		stopCalls++
+		stoppedPID = pid
+		return nil
+	}
+	defer func() {
+		provisionHost, buildRunner, startService, stopService, waitHealthy =
+			origProvision, origBuild, origStart, origStop, origWaitHealthy
+	}()
+
+	var buf bytes.Buffer
+	if err := upRun(nil, upOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf}); err == nil {
+		t.Fatal("upRun: want error when db never becomes healthy, got nil")
+	}
+
+	if stopCalls != 1 || stoppedPID != 1234 {
+		t.Errorf("stopService calls = %d, pid = %d, want 1 call with pid 1234", stopCalls, stoppedPID)
+	}
+
+	store, err := state.Load(filepath.Join(base, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pid := store.Services["db"].PID; pid != 0 {
+		t.Errorf("db PID = %d, want 0 (process stopped after healthcheck failure)", pid)
+	}
+}
+
 func TestUpRunGeneratedNixHasAbsoluteVolumeImage(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()

@@ -233,6 +233,14 @@ func upRun(args []string, opts upOptions) error {
 				statuses[svc] = serviceStatusDegraded
 				healthErr = fmt.Errorf("service %q did not become healthy within %s", svc, hc.StartPeriod)
 				fmt.Fprintf(opts.out, "degraded %s: %v\n", svc, healthErr)
+				// Stop the VM we just started: leaving it running would let
+				// a follow-up `up` race a second instance against it over
+				// the same microvm API socket/tap.
+				if err := stopService(context.Background(), pid, runtime.StopGrace); err != nil {
+					fmt.Fprintf(opts.out, "warning: failed to stop degraded %s (pid %d): %v\n", svc, pid, err)
+				} else {
+					pids[svc] = 0
+				}
 				break
 			}
 		}
