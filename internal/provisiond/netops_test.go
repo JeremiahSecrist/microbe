@@ -37,6 +37,9 @@ func TestTapLinkOwnership(t *testing.T) {
 	if tap.Flags&netlink.TUNTAP_VNET_HDR == 0 {
 		t.Errorf("Flags = %v, want IFF_VNET_HDR for cloud-hypervisor virtio-net", tap.Flags)
 	}
+	if tap.Flags&netlink.TUNTAP_MULTI_QUEUE == 0 {
+		t.Errorf("Flags = %v, want IFF_MULTI_QUEUE: cloud-hypervisor sizes net queues to vcpu count and refuses a single-queue tap once vcpus > 1", tap.Flags)
+	}
 }
 
 // TestTapNeedsRecreate is the red-green gate for tap ownership reconciliation:
@@ -52,8 +55,11 @@ func TestTapNeedsRecreate(t *testing.T) {
 	if !tapNeedsRecreate(spec, &netlink.Tuntap{Owner: 1000, Group: 0}) {
 		t.Error("root-group tap (Group=0) vs spec Group=100: want recreate")
 	}
-	if tapNeedsRecreate(spec, &netlink.Tuntap{Owner: 1000, Group: 100}) {
-		t.Error("tap already owned by spec Owner=1000/Group=100: want keep")
+	if tapNeedsRecreate(spec, &netlink.Tuntap{Owner: 1000, Group: 100, Flags: netlink.TUNTAP_MULTI_QUEUE_DEFAULTS | netlink.TUNTAP_VNET_HDR}) {
+		t.Error("tap already owned by spec Owner=1000/Group=100 with multiqueue set: want keep")
+	}
+	if !tapNeedsRecreate(spec, &netlink.Tuntap{Owner: 1000, Group: 100, Flags: netlink.TUNTAP_NO_PI | netlink.TUNTAP_VNET_HDR}) {
+		t.Error("single-queue tap (no IFF_MULTI_QUEUE) with matching owner: want recreate (fixes MultiQueueNoTapSupport on existing hosts)")
 	}
 }
 

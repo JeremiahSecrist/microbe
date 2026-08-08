@@ -114,25 +114,33 @@ func delLinkByName(name string) error {
 	return netlink.LinkDel(link)
 }
 
-// tapNeedsRecreate reports whether an existing tap's owner diverges from the
-// spec: a mismatch means it was created by a different (often root) caller
-// and must be deleted + recreated so the spec's uid can attach to it.
+// tapNeedsRecreate reports whether an existing tap must be deleted and
+// recreated: either its owner diverges from the spec (created by a
+// different, often root, caller, so the spec's uid can't attach to it), or
+// it predates IFF_MULTI_QUEUE being set (see tapLink) and cloud-hypervisor
+// will refuse to attach once the guest's vcpu count requires multiple net
+// queues.
 func tapNeedsRecreate(spec hostnet.TapSpec, existing *netlink.Tuntap) bool {
-	return existing.Owner != uint32(spec.Owner) || existing.Group != uint32(spec.Group)
+	return existing.Owner != uint32(spec.Owner) ||
+		existing.Group != uint32(spec.Group) ||
+		existing.Flags&netlink.TUNTAP_MULTI_QUEUE == 0
 }
 
 // tapLink builds a persistent tap device the VM process can reopen: root's
 // LinkAdd calls TUNSETOWNER/TUNSETGROUP unconditionally, so the caller's uid
 // must be set explicitly (a 0 owner pins the tap to root). Flags match
-// `ip tuntap add ... mode tap user <u> vnet_hdr` (IFF_NO_PI | IFF_VNET_HDR),
-// the shape cloud-hypervisor's virtio-net expects. The tap persists across
-// the daemon connection so the later-launched VM can attach by name.
+// `ip tuntap add ... mode tap user <u> multi_queue vnet_hdr` (IFF_NO_PI |
+// IFF_VNET_HDR | IFF_MULTI_QUEUE) -- cloud-hypervisor sizes virtio-net's
+// queue count to the guest's vcpu count and refuses to attach at all if the
+// tap wasn't created multiqueue-capable, once vcpus > 1 (observed as a
+// "MultiQueueNoTapSupport" boot failure). The tap persists across the
+// daemon connection so the later-launched VM can attach by name.
 func tapLink(spec hostnet.TapSpec) netlink.Link {
 	return &netlink.Tuntap{
 		LinkAttrs: netlink.LinkAttrs{Name: spec.Name},
 		Mode:      netlink.TUNTAP_MODE_TAP,
 		Owner:     uint32(spec.Owner),
 		Group:     uint32(spec.Group),
-		Flags:     netlink.TUNTAP_NO_PI | netlink.TUNTAP_VNET_HDR,
+		Flags:     netlink.TUNTAP_MULTI_QUEUE_DEFAULTS | netlink.TUNTAP_VNET_HDR,
 	}
 }
