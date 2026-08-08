@@ -22,6 +22,10 @@ type ServiceState struct {
 	Status  string            `json:"status"`
 	PID     int               `json:"pid"`
 	Runner  string            `json:"runner"`
+
+	// VirtiofsdPID is the companion virtiofsd process's pid, or 0 if the
+	// service has no virtiofs shares (see internal/runtime.StartVirtiofsd).
+	VirtiofsdPID int `json:"virtiofsdPid,omitempty"`
 }
 
 // PortState records the DNAT rule for one published host port.

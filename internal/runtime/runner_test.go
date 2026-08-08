@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -171,6 +172,67 @@ func TestStartServiceResolvesDirLink(t *testing.T) {
 	defer StopService(context.Background(), pid, time.Second)
 	if !processAlive(pid) {
 		t.Errorf("pid %d not alive via directory symlink", pid)
+	}
+}
+
+// TestStartVirtiofsdResolvesDirLink proves StartVirtiofsd resolves to
+// bin/virtiofsd-run (not bin/microvm-run), the same directory-symlink
+// resolution StartService already exercises for microvm-run — both must
+// work out of the shared startBin helper.
+func TestStartVirtiofsdResolvesDirLink(t *testing.T) {
+	dir := t.TempDir()
+	storeDir := filepath.Join(dir, "runner-store")
+	binDir := filepath.Join(storeDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeScript(t, binDir, "virtiofsd-run", "#!/bin/sh\nsleep 30\n")
+	link := filepath.Join(dir, "runner")
+	if err := os.Symlink(storeDir, link); err != nil {
+		t.Fatal(err)
+	}
+	pid, err := StartVirtiofsd(context.Background(), link, filepath.Join(dir, "runs", "svc"), filepath.Join(dir, "logs", "svc-virtiofsd.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer StopService(context.Background(), pid, time.Second)
+	if !processAlive(pid) {
+		t.Errorf("pid %d not alive via directory symlink", pid)
+	}
+}
+
+func TestWaitForSocketSucceedsOnceSocketAppears(t *testing.T) {
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "test.sock")
+
+	l, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+
+	if err := WaitForSocket(sockPath, 10*time.Millisecond, time.Second); err != nil {
+		t.Errorf("WaitForSocket: %v", err)
+	}
+}
+
+func TestWaitForSocketTimesOutWhenMissing(t *testing.T) {
+	dir := t.TempDir()
+	err := WaitForSocket(filepath.Join(dir, "never.sock"), 10*time.Millisecond, 50*time.Millisecond)
+	if err == nil {
+		t.Error("WaitForSocket for a socket that never appears = nil error, want timeout error")
+	}
+}
+
+func TestWaitForSocketRejectsPlainFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "not-a-socket")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := WaitForSocket(path, 10*time.Millisecond, 50*time.Millisecond)
+	if err == nil {
+		t.Error("WaitForSocket for a plain file = nil error, want timeout error")
 	}
 }
 

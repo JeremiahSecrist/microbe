@@ -137,6 +137,77 @@ func TestValidateHealthcheck(t *testing.T) {
 	}
 }
 
+func TestValidateShareVolumeRequiresName(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "bad",
+	  "networks": { "n": { "subnet": "10.0.0.0/24" } },
+	  "services": {
+	    "a": { "networks": [{ "name": "n" }], "volumes": [ { "type": "share", "host": "/srv", "target": "/data" } ] }
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "missing name") {
+		t.Errorf("want missing-name error, got %v", err)
+	}
+}
+
+func TestValidateShareVolumeDuplicateName(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "bad",
+	  "networks": { "n": { "subnet": "10.0.0.0/24" } },
+	  "services": {
+	    "a": { "networks": [{ "name": "n" }], "volumes": [
+	      { "type": "share", "name": "data", "host": "/srv/a", "target": "/data" },
+	      { "type": "share", "name": "data", "host": "/srv/b", "target": "/other" }
+	    ] }
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate share volume name") {
+		t.Errorf("want duplicate-share-name error, got %v", err)
+	}
+}
+
+func TestValidateShareVolumeUnknownProtocol(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "bad",
+	  "networks": { "n": { "subnet": "10.0.0.0/24" } },
+	  "services": {
+	    "a": { "networks": [{ "name": "n" }], "volumes": [
+	      { "type": "share", "name": "data", "host": "/srv", "target": "/data", "protocol": "nfs" }
+	    ] }
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "unknown protocol") {
+		t.Errorf("want unknown-protocol error, got %v", err)
+	}
+}
+
+func TestValidateShareVolumeDefaultsPass(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "ok",
+	  "networks": { "n": { "subnet": "10.0.0.0/24" } },
+	  "services": {
+	    "a": { "networks": [{ "name": "n" }], "volumes": [
+	      { "name": "data", "host": "/srv", "target": "/data" }
+	    ] }
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("want no error for default (share/virtiofs) volume, got %v", err)
+	}
+}
+
 func TestValidateOverlappingSubnets(t *testing.T) {
 	cfg, err := Parse([]byte(`{
 	  "name": "bad",

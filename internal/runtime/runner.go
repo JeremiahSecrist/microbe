@@ -85,19 +85,40 @@ func EnsureVolume(run cmdrun.Runner, base, name, size, fsType string) (string, e
 	return path, nil
 }
 
-// StartService launches a runner script as a detached background process.
-// runnerPath is usually a symlink to the nix store path; it is resolved to
-// the real script. The process runs with CWD runDir and appends stdout/stderr
-// to logPath. Returns the child PID.
+// StartService launches the runner's bin/microvm-run as a detached
+// background process. See startBin.
 func StartService(ctx context.Context, runnerPath, runDir, logPath string) (int, error) {
+	return startBin(ctx, runnerPath, "microvm-run", runDir, logPath)
+}
+
+// StartVirtiofsd launches the runner's bin/virtiofsd-run as a detached
+// background process. It only exists in the runner's store output when the
+// service declares at least one virtiofs share (microvm.nix's
+// microvm.binScripts.virtiofsd-run, gated by requiresVirtiofsd); one
+// process serves all of a service's virtiofs shares via supervisord. Must
+// be started (and its socket(s) ready, see WaitForSocket) before the VM
+// itself, since cloud-hypervisor connects to the virtiofsd socket at boot
+// with no documented retry. Reuses the same runnerPath/runDir as
+// StartService so the shares' relative socket filenames
+// (config.microvm.shares[].socket, CWD-relative) resolve identically for
+// both processes.
+func StartVirtiofsd(ctx context.Context, runnerPath, runDir, logPath string) (int, error) {
+	return startBin(ctx, runnerPath, "virtiofsd-run", runDir, logPath)
+}
+
+// startBin launches runnerPath's bin/<binName> as a detached background
+// process. runnerPath is usually a symlink to the nix store path; it is
+// resolved to the real script. The process runs with CWD runDir and
+// appends stdout/stderr to logPath. Returns the child PID.
+func startBin(ctx context.Context, runnerPath, binName, runDir, logPath string) (int, error) {
 	script := runnerPath
 	if resolved, err := filepath.EvalSymlinks(runnerPath); err == nil {
 		script = resolved
 	}
-	// nix build --out-link symlinks to the store DIRECTORY holding
-	// bin/microvm-run; execing a directory is EACCES, so resolve it.
+	// nix build --out-link symlinks to the store DIRECTORY holding bin/*;
+	// execing a directory is EACCES, so resolve it.
 	if fi, err := os.Stat(script); err == nil && fi.IsDir() {
-		script = filepath.Join(script, "bin", "microvm-run")
+		script = filepath.Join(script, "bin", binName)
 	}
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return 0, err
@@ -124,6 +145,23 @@ func StartService(ctx context.Context, runnerPath, runDir, logPath string) (int,
 		return 0, err
 	}
 	return pid, nil
+}
+
+// WaitForSocket polls for path to exist as a unix socket, checking every
+// interval until it appears or timeout elapses. Used to wait for
+// virtiofsd's socket(s) to be ready before starting the VM that connects
+// to them (cloud-hypervisor's docs don't promise a connect retry).
+func WaitForSocket(path string, interval, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if fi, err := os.Stat(path); err == nil && fi.Mode()&os.ModeSocket != 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("runtime: timed out waiting for socket %s", path)
+		}
+		time.Sleep(interval)
+	}
 }
 
 // StopService sends SIGTERM and, after grace, SIGKILL. A non-positive or

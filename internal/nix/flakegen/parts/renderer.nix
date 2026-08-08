@@ -42,6 +42,11 @@
           num * (scale.${unit}
             or (throw "microbe: service '${svcName}': unsupported volume size unit '${unit}' in '${size}' (use M, G, or T)"));
 
+      # "share" is the default volume type when omitted (see config.load's
+      # applyDefaults) -- mirrored here since this module imports the user's
+      # raw microbe.nix directly and doesn't go through Go's defaulting.
+      volumeType = v: v.type or "share";
+
       volumes = lib.optionals (svc ? volumes) (map (v: {
         image = gen.volumes.${v.name}.image
           or (throw "microbe: service '${svcName}': no generated image path for volume '${v.name}'");
@@ -50,15 +55,17 @@
         fsType = v.fsType or "ext4";
         imageType = "raw";
         autoCreate = false;
-      }) (builtins.filter (v: v.type == "disk") svc.volumes));
+      }) (builtins.filter (v: volumeType v == "disk") svc.volumes));
 
       shares = lib.optionals (svc ? volumes) (map (v: {
         tag = v.name;
         source = v.host or (throw "microbe: service '${svcName}': share '${v.name}' needs a host path");
         mountPoint = v.target;
-        proto = v.protocol or "9p";
-        readOnly = v.mode == "ro";
-      }) (builtins.filter (v: v.type == "share") svc.volumes));
+        # cloud-hypervisor only supports virtiofs shares, not 9p (see
+        # config.load's applyDefaults comment) -- virtiofs is the default.
+        proto = v.protocol or "virtiofs";
+        readOnly = (v.mode or "rw") == "ro";
+      }) (builtins.filter (v: volumeType v == "share") svc.volumes));
 
       # One tap interface per attached network; id is the host-side tap name the
       # CLI creates (spec 8.2), resolved from generated.json so both sides agree.

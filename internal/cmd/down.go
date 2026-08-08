@@ -98,6 +98,11 @@ func downRun(args []string, opts downOptions) error {
 				if err := stopService(context.Background(), svc.PID, runtime.StopGrace); err != nil {
 					return err
 				}
+				if svc.VirtiofsdPID > 0 {
+					if err := stopService(context.Background(), svc.VirtiofsdPID, runtime.StopGrace); err != nil {
+						return err
+					}
+				}
 			}
 		} else if !opts.dryRun {
 			// state.json may have lost track of this service's PID (e.g. a
@@ -110,6 +115,7 @@ func downRun(args []string, opts downOptions) error {
 		}
 		svc.Status = serviceStatusStopped
 		svc.PID = 0
+		svc.VirtiofsdPID = 0
 		store.Services[name] = svc
 
 		if !opts.dryRun {

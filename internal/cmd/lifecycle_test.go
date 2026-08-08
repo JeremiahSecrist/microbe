@@ -342,6 +342,120 @@ func TestUpRunProvision(t *testing.T) {
 	}
 }
 
+const shareConfigJSON = `{
+  "schemaVersion": 1,
+  "name": "share-net",
+  "networks": { "backend": { "subnet": "192.168.55.0/24" } },
+  "services": {
+    "db": {
+      "networks": [ { "name": "backend", "ip": "192.168.55.2" } ],
+      "volumes": [ { "name": "data", "host": "/srv/data", "target": "/data" } ]
+    }
+  }
+}`
+
+func writeShareConfig(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "microbe.json")
+	if err := os.WriteFile(p, []byte(shareConfigJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestUpRunStartsVirtiofsdBeforeVM proves a service with a (default,
+// virtiofs) share volume gets its virtiofsd companion started and its
+// socket waited on before the VM itself, and that the pid lands in
+// state.json — the ordering matters because cloud-hypervisor connects to
+// the virtiofsd socket at boot with no documented retry.
+func TestUpRunStartsVirtiofsdBeforeVM(t *testing.T) {
+	cfgPath := writeShareConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "share-net")
+
+	var seq int
+	var virtiofsdSeq, serviceSeq int
+	var waitedSocket string
+
+	origProvision, origBuild, origStart, origVirtiofsd, origWait :=
+		provisionHost, buildRunner, startService, startVirtiofsd, waitForSocket
+	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
+	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	startVirtiofsd = func(context.Context, string, string, string) (int, error) {
+		seq++
+		virtiofsdSeq = seq
+		return 2000, nil
+	}
+	waitForSocket = func(path string, interval, timeout time.Duration) error {
+		waitedSocket = path
+		return nil
+	}
+	startService = func(context.Context, string, string, string) (int, error) {
+		seq++
+		serviceSeq = seq
+		return 1000, nil
+	}
+	defer func() {
+		provisionHost, buildRunner, startService, startVirtiofsd, waitForSocket =
+			origProvision, origBuild, origStart, origVirtiofsd, origWait
+	}()
+
+	rec := &cmdRecorder{}
+	var buf bytes.Buffer
+	if err := upRun(nil, upOptions{file: cfgPath, runner: rec.run, out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+
+	if virtiofsdSeq == 0 {
+		t.Fatal("startVirtiofsd not called for service with a share volume")
+	}
+	if virtiofsdSeq >= serviceSeq {
+		t.Errorf("virtiofsd started at seq %d, VM at seq %d; want virtiofsd before the VM", virtiofsdSeq, serviceSeq)
+	}
+	wantSocket := filepath.Join(dataDir, "runs", "db", "db-virtiofs-data.sock")
+	if waitedSocket != wantSocket {
+		t.Errorf("waitForSocket path = %q, want %q", waitedSocket, wantSocket)
+	}
+
+	store, err := state.Load(filepath.Join(dataDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Services["db"].VirtiofsdPID; got != 2000 {
+		t.Errorf("VirtiofsdPID = %d, want 2000", got)
+	}
+}
+
+// TestUpRunSkipsVirtiofsdWithoutShares proves services with no virtiofs
+// share never get a virtiofsd companion started — the common case
+// (disk-only or no volumes) must not pay for it.
+func TestUpRunSkipsVirtiofsdWithoutShares(t *testing.T) {
+	cfgPath := writeConfig(t) // db (disk volume) + web (no volumes), no shares
+	base := t.TempDir()
+	datadir.Root = base
+
+	origProvision, origBuild, origStart, origVirtiofsd :=
+		provisionHost, buildRunner, startService, startVirtiofsd
+	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
+	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	startVirtiofsd = func(context.Context, string, string, string) (int, error) {
+		t.Fatal("startVirtiofsd called for a service with no virtiofs share")
+		return 0, nil
+	}
+	defer func() {
+		provisionHost, buildRunner, startService, startVirtiofsd =
+			origProvision, origBuild, origStart, origVirtiofsd
+	}()
+
+	var buf bytes.Buffer
+	if err := upRun(nil, upOptions{file: cfgPath, runner: (&cmdRecorder{}).run, out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestUpRunBuildsConcurrently proves the per-service nix builds overlap
 // rather than running one after another: each fake build blocks until both
 // are in flight, so a sequential implementation deadlocks (caught by the
@@ -754,7 +868,7 @@ func TestBuildStoreAppliesHealthStatuses(t *testing.T) {
 	cfg, st := loadStack(t, cfgPath)
 
 	statuses := map[string]string{"db": serviceStatusHealthy}
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, statuses, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, statuses, filepath.Join(dataDir, "runners"))
 
 	if got := store.Services["db"].Status; got != serviceStatusHealthy {
 		t.Errorf("db status = %q, want %q", got, serviceStatusHealthy)
@@ -771,7 +885,7 @@ func TestDownRunOrderingAndState(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"))
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -820,6 +934,47 @@ func TestDownRunOrderingAndState(t *testing.T) {
 	}
 }
 
+// TestDownRunStopsVirtiofsd proves down stops a service's recorded
+// virtiofsd companion alongside its VM.
+func TestDownRunStopsVirtiofsd(t *testing.T) {
+	cfgPath := writeShareConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "share-net")
+	cfg, st := loadStack(t, cfgPath)
+
+	store := buildStore(cfg, st, map[string]int{"db": 1000}, map[string]int{"db": 2000}, nil, filepath.Join(dataDir, "runners"))
+	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	var stopped []int
+	origTeardown, origStop := teardownHost, stopService
+	teardownHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
+	stopService = func(_ context.Context, pid int, _ time.Duration) error {
+		stopped = append(stopped, pid)
+		return nil
+	}
+	defer func() { teardownHost, stopService = origTeardown, origStop }()
+
+	var buf bytes.Buffer
+	if err := downRun(nil, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(stopped, []int{1000, 2000}) {
+		t.Errorf("stopped pids = %v, want [1000 2000] (VM then virtiofsd)", stopped)
+	}
+
+	got, err := state.Load(filepath.Join(dataDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if svc := got.Services["db"]; svc.VirtiofsdPID != 0 {
+		t.Errorf("VirtiofsdPID after down = %d, want 0", svc.VirtiofsdPID)
+	}
+}
+
 func TestDownRunRemoveVolumes(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
@@ -827,7 +982,7 @@ func TestDownRunRemoveVolumes(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, nil, filepath.Join(dataDir, "runners"))
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -876,7 +1031,7 @@ func TestDownRunCleansRunDir(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"))
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -924,7 +1079,7 @@ func TestDownRunWarnsOnUntrackedLiveVM(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{}, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{}, nil, nil, filepath.Join(dataDir, "runners"))
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -954,7 +1109,7 @@ func TestRmRequiresConfirmation(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"))
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -982,7 +1137,7 @@ func TestRmForceRemovesDisksAndState(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, nil, filepath.Join(dataDir, "runners"))
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1017,7 +1172,7 @@ func TestPsRunPrintsTable(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"))
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}

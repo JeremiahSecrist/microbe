@@ -208,6 +208,7 @@ func (c *Compose) validateVolumes() error {
 	diskNames := map[string]string{}
 	for svcName, svc := range c.Services {
 		targets := map[string]bool{}
+		shareNames := map[string]bool{}
 		for _, v := range svc.Volumes {
 			switch v.Type {
 			case "disk":
@@ -219,8 +220,18 @@ func (c *Compose) validateVolumes() error {
 				}
 				diskNames[v.Name] = svcName
 			case "share":
+				if v.Name == "" {
+					return fmt.Errorf("config: service %q: share volume missing name", svcName)
+				}
+				if shareNames[v.Name] {
+					return fmt.Errorf("config: service %q: duplicate share volume name %q", svcName, v.Name)
+				}
+				shareNames[v.Name] = true
 				if v.Host == "" {
 					return fmt.Errorf("config: service %q: share volume missing host", svcName)
+				}
+				if v.Protocol != "9p" && v.Protocol != "virtiofs" {
+					return fmt.Errorf("config: service %q: share volume has unknown protocol %q (want 9p or virtiofs)", svcName, v.Protocol)
 				}
 			default:
 				return fmt.Errorf("config: service %q: unknown volume type %q", svcName, v.Type)

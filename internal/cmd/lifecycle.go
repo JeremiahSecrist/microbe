@@ -54,6 +54,14 @@ var (
 		return runtime.StartService(ctx, runnerPath, runDir, logPath)
 	}
 
+	startVirtiofsd = func(ctx context.Context, runnerPath, runDir, logPath string) (int, error) {
+		return runtime.StartVirtiofsd(ctx, runnerPath, runDir, logPath)
+	}
+
+	waitForSocket = func(path string, interval, timeout time.Duration) error {
+		return runtime.WaitForSocket(path, interval, timeout)
+	}
+
 	stopService = func(ctx context.Context, pid int, grace time.Duration) error {
 		return runtime.StopService(ctx, pid, grace)
 	}
@@ -71,6 +79,41 @@ var (
 // runDir is set to exactly that CWD by startService.
 func vmSocketPath(base, svc string) string {
 	return filepath.Join(base, "runs", svc, svc+".sock")
+}
+
+// virtiofsdSocketWait/Interval bound how long up waits for virtiofsd's
+// socket(s) to appear before starting the VM that connects to them.
+const (
+	virtiofsdSocketWaitInterval = 50 * time.Millisecond
+	virtiofsdSocketWaitTimeout  = 5 * time.Second
+)
+
+// hasVirtiofsShare reports whether svc declares any virtiofs share, i.e.
+// whether its runner build carries a bin/virtiofsd-run companion script
+// (microvm.nix's microvm.binScripts.virtiofsd-run, gated by
+// requiresVirtiofsd) that up must start before the VM.
+func hasVirtiofsShare(svc config.Service) bool {
+	for _, v := range svc.Volumes {
+		if v.Type == "share" && v.Protocol == "virtiofs" {
+			return true
+		}
+	}
+	return false
+}
+
+// virtiofsShareSockets returns the socket filenames up must wait for before
+// starting svc's VM, one per virtiofs share, relative to the service's
+// runDir. Matches microvm.nix's own default (nixos-modules/microvm/
+// options.nix): "<hostname>-virtiofs-<tag>.sock", tag = the volume name
+// (see renderer.nix's `tag = v.name`).
+func virtiofsShareSockets(svcName string, svc config.Service) []string {
+	var out []string
+	for _, v := range svc.Volumes {
+		if v.Type == "share" && v.Protocol == "virtiofs" {
+			out = append(out, fmt.Sprintf("%s-virtiofs-%s.sock", svcName, v.Name))
+		}
+	}
+	return out
 }
 
 // printOps implements provisiond.Ops by printing the intended actions to out.
@@ -343,7 +386,7 @@ const (
 // statuses overrides the default pid-based running/stopped computation for
 // any service present in the map (e.g. healthy/degraded from a
 // healthcheck); a nil map or a missing entry leaves that computation as-is.
-func buildStore(cfg *config.Compose, st *flakegen.Stack, pids map[string]int, statuses map[string]string, runnerDir string) *state.Store {
+func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map[string]int, statuses map[string]string, runnerDir string) *state.Store {
 	store := &state.Store{
 		Stack:    cfg.Name,
 		Networks: map[string]state.NetworkState{},
@@ -376,13 +419,14 @@ func buildStore(cfg *config.Compose, st *flakegen.Stack, pids map[string]int, st
 			status = override
 		}
 		store.Services[name] = state.ServiceState{
-			IP:      svc.IPs,
-			CID:     svc.CID,
-			MACs:    svc.MACs,
-			Volumes: vols,
-			Status:  status,
-			PID:     pid,
-			Runner:  filepath.Join(runnerDir, name),
+			IP:           svc.IPs,
+			CID:          svc.CID,
+			MACs:         svc.MACs,
+			Volumes:      vols,
+			Status:       status,
+			PID:          pid,
+			Runner:       filepath.Join(runnerDir, name),
+			VirtiofsdPID: virtiofsdPIDs[name],
 		}
 	}
 	for _, name := range st.Names() {

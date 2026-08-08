@@ -44,12 +44,17 @@ func applyDefaults(c *Compose) {
 		}
 		for i := range svc.Volumes {
 			v := &svc.Volumes[i]
+			if v.Type == "" {
+				v.Type = "share"
+			}
 			if v.Type == "share" {
 				if v.Mode == "" {
 					v.Mode = "rw"
 				}
 				if v.Protocol == "" {
-					v.Protocol = "9p"
+					// cloud-hypervisor (the default hypervisor) only
+					// supports virtiofs shares, not 9p.
+					v.Protocol = "virtiofs"
 				}
 			} else if v.Type == "disk" {
 				if v.FsType == "" {

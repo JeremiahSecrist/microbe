@@ -190,6 +190,7 @@ func upRun(args []string, opts upOptions) error {
 	}
 
 	pids := map[string]int{}
+	virtiofsdPIDs := map[string]int{}
 	statuses := map[string]string{}
 	var healthErr error
 	for _, svc := range order {
@@ -211,9 +212,28 @@ func upRun(args []string, opts upOptions) error {
 			}
 			fmt.Fprintf(opts.out, "volume %s\n", path)
 		}
+
+		runnerPath := filepath.Join(dataDir, "runners", svc)
+		runDir := filepath.Join(dataDir, "runs", svc)
+
+		var virtiofsdPID int
+		if hasVirtiofsShare(cfg.Services[svc]) {
+			virtiofsdPID, err = startVirtiofsd(context.Background(), runnerPath, runDir, filepath.Join(dataDir, "logs", svc+"-virtiofsd.log"))
+			if err != nil {
+				return err
+			}
+			for _, sock := range virtiofsShareSockets(svc, cfg.Services[svc]) {
+				if err := waitForSocket(filepath.Join(runDir, sock), virtiofsdSocketWaitInterval, virtiofsdSocketWaitTimeout); err != nil {
+					return fmt.Errorf("service %q: virtiofsd (pid %d): %w", svc, virtiofsdPID, err)
+				}
+			}
+			virtiofsdPIDs[svc] = virtiofsdPID
+			fmt.Fprintf(opts.out, "started virtiofsd for %s (pid %d)\n", svc, virtiofsdPID)
+		}
+
 		pid, err := startService(context.Background(),
-			filepath.Join(dataDir, "runners", svc),
-			filepath.Join(dataDir, "runs", svc),
+			runnerPath,
+			runDir,
 			filepath.Join(dataDir, "logs", svc+".log"))
 		if err != nil {
 			return err
@@ -242,13 +262,20 @@ func upRun(args []string, opts upOptions) error {
 				} else {
 					pids[svc] = 0
 				}
+				if virtiofsdPID != 0 {
+					if err := stopService(context.Background(), virtiofsdPID, runtime.StopGrace); err != nil {
+						fmt.Fprintf(opts.out, "warning: failed to stop virtiofsd for degraded %s (pid %d): %v\n", svc, virtiofsdPID, err)
+					} else {
+						virtiofsdPIDs[svc] = 0
+					}
+				}
 				break
 			}
 		}
 	}
 
 	if !opts.dryRun {
-		store := buildStore(cfg, st, pids, statuses, filepath.Join(dataDir, "runners"))
+		store := buildStore(cfg, st, pids, virtiofsdPIDs, statuses, filepath.Join(dataDir, "runners"))
 		if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 			return err
 		}
