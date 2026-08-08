@@ -102,7 +102,7 @@ func TestHostSpecSlices(t *testing.T) {
 		t.Errorf("netSpecs = %v, want %v", nets, wantNets)
 	}
 
-	taps := tapSpecs(st)
+	taps := tapSpecs(cfg, st)
 	back := hostnet.BridgeName("test-net", "backend")
 	front := hostnet.BridgeName("test-net", "frontend")
 	wantTaps := []hostnet.TapSpec{
@@ -195,7 +195,7 @@ func recordHost(hr *hostRecorder, events *[]string, tag string) func(provisiond.
 func TestUpRunProvision(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
-	_, st := loadStack(t, cfgPath)
+	cfg, st := loadStack(t, cfgPath)
 
 	var hr hostRecorder
 	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
@@ -222,8 +222,8 @@ func TestUpRunProvision(t *testing.T) {
 	if !reflect.DeepEqual(hr.nets, netSpecs(st)) {
 		t.Errorf("provision nets = %v, want %v", hr.nets, netSpecs(st))
 	}
-	if !reflect.DeepEqual(hr.taps, tapSpecs(st)) {
-		t.Errorf("provision taps = %v, want %v", hr.taps, tapSpecs(st))
+	if !reflect.DeepEqual(hr.taps, tapSpecs(cfg, st)) {
+		t.Errorf("provision taps = %v, want %v", hr.taps, tapSpecs(cfg, st))
 	}
 	if !reflect.DeepEqual(hr.ports, []hostnet.PortSpec{{HostPort: 8080, GuestIP: "192.168.51.3", GuestPort: 80}}) {
 		t.Errorf("provision ports = %v", hr.ports)
@@ -566,7 +566,7 @@ func TestUpRunDryRunSkipsSSHKeypair(t *testing.T) {
 func TestProvisionHostSeamForwardsToOps(t *testing.T) {
 	cfg, st := loadStack(t, writeConfig(t))
 	nets := netSpecs(st)
-	taps := tapSpecs(st)
+	taps := tapSpecs(cfg, st)
 	ports, err := portSpecs(cfg, st)
 	if err != nil {
 		t.Fatal(err)
@@ -712,7 +712,7 @@ func TestDownRunOrderingAndState(t *testing.T) {
 	if hr.calls != 1 || hr.stack != "test-net" {
 		t.Fatalf("teardownHost calls = %d (stack %q), want 1", hr.calls, hr.stack)
 	}
-	if !reflect.DeepEqual(hr.nets, netSpecs(st)) || !reflect.DeepEqual(hr.taps, tapSpecs(st)) {
+	if !reflect.DeepEqual(hr.nets, netSpecs(st)) || !reflect.DeepEqual(hr.taps, tapSpecs(cfg, st)) {
 		t.Errorf("teardown slices mismatch: nets %v taps %v", hr.nets, hr.taps)
 	}
 	if events[len(events)-1] != "teardown" {

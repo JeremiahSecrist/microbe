@@ -168,8 +168,11 @@ func netSpecs(st *flakegen.Stack) []hostnet.NetSpec {
 type svcNetPair struct{ service, network string }
 
 // tapSpecs derives one TapSpec per service/network attachment, sorted by
-// service then network.
-func tapSpecs(st *flakegen.Stack) []hostnet.TapSpec {
+// service then network. cfg supplies each service's vcpu count: TapSpec.
+// MultiQueue must match microvm.nix's cloud-hypervisor.nix `tapMultiQueue =
+// vcpu > 1` exactly, or cloud-hypervisor refuses to attach (see
+// provisiond's tapLink/tapNeedsRecreate).
+func tapSpecs(cfg *config.Compose, st *flakegen.Stack) []hostnet.TapSpec {
 	var pairs []svcNetPair
 	for name, svc := range st.Services {
 		for _, netName := range svc.Networks {
@@ -185,10 +188,11 @@ func tapSpecs(st *flakegen.Stack) []hostnet.TapSpec {
 	var specs []hostnet.TapSpec
 	for _, pair := range pairs {
 		specs = append(specs, hostnet.TapSpec{
-			Name:   st.Services[pair.service].Taps[pair.network],
-			Bridge: hostnet.BridgeName(st.Name, pair.network),
-			Owner:  os.Getuid(),
-			Group:  os.Getgid(),
+			Name:       st.Services[pair.service].Taps[pair.network],
+			Bridge:     hostnet.BridgeName(st.Name, pair.network),
+			Owner:      os.Getuid(),
+			Group:      os.Getgid(),
+			MultiQueue: cfg.Services[pair.service].VCPUs > 1,
 		})
 	}
 	return specs

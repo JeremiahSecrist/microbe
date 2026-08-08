@@ -173,7 +173,7 @@ func upRun(args []string, opts upOptions) error {
 
 	if !opts.noProvision {
 		nets := netSpecs(st)
-		taps := tapSpecs(st)
+		taps := tapSpecs(cfg, st)
 		ports, err := portSpecs(cfg, st)
 		if err != nil {
 			return err

@@ -113,7 +113,7 @@ func downRun(args []string, opts downOptions) error {
 		return err
 	}
 	nets := netSpecs(st)
-	taps := tapSpecs(st)
+	taps := tapSpecs(cfg, st)
 	ports, err := portSpecs(cfg, st)
 	if err != nil {
 		return err

@@ -41,6 +41,16 @@ type TapSpec struct {
 	Group  int    // gid that may reopen the tap; the kernel checks this
 	// independently of Owner (TUNSETGROUP), so a zero-value Group pins the
 	// tap to the root group even when Owner is correct.
+
+	// MultiQueue must match microvm.nix's cloud-hypervisor.nix `tapMultiQueue
+	// = vcpu > 1`: true only when the guest's vcpu count is > 1. cloud-
+	// hypervisor's net_util::open_tap::check_mq_support rejects a MISMATCH
+	// in either direction -- a single-queue tap for a multi-vcpu guest fails
+	// with MultiQueueNoTapSupport, and a multiqueue-capable tap for a
+	// single-vcpu guest (which never passes --net num_queues) fails with
+	// MultiQueueNoDeviceSupport. The tap's IFF_MULTI_QUEUE flag must track
+	// this exactly, not be set unconditionally.
+	MultiQueue bool
 }
 
 // PortSpec is one published port: DNAT from HostPort to the guest.
