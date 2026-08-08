@@ -44,6 +44,12 @@ nix shell nixpkgs#postgresql -c psql -h 192.168.51.2 -p 5432 -U postgres -d post
 # web's Apache, direct to the guest IP (published-port DNAT can't be
 # self-tested from this same host - see below):
 curl http://192.168.51.3:80/
+
+# outbound: guests reach the internet via masquerade (default, like a
+# docker bridge network):
+microbe shell db
+ping -c1 1.1.1.1
+ping -c1 google.com
 ```
 
 ## Tear down

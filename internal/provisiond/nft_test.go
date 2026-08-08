@@ -12,10 +12,10 @@ import (
 func TestFingerprintRoundTrip(t *testing.T) {
 	p := hostnet.PortSpec{HostPort: 8080, GuestIP: "192.168.51.2", GuestPort: 5432}
 	fp := fingerprint(p)
-	if got := userDataFingerprint([]byte(fp)); got != fp {
+	if got := userDataFingerprint([]byte(fp), userDataPrefix); got != fp {
 		t.Fatalf("userDataFingerprint(%q) = %q, want %q", fp, got, fp)
 	}
-	if got := userDataFingerprint([]byte("unrelated")); got != "" {
+	if got := userDataFingerprint([]byte("unrelated"), userDataPrefix); got != "" {
 		t.Fatalf("userDataFingerprint(unrelated) = %q, want empty", got)
 	}
 }
@@ -61,5 +61,95 @@ func TestDnatExprsShape(t *testing.T) {
 	if !ok || nat.Type != expr.NATTypeDestNAT || nat.Family != unix.NFPROTO_IPV4 ||
 		nat.RegAddrMin != 1 || nat.RegProtoMin != 2 {
 		t.Errorf("expr[6] = %#v, want dnat nat expr", exprs[6])
+	}
+}
+
+func TestSubnetCIDR(t *testing.T) {
+	cases := []struct {
+		gateway string
+		prefix  int
+		want    string
+	}{
+		{"192.168.51.1", 24, "192.168.51.0/24"},
+		{"192.168.50.1", 24, "192.168.50.0/24"},
+		{"10.0.0.5", 8, "10.0.0.0/8"},
+	}
+	for _, c := range cases {
+		got, err := subnetCIDR(c.gateway, c.prefix)
+		if err != nil {
+			t.Fatalf("subnetCIDR(%q, %d): %v", c.gateway, c.prefix, err)
+		}
+		if got != c.want {
+			t.Errorf("subnetCIDR(%q, %d) = %q, want %q", c.gateway, c.prefix, got, c.want)
+		}
+	}
+	if _, err := subnetCIDR("not-an-ip", 24); err == nil {
+		t.Error("subnetCIDR(invalid gateway) = nil error, want error")
+	}
+}
+
+func TestMasqExprsShape(t *testing.T) {
+	exprs, err := masqExprs("192.168.51.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exprs) != 4 {
+		t.Fatalf("masqExprs = %d expressions, want 4", len(exprs))
+	}
+	payload, ok := exprs[0].(*expr.Payload)
+	if !ok || payload.Base != expr.PayloadBaseNetworkHeader || payload.Offset != ipv4SrcOffset || payload.Len != 4 {
+		t.Errorf("expr[0] = %#v, want ip saddr payload load", exprs[0])
+	}
+	bitwise, ok := exprs[1].(*expr.Bitwise)
+	if !ok || len(bitwise.Mask) != 4 || bitwise.Mask[0] != 0xff || bitwise.Mask[3] != 0x00 {
+		t.Errorf("expr[1] = %#v, want /24 netmask bitwise", exprs[1])
+	}
+	cmp, ok := exprs[2].(*expr.Cmp)
+	if !ok || cmp.Op != expr.CmpOpEq || len(cmp.Data) != 4 || cmp.Data[0] != 192 || cmp.Data[3] != 0 {
+		t.Errorf("expr[2] = %#v, want network address cmp", exprs[2])
+	}
+	if _, ok := exprs[3].(*expr.Masq); !ok {
+		t.Errorf("expr[3] = %#v, want masquerade", exprs[3])
+	}
+	if _, err := masqExprs("not-a-cidr"); err == nil {
+		t.Error("masqExprs(invalid cidr) = nil error, want error")
+	}
+}
+
+func TestForwardAcceptExprsShape(t *testing.T) {
+	src, err := forwardAcceptSrcExprs("192.168.51.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, ok := src[0].(*expr.Payload)
+	if !ok || payload.Offset != ipv4SrcOffset {
+		t.Errorf("forwardAcceptSrcExprs[0] = %#v, want saddr offset %d", src[0], ipv4SrcOffset)
+	}
+	if _, ok := src[len(src)-1].(*expr.Verdict); !ok {
+		t.Errorf("forwardAcceptSrcExprs last = %#v, want accept verdict", src[len(src)-1])
+	}
+
+	dst, err := forwardAcceptDstExprs("192.168.51.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, ok = dst[0].(*expr.Payload)
+	if !ok || payload.Offset != ipv4DstOffset {
+		t.Errorf("forwardAcceptDstExprs[0] = %#v, want daddr offset %d", dst[0], ipv4DstOffset)
+	}
+	if _, ok := dst[len(dst)-1].(*expr.Verdict); !ok {
+		t.Errorf("forwardAcceptDstExprs last = %#v, want accept verdict", dst[len(dst)-1])
+	}
+}
+
+func TestMasqFingerprintRoundTrip(t *testing.T) {
+	fp := masqUserDataPrefix + "192.168.51.0/24"
+	if got := userDataFingerprint([]byte(fp), masqUserDataPrefix); got != fp {
+		t.Fatalf("userDataFingerprint(%q, masq) = %q, want %q", fp, got, fp)
+	}
+	// A DNAT fingerprint must not be picked up under the masquerade prefix.
+	dnatFp := fingerprint(hostnet.PortSpec{HostPort: 8080, GuestIP: "192.168.51.2", GuestPort: 80})
+	if got := userDataFingerprint([]byte(dnatFp), masqUserDataPrefix); got != "" {
+		t.Fatalf("userDataFingerprint(%q, masq) = %q, want empty (cross-prefix collision)", dnatFp, got)
 	}
 }

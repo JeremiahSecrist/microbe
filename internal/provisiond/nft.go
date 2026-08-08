@@ -22,11 +22,17 @@ import (
 // expression trees.
 
 const (
-	nftTable = "microbe"
-	nftChain = "prerouting"
+	nftTable            = "microbe"
+	nftChain            = "prerouting"
+	nftPostroutingChain = "postrouting"
+	nftForwardChain     = "forward"
 )
 
-const userDataPrefix = "microbe:"
+const (
+	userDataPrefix     = "microbe:"
+	masqUserDataPrefix = "microbe-masq:"
+	fwdUserDataPrefix  = "microbe-fwd:"
+)
 
 // ApplyPorts installs DNAT rules for the published ports. Idempotent: a rule
 // already carrying the matching fingerprint is left in place.
@@ -45,7 +51,7 @@ func (NetOps) ApplyPorts(ports []hostnet.PortSpec) error {
 	}
 	have := map[string]bool{}
 	for _, rule := range existing {
-		if tag := userDataFingerprint(rule.UserData); tag != "" {
+		if tag := userDataFingerprint(rule.UserData, userDataPrefix); tag != "" {
 			have[tag] = true
 		}
 	}
@@ -83,7 +89,7 @@ func (NetOps) TeardownPorts(ports []hostnet.PortSpec) error {
 		want[fingerprint(port)] = true
 	}
 	for _, rule := range existing {
-		if tag := userDataFingerprint(rule.UserData); want[tag] {
+		if tag := userDataFingerprint(rule.UserData, userDataPrefix); want[tag] {
 			if err := c.DelRule(rule); err != nil {
 				return fmt.Errorf("provisiond: delete DNAT rule %s: %w", tag, err)
 			}
@@ -150,10 +156,299 @@ func fingerprint(p hostnet.PortSpec) string {
 }
 
 // userDataFingerprint extracts the fingerprint from a rule's UserData, or ""
-// if the rule is not one of ours.
-func userDataFingerprint(ud []byte) string {
-	if !bytes.HasPrefix(ud, []byte(userDataPrefix)) {
+// if the rule's tag doesn't carry the given prefix.
+func userDataFingerprint(ud []byte, prefix string) string {
+	if !bytes.HasPrefix(ud, []byte(prefix)) {
 		return ""
 	}
 	return string(ud)
+}
+
+// EnsureMasquerade installs one masquerade rule per network, so traffic
+// sourced from a stack's bridge subnet gets SNAT'd to whatever address the
+// host's own routing picks for its egress interface — giving guests a path
+// to the internet the same way a DNAT rule gives the host a path to a
+// guest's published port. Idempotent, mirrors ApplyPorts.
+func (NetOps) EnsureMasquerade(nets []hostnet.NetSpec) error {
+	c, err := nftables.New()
+	if err != nil {
+		return fmt.Errorf("provisiond: nftables: %w", err)
+	}
+	table, chain, err := ensurePostroutingChain(c)
+	if err != nil {
+		return err
+	}
+	existing, err := c.GetRules(table, chain)
+	if err != nil {
+		return fmt.Errorf("provisiond: list masquerade rules: %w", err)
+	}
+	have := map[string]bool{}
+	for _, rule := range existing {
+		if tag := userDataFingerprint(rule.UserData, masqUserDataPrefix); tag != "" {
+			have[tag] = true
+		}
+	}
+	for _, n := range nets {
+		cidr, err := subnetCIDR(n.Gateway, n.Prefix)
+		if err != nil {
+			return err
+		}
+		fp := masqUserDataPrefix + cidr
+		if have[fp] {
+			continue
+		}
+		exprs, err := masqExprs(cidr)
+		if err != nil {
+			return err
+		}
+		c.AddRule(&nftables.Rule{
+			Table:    table,
+			Chain:    chain,
+			UserData: []byte(fp),
+			Exprs:    exprs,
+		})
+	}
+	return c.Flush()
+}
+
+// TeardownMasquerade removes the masquerade rules for the given networks.
+// Best-effort, mirrors TeardownPorts.
+func (NetOps) TeardownMasquerade(nets []hostnet.NetSpec) error {
+	c, err := nftables.New()
+	if err != nil {
+		return fmt.Errorf("provisiond: nftables: %w", err)
+	}
+	table, chain, err := ensurePostroutingChain(c)
+	if err != nil {
+		return err
+	}
+	existing, err := c.GetRules(table, chain)
+	if err != nil {
+		return fmt.Errorf("provisiond: list masquerade rules: %w", err)
+	}
+	want := map[string]bool{}
+	for _, n := range nets {
+		cidr, err := subnetCIDR(n.Gateway, n.Prefix)
+		if err != nil {
+			return err
+		}
+		want[masqUserDataPrefix+cidr] = true
+	}
+	for _, rule := range existing {
+		if tag := userDataFingerprint(rule.UserData, masqUserDataPrefix); want[tag] {
+			if err := c.DelRule(rule); err != nil {
+				return fmt.Errorf("provisiond: delete masquerade rule %s: %w", tag, err)
+			}
+		}
+	}
+	return c.Flush()
+}
+
+// EnsureForwardAccept installs two forward-chain accept rules per network —
+// one matching traffic sourced from the subnet (guest -> internet), one
+// matching traffic destined to it (the return path back to the guest) — so
+// microbe's own nftables table doesn't drop its guests' forwarded traffic
+// in either direction. Defense-in-depth only: it guarantees this table
+// doesn't block its own stacks, not that some other table on the host (e.g.
+// a consuming flake that enables NixOS's networking.firewall.filterForward)
+// won't. Idempotent, mirrors ApplyPorts.
+func (NetOps) EnsureForwardAccept(nets []hostnet.NetSpec) error {
+	c, err := nftables.New()
+	if err != nil {
+		return fmt.Errorf("provisiond: nftables: %w", err)
+	}
+	table, chain, err := ensureForwardChain(c)
+	if err != nil {
+		return err
+	}
+	existing, err := c.GetRules(table, chain)
+	if err != nil {
+		return fmt.Errorf("provisiond: list forward-accept rules: %w", err)
+	}
+	have := map[string]bool{}
+	for _, rule := range existing {
+		if tag := userDataFingerprint(rule.UserData, fwdUserDataPrefix); tag != "" {
+			have[tag] = true
+		}
+	}
+	for _, n := range nets {
+		cidr, err := subnetCIDR(n.Gateway, n.Prefix)
+		if err != nil {
+			return err
+		}
+		for _, dir := range []struct {
+			suffix string
+			build  func(string) ([]expr.Any, error)
+		}{
+			{":src", forwardAcceptSrcExprs},
+			{":dst", forwardAcceptDstExprs},
+		} {
+			fp := fwdUserDataPrefix + cidr + dir.suffix
+			if have[fp] {
+				continue
+			}
+			exprs, err := dir.build(cidr)
+			if err != nil {
+				return err
+			}
+			c.AddRule(&nftables.Rule{
+				Table:    table,
+				Chain:    chain,
+				UserData: []byte(fp),
+				Exprs:    exprs,
+			})
+		}
+	}
+	return c.Flush()
+}
+
+// TeardownForwardAccept removes the forward-accept rules for the given
+// networks. Best-effort, mirrors TeardownPorts.
+func (NetOps) TeardownForwardAccept(nets []hostnet.NetSpec) error {
+	c, err := nftables.New()
+	if err != nil {
+		return fmt.Errorf("provisiond: nftables: %w", err)
+	}
+	table, chain, err := ensureForwardChain(c)
+	if err != nil {
+		return err
+	}
+	existing, err := c.GetRules(table, chain)
+	if err != nil {
+		return fmt.Errorf("provisiond: list forward-accept rules: %w", err)
+	}
+	want := map[string]bool{}
+	for _, n := range nets {
+		cidr, err := subnetCIDR(n.Gateway, n.Prefix)
+		if err != nil {
+			return err
+		}
+		want[fwdUserDataPrefix+cidr+":src"] = true
+		want[fwdUserDataPrefix+cidr+":dst"] = true
+	}
+	for _, rule := range existing {
+		if tag := userDataFingerprint(rule.UserData, fwdUserDataPrefix); want[tag] {
+			if err := c.DelRule(rule); err != nil {
+				return fmt.Errorf("provisiond: delete forward-accept rule %s: %w", tag, err)
+			}
+		}
+	}
+	return c.Flush()
+}
+
+// ensurePostroutingChain creates the microbe nat table's postrouting chain
+// if absent, for masquerade rules.
+func ensurePostroutingChain(c *nftables.Conn) (*nftables.Table, *nftables.Chain, error) {
+	table := c.AddTable(&nftables.Table{Name: nftTable, Family: nftables.TableFamilyIPv4})
+	chain := c.AddChain(&nftables.Chain{
+		Name:     nftPostroutingChain,
+		Table:    table,
+		Type:     nftables.ChainTypeNAT,
+		Hooknum:  nftables.ChainHookPostrouting,
+		Priority: nftables.ChainPriorityNATSource,
+	})
+	if err := c.Flush(); err != nil {
+		return nil, nil, fmt.Errorf("provisiond: flush postrouting chain setup: %w", err)
+	}
+	return table, chain, nil
+}
+
+// ensureForwardChain creates the microbe table's forward chain if absent,
+// for the forward-accept rules.
+func ensureForwardChain(c *nftables.Conn) (*nftables.Table, *nftables.Chain, error) {
+	table := c.AddTable(&nftables.Table{Name: nftTable, Family: nftables.TableFamilyIPv4})
+	chain := c.AddChain(&nftables.Chain{
+		Name:     nftForwardChain,
+		Table:    table,
+		Type:     nftables.ChainTypeFilter,
+		Hooknum:  nftables.ChainHookForward,
+		Priority: nftables.ChainPriorityFilter,
+	})
+	if err := c.Flush(); err != nil {
+		return nil, nil, fmt.Errorf("provisiond: flush forward chain setup: %w", err)
+	}
+	return table, chain, nil
+}
+
+// subnetCIDR masks gateway by prefix to get the network address, returning
+// "<network>/<prefix>" (e.g. "192.168.51.1", 24 -> "192.168.51.0/24").
+func subnetCIDR(gateway string, prefix int) (string, error) {
+	ip := net.ParseIP(gateway).To4()
+	if ip == nil {
+		return "", fmt.Errorf("provisiond: invalid gateway %q", gateway)
+	}
+	network := ip.Mask(net.CIDRMask(prefix, 32))
+	return fmt.Sprintf("%s/%d", network.String(), prefix), nil
+}
+
+// ipv4AddrCmpExprs builds the shared prefix of an "ip saddr/daddr <cidr>"
+// match: load the network-header address at offset (12 for source, 16 for
+// destination), mask it by the subnet's netmask, and compare against the
+// subnet's network address.
+func ipv4AddrCmpExprs(cidr string, offset uint32) ([]expr.Any, error) {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, fmt.Errorf("provisiond: parse cidr %q: %w", cidr, err)
+	}
+	return []expr.Any{
+		&expr.Payload{
+			DestRegister: 1,
+			Base:         expr.PayloadBaseNetworkHeader,
+			Offset:       offset,
+			Len:          4,
+		},
+		&expr.Bitwise{
+			SourceRegister: 1,
+			DestRegister:   1,
+			Len:            4,
+			Mask:           []byte(ipnet.Mask),
+			Xor:            []byte{0, 0, 0, 0},
+		},
+		&expr.Cmp{
+			Op:       expr.CmpOpEq,
+			Register: 1,
+			Data:     ipnet.IP.To4(),
+		},
+	}, nil
+}
+
+// ipv4SrcOffset and ipv4DstOffset are the network-header byte offsets of
+// the IPv4 source/destination address.
+const (
+	ipv4SrcOffset = 12
+	ipv4DstOffset = 16
+)
+
+// masqExprs builds the expression list for one masquerade rule:
+//
+//	payload load 4b @ network header + 12 => reg 1   (ip saddr)
+//	bitwise reg1 &= <netmask>
+//	cmp eq reg 1 <network addr>
+//	masq
+func masqExprs(cidr string) ([]expr.Any, error) {
+	exprs, err := ipv4AddrCmpExprs(cidr, ipv4SrcOffset)
+	if err != nil {
+		return nil, err
+	}
+	return append(exprs, &expr.Masq{}), nil
+}
+
+// forwardAcceptSrcExprs builds a forward-accept rule matching "ip saddr
+// <cidr>" — the guest-to-internet direction.
+func forwardAcceptSrcExprs(cidr string) ([]expr.Any, error) {
+	exprs, err := ipv4AddrCmpExprs(cidr, ipv4SrcOffset)
+	if err != nil {
+		return nil, err
+	}
+	return append(exprs, &expr.Verdict{Kind: expr.VerdictAccept}), nil
+}
+
+// forwardAcceptDstExprs builds a forward-accept rule matching "ip daddr
+// <cidr>" — the internet-to-guest return direction.
+func forwardAcceptDstExprs(cidr string) ([]expr.Any, error) {
+	exprs, err := ipv4AddrCmpExprs(cidr, ipv4DstOffset)
+	if err != nil {
+		return nil, err
+	}
+	return append(exprs, &expr.Verdict{Kind: expr.VerdictAccept}), nil
 }

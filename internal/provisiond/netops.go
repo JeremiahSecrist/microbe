@@ -52,7 +52,10 @@ func (NetOps) EnsureNetworks(stack string, nets []hostnet.NetSpec) error {
 			return fmt.Errorf("provisiond: bring up bridge %s: %w", bridgeName, err)
 		}
 	}
-	return nil
+	if err := (NetOps{}).EnsureMasquerade(nets); err != nil {
+		return err
+	}
+	return (NetOps{}).EnsureForwardAccept(nets)
 }
 
 // EnsureTaps creates each tap and enslaves it to its bridge.
@@ -92,6 +95,12 @@ func (NetOps) EnsureTaps(taps []hostnet.TapSpec) error {
 
 // TeardownNetworks deletes the bridges. Best-effort: missing devices are fine.
 func (NetOps) TeardownNetworks(stack string, nets []hostnet.NetSpec) error {
+	if err := (NetOps{}).TeardownForwardAccept(nets); err != nil {
+		return err
+	}
+	if err := (NetOps{}).TeardownMasquerade(nets); err != nil {
+		return err
+	}
 	for _, n := range nets {
 		_ = delLinkByName(hostnet.BridgeName(stack, n.Name))
 	}
