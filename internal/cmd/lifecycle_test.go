@@ -845,6 +845,10 @@ func TestPsRunPrintsTable(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	origVMState := vmState
+	vmState = func(string) (string, error) { return "Running", nil }
+	defer func() { vmState = origVMState }()
+
 	var buf bytes.Buffer
 	if err := psRun(base, &buf); err != nil {
 		t.Fatal(err)

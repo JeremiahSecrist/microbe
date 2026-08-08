@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"microbe/internal/chapi"
 	"microbe/internal/config"
 	"microbe/internal/hostnet"
 	"microbe/internal/nix"
@@ -60,7 +61,17 @@ var (
 	ensureSSHKeypair = func(run cmdrun.Runner, dir string) (privPath, pubKey string, err error) {
 		return sshkey.EnsureKeypair(run, dir)
 	}
+
+	vmState = chapi.VMState
 )
+
+// vmSocketPath is where the cloud-hypervisor --api-socket for svc lives:
+// <hostname>.sock relative to the runner's CWD (microvm.nix's own
+// convention, see lib/runners/cloud-hypervisor.nix upstream), and svc's
+// runDir is set to exactly that CWD by startService.
+func vmSocketPath(base, svc string) string {
+	return filepath.Join(base, "runs", svc, svc+".sock")
+}
 
 // printOps implements provisiond.Ops by printing the intended actions to out.
 // Used by --dry-run, which never contacts the daemon.
@@ -264,6 +275,7 @@ const (
 	serviceStatusStopped  = "stopped"
 	serviceStatusHealthy  = "healthy"
 	serviceStatusDegraded = "degraded"
+	serviceStatusCrashed  = "crashed"
 )
 
 // buildStore assembles the persisted state from the stack and recorded PIDs.
