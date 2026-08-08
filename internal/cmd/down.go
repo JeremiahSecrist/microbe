@@ -91,10 +91,24 @@ func downRun(args []string, opts downOptions) error {
 					return err
 				}
 			}
+		} else if !opts.dryRun {
+			// state.json may have lost track of this service's PID (e.g. a
+			// prior partial `up` that never recorded it) while its VM is
+			// still actually alive. There's no PID to stop by, but this is
+			// worth surfacing instead of silently claiming a clean stop.
+			if chState, err := vmState(vmSocketPath(opts.base, name)); err == nil && chState != "" {
+				fmt.Fprintf(opts.out, "warning: %s has no tracked pid but its VM is untracked-live (%s); stop it manually\n", name, chState)
+			}
 		}
 		svc.Status = serviceStatusStopped
 		svc.PID = 0
 		store.Services[name] = svc
+
+		if !opts.dryRun {
+			if err := os.RemoveAll(filepath.Join(opts.base, "runs", name)); err != nil {
+				return err
+			}
+		}
 	}
 
 	cfg, err := config.Load(opts.file)

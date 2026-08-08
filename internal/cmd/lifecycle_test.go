@@ -776,6 +776,84 @@ func TestDownRunRemoveVolumes(t *testing.T) {
 	}
 }
 
+// TestDownRunCleansRunDir guards against the stale-socket collision this
+// session hit firsthand: a torn-down VM's .sock/.sock.lock survived under
+// .microbe/runs/<svc>/ and collided with the next `up`. down must remove the
+// run dir once the service is stopped.
+func TestDownRunCleansRunDir(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+	cfg, st := loadStack(t, cfgPath)
+
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, filepath.Join(base, "runners"))
+	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
+		t.Fatal(err)
+	}
+	for _, svc := range []string{"db", "web"} {
+		runDir := filepath.Join(base, "runs", svc)
+		if err := os.MkdirAll(runDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(runDir, svc+".sock"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(runDir, svc+".sock.lock"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	origTeardown, origStop := teardownHost, stopService
+	teardownHost = recordHost(&hostRecorder{}, nil, "teardown")
+	stopService = func(context.Context, int, time.Duration) error { return nil }
+	defer func() { teardownHost, stopService = origTeardown, origStop }()
+
+	var buf bytes.Buffer
+	if err := downRun(nil, downOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, svc := range []string{"db", "web"} {
+		if _, err := os.Stat(filepath.Join(base, "runs", svc)); !os.IsNotExist(err) {
+			t.Errorf("run dir for %s still exists after down (stale socket left behind)", svc)
+		}
+	}
+}
+
+// TestDownRunWarnsOnUntrackedLiveVM guards the case state.json lost track
+// of: a service with PID 0 in state but whose cloud-hypervisor socket
+// reports it's still actually running (see the buildStore-on-partial-run
+// gap: a service untouched by a run's start order gets PID 0 even if a
+// prior process for it is still alive). down can't recover a killable PID
+// from the socket alone, so it must at least surface this instead of
+// silently reporting a clean stop.
+func TestDownRunWarnsOnUntrackedLiveVM(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+	cfg, st := loadStack(t, cfgPath)
+
+	store := buildStore(cfg, st, map[string]int{}, nil, filepath.Join(base, "runners"))
+	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	origTeardown, origStop, origVMState := teardownHost, stopService, vmState
+	teardownHost = recordHost(&hostRecorder{}, nil, "teardown")
+	stopService = func(context.Context, int, time.Duration) error {
+		t.Error("stopService called with no tracked PID")
+		return nil
+	}
+	vmState = func(string) (string, error) { return "Running", nil }
+	defer func() { teardownHost, stopService, vmState = origTeardown, origStop, origVMState }()
+
+	var buf bytes.Buffer
+	if err := downRun(nil, downOptions{file: cfgPath, base: base, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "db") || !strings.Contains(buf.String(), "untracked") {
+		t.Errorf("output = %q, want a warning naming db as an untracked live VM", buf.String())
+	}
+}
+
 func TestRmRequiresConfirmation(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
