@@ -23,11 +23,17 @@ db-data.qcow2`, `started db (pid ...)`, `healthy db` (waits for postgres to
 actually accept connections — a few seconds), `started jump`, `started web`,
 then a table showing all three `running`/`healthy`.
 
-This also writes `flake.nix`, `generated.json` and `modules/*.nix` into this
+This also writes `flake.nix`, `generated.json` and `parts/*.nix` into this
 directory, alongside `microbe.nix` — the real Nix the stack runs, rendered
 from `microbe.nix` and safe to read (or git-track). They're only rewritten
 when their content actually changes, so an `up` with no config changes
 leaves them untouched.
+
+`flake.nix` follows the Dendritic pattern (flake-parts + import-tree):
+every file under `parts/` self-registers — `renderer.nix`/`guest-base.nix`
+into `flake.nixosModules.*`, each service's own `<svc>.nix` into
+`flake.nixosConfigurations.<svc>` — instead of being wired by an explicit
+imports list.
 
 ## Check status
 

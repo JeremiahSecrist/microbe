@@ -18,11 +18,11 @@ func TestWriteStackWritesAllArtifacts(t *testing.T) {
 	for _, f := range []string{
 		"flake.nix",
 		"generated.json",
-		"modules/renderer.nix",
-		"modules/guest-base.nix",
-		"modules/db.nix",
-		"modules/jump.nix",
-		"modules/web.nix",
+		"parts/renderer.nix",
+		"parts/guest-base.nix",
+		"parts/db.nix",
+		"parts/jump.nix",
+		"parts/web.nix",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 			t.Errorf("missing artifact %s: %v", f, err)
@@ -54,7 +54,7 @@ func TestWriteStackPreservesMtimeOnUnchangedContent(t *testing.T) {
 	if err := WriteStack(dir, st); err != nil {
 		t.Fatal(err)
 	}
-	unchanged := filepath.Join(dir, "modules", "guest-base.nix")
+	unchanged := filepath.Join(dir, "parts", "guest-base.nix")
 	before, err := os.Stat(unchanged)
 	if err != nil {
 		t.Fatal(err)

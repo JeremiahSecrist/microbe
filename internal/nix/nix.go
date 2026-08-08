@@ -11,7 +11,7 @@ import (
 // running `nix build` directly against dir, symlinking the result to
 // outLink. Returns the store path of the built runner.
 //
-// dir is the real project directory holding flake.nix/microbe.nix/modules
+// dir is the real project directory holding flake.nix/microbe.nix/parts
 // (see internal/nix/flakegen.WriteStack) — no staging copy is needed since
 // those files are visible, real project files rather than a build-only
 // side directory.

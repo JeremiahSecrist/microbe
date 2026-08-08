@@ -28,6 +28,7 @@ func TestRendererNixHasRequiredMarkers(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, marker := range []string{
+		"flake.nixosModules.renderer",
 		"microCompose.serviceName",
 		"builtins.fromJSON (builtins.readFile ../generated.json)",
 		"import ../microbe.nix",
@@ -50,6 +51,7 @@ func TestGuestBaseNixHasRequiredMarkers(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, marker := range []string{
+		"flake.nixosModules.guest-base",
 		"services.openssh",
 		"microvm.optimize.enable",
 		"builtins.fromJSON (builtins.readFile ../generated.json)",

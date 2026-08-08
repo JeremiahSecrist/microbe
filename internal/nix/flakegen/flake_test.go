@@ -17,10 +17,26 @@ func TestRenderFlakeMatchesGolden(t *testing.T) {
 	}
 }
 
-func TestServiceModule(t *testing.T) {
-	got := ServiceModule("db")
-	want := "{ ... }:\n{\n  microCompose.serviceName = \"db\";\n}\n"
+func TestServicePart(t *testing.T) {
+	got := ServicePart("db")
+	want := `{ inputs, config, ... }:
+let
+  compose = import ../microbe.nix;
+in
+{
+  flake.nixosConfigurations.db = inputs.nixpkgs.lib.nixosSystem {
+    system = "x86_64-linux";
+    modules = [
+      inputs.microvm.nixosModules.microvm
+      config.flake.nixosModules.renderer
+      config.flake.nixosModules.guest-base
+      { microCompose.serviceName = "db"; }
+      (compose.services.db.config or ({ ... }: { }))
+    ];
+  };
+}
+`
 	if got != want {
-		t.Errorf("ServiceModule(\"db\") =\n%s\nwant:\n%s", got, want)
+		t.Errorf("ServicePart(\"db\") =\n%s\nwant:\n%s", got, want)
 	}
 }
