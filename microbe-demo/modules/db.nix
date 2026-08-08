@@ -1,4 +1,0 @@
-{ ... }:
-{
-  microCompose.serviceName = "db";
-}
