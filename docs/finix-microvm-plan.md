@@ -101,6 +101,22 @@ Phase 0 slice, so if `sysctl` or a neighboring task is waiting on
 networking, that would explain the hang and point to it needing to be
 explicitly disabled/skipped for a Phase-0-scoped minimal boot).
 
+**Additional data point**: overriding `finit.tasks.sysctl.command` with a
+trivial `echo DIAG-...; exit 0` stub (`lib.mkForce`, temporary, not
+committed) still hangs at exactly the same point — the stub's own two
+`echo` lines print immediately after `Starting sysctl[...]`, then nothing
+further, same as with the real `sysctl -p ...` command. This rules out
+`sysctl -p` (or `pkgs.procps`) itself as the hang: whatever's stuck is
+either finit's own bookkeeping/animation immediately after a task
+completes, or a *different* runlevel-2 item (most likely the `getty` tty
+stanzas from `modules/services/getty`, since ttys are the next
+default-enabled thing finit would start in runlevel 2) that never
+starts or never reports back. Next step if picked back up: stub the
+`getty` ttys the same way (`services.getty.enable = false` first, as the
+cheapest test) to see if the stall moves or disappears, and/or attach the
+QEMU monitor as noted above to check `info status`/vCPU state directly
+rather than inferring from console silence.
+
 ---
 
 ## 1. Overview & Motivation
