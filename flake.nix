@@ -32,7 +32,7 @@
           src = ./.;
           filter = path: _type: !pkgs.lib.hasPrefix (toString ./microbe-demo) path;
         };
-        vendorHash = "sha256-xUewHRIi0qXOobWIRE5fQ9ZJIRDrYJJeNrVQZYIPtAo=";
+        vendorHash = "sha256-ip4BmPWbK58kyKxIBejB3kRMjRvntXVWxHz4+SejoHg=";
         # go test needs network (vsock/pasta) for some tests; sandbox has no
         # network access, so tests hang until sandbox setup times out. Skip.
         doCheck = false;
