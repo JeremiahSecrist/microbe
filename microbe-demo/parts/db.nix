@@ -10,6 +10,7 @@ in
       config.flake.nixosModules.renderer
       config.flake.nixosModules.guest-base
       config.flake.nixosModules.virtiofsd-run
+      config.flake.nixosModules.agent
       { microCompose.serviceName = "db"; }
       (compose.services.db.config or ({ ... }: { }))
     ];

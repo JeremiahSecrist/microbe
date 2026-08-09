@@ -253,6 +253,7 @@ func pumpInput(conn io.Reader, stdinW io.Writer, onEOF func(), resize func(rows,
 func runTTY(conn *os.File, fw *frameWriter, h header) {
 	master, slave, err := openPTY()
 	if err != nil {
+		fw.write(frameStderr, []byte("microbe-agent: open pty: "+err.Error()+"\n"))
 		fw.write(frameExit, exitPayload(1))
 		return
 	}
@@ -266,9 +267,10 @@ func runTTY(conn *os.File, fw *frameWriter, h header) {
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
 	if err := cmd.Start(); err != nil {
+		fw.write(frameStderr, []byte(err.Error()+"\n"))
+		fw.write(frameExit, exitPayload(1))
 		slave.Close()
 		master.Close()
-		fw.write(frameExit, exitPayload(1))
 		return
 	}
 	slave.Close()
@@ -304,6 +306,7 @@ func runPipe(conn *os.File, fw *frameWriter, h header) {
 	cmd.Stderr = &frameStream{fw: fw, typ: frameStderr}
 
 	if err := cmd.Start(); err != nil {
+		fw.write(frameStderr, []byte(err.Error()+"\n"))
 		fw.write(frameExit, exitPayload(1))
 		return
 	}

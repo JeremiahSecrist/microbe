@@ -269,6 +269,5 @@
         "frontend": "mvc-0bb5796d55c"
       }
     }
-  },
-  "sshPublicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDpJr2dOBlfn6XhlOmy36Je2SygbiBarqCHm+YZiQSoW microbe"
+  }
 }
