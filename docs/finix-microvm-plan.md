@@ -76,9 +76,29 @@ overriding `boot.initrd.finit.tasks."mount-nix-.ro-store".script` with a
 short retry loop (up to 50 tries, 200ms apart) instead of finit's
 generated single-shot mount command.
 
-**Current blocker**: with all three fixes in place, boot reliably
-reaches `finix, entering runlevel 2`, runs `loadkmap`/
-`suid-sgid-wrappers`, starts `sysctl[344]` — and then genuinely hangs.
+**"Hang" investigated at length (§history below) and resolved: it was
+never a hang.** Boot reliably reaches `finix, entering runlevel 2`, runs
+`loadkmap`/`suid-sgid-wrappers`/`sysctl`/`tmpfiles-setup`, and finit sits
+idle afterward — which looked like a stall because nothing more printed
+to the console being watched. Root cause: `services.getty` only spawns
+gettys on `tty1`-`tty6` (virtual consoles) by default. Those are
+invisible under `-nographic`/QEMU serial redirection, and disjoint from
+`boot.kernelParams`'s `console=ttyS0` (that only routes kernel/finit *log*
+output — it doesn't add a getty). There was never a login prompt to see
+because no getty ever targeted the serial line. Fix: `finix-base.nix` now
+sets `services.getty.ttys` to include `"ttyS0"`. Verified live: `finix
+login:` appears ~5s after boot, on stock finit 4.17 — no finit version
+pin, no `libconfuse` dependency, no other workaround needed. The extended
+investigation below (finit version pin, QMP register sampling, `/proc/1`
+process-state dumps) is kept for the debugging technique/methodology, but
+its "PID 1 stuck in userspace" conclusion was wrong — `epoll_wait` with
+nothing left to do *is* what a correctly-idling finit looks like once
+runlevel 2 finishes; the diagnostic dumps just never had a getty on the
+console to make that visible.
+
+<details>
+<summary>Investigation history (superseded — kept for technique reference)</summary>
+
 Confirmed hung, not slow: booted with a 150s wall-clock window (vs.
 ~5s of guest boot time needed to reach this point) and the guest kernel
 clock in dmesg timestamps never advances past `5.246848` for the
@@ -86,36 +106,48 @@ remaining ~145 real seconds — the qemu process keeps running (not
 crashed, not exited), but the guest makes zero further progress. Ruled
 out console-output buffering as the explanation (retried with explicit
 `-serial file:...` instead of `-nographic`'s multiplexed stdio; same
-stall point). Not yet root-caused *why* `sysctl` (or whatever runs
-immediately after it in finit's runlevel-2 queue) hangs. Next
-diagnostic step needs interactive tooling rather than more blind
-console-log iteration: attach a QEMU monitor
-(`-monitor unix:/tmp/qmon.sock,server,nowait` + `nc -U /tmp/qmon.sock`,
-or `Ctrl-A C` from the `-nographic` console) and check `info registers`/
-`info status` to see whether the vCPU is actually spinning, blocked on
-I/O, or waiting on something that never arrives (e.g. a udev/mdevd
-event, a device node that never appears, or DHCP with no network
-actually configured beyond the finit static setup finix-guest-base.nix
-would eventually add in Phase 1 — no such wiring exists yet in this
-Phase 0 slice, so if `sysctl` or a neighboring task is waiting on
-networking, that would explain the hang and point to it needing to be
-explicitly disabled/skipped for a Phase-0-scoped minimal boot).
+stall point). *(In hindsight: correct observation, wrong inference —
+nothing more ever prints because there was no getty on that console, not
+because the guest stopped making progress.)*
 
-**Additional data point**: overriding `finit.tasks.sysctl.command` with a
-trivial `echo DIAG-...; exit 0` stub (`lib.mkForce`, temporary, not
-committed) still hangs at exactly the same point — the stub's own two
-`echo` lines print immediately after `Starting sysctl[...]`, then nothing
-further, same as with the real `sysctl -p ...` command. This rules out
-`sysctl -p` (or `pkgs.procps`) itself as the hang: whatever's stuck is
-either finit's own bookkeeping/animation immediately after a task
-completes, or a *different* runlevel-2 item (most likely the `getty` tty
-stanzas from `modules/services/getty`, since ttys are the next
-default-enabled thing finit would start in runlevel 2) that never
-starts or never reports back. Next step if picked back up: stub the
-`getty` ttys the same way (`services.getty.enable = false` first, as the
-cheapest test) to see if the stall moves or disappears, and/or attach the
-QEMU monitor as noted above to check `info status`/vCPU state directly
-rather than inferring from console silence.
+Overriding `finit.tasks.sysctl.command` with a trivial `echo DIAG-...;
+exit 0` stub still "hung" at exactly the same point. Ran the
+`services.getty.enable = false` diagnostic — identical "hang" with getty
+on vs. off (`console9.log` vs. `console_nogetty.log`) — correctly ruled
+out *whether getty runs at all* as the cause, but the diagnostic never
+considered *which tty* getty targets, so it missed the real issue right
+next to it.
+
+QMP `query-status` while "hung" returned `{"status": "running", "running":
+true}`, read at the time as "vCPU spinning/livelocked". Revisited later
+with `info registers` sampled 3x: `RIP` constant, `HLT=1` — actually the
+kernel idle loop, CPU genuinely parked waiting for interrupts, a counter
+register incrementing sample to sample confirming timer interrupts still
+firing. The kernel was fine the whole time.
+
+Found `https://github.com/aanderse/finix-config` (real hardware, not a
+VM), which pins `finit.package` to a post-4.17 commit
+(`finit-project/finit@d2781ef6`, self-labeled `version = "5.0"`). Mirrored
+that pin (`nix-prefetch-git` for the hash; needed `pkgs.libconfuse` added
+to `buildInputs` since that commit range moved `finit.conf` to a new
+"block format" parser requiring `libconfuse >= 3.3`). Built and booted:
+getty registration order changed slightly but the same "hang" point
+persisted. Correctly concluded "finit version isn't the cause" — but this
+row was a red herring the whole time; the version pin is not in the final
+fix.
+
+`/proc/1` dumped every second via an independent finit task
+(`finit.tasks."aaa-diag"`, forked alongside `sysctl` so it survives even
+if PID 1 "wedges") showed the true state: `sysctl`'s PID briefly zombied
+then got reaped normally, `State: S (sleeping)`, `wchan: do_epoll_wait`,
+stack `do_epoll_wait → __x64_sys_epoll_wait → do_syscall_64` — completely
+ordinary idle-event-loop behavior for an init process with nothing
+queued. This dump is what triggered the "wait, is this maybe just... not
+hung?" reconsideration, followed by testing `services.getty.ttys = [
+... "ttyS0" ]` directly, which produced the login prompt immediately and
+closed the investigation.
+
+</details>
 
 ---
 

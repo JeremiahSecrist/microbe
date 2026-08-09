@@ -59,6 +59,7 @@ in
     specialArgs.pkgs = import inputs.nixpkgs { system = "x86_64-linux"; };
     modules = [
       (inputs.finix + "/modules/virtualisation/qemu.nix")
+      inputs.finix.nixosModules.getty
       config.flake.nixosModules.finix-base
       (compose.services.db.config or ({ ... }: { }))
     ];

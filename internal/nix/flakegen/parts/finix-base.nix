@@ -106,6 +106,18 @@
           exit 1
         '';
 
+        # There is no boot hang: runlevel 2 completes in ~5s regardless of
+        # finit version. What looked like a stall was the console going
+        # silent because `services.getty` only spawns on tty1-6 (virtual
+        # consoles) by default -- invisible under `-nographic`/QEMU serial
+        # redirection, and disjoint from `boot.kernelParams`'s
+        # `console=ttyS0` above (that only routes kernel/finit log output,
+        # it doesn't add a getty). Add ttyS0 to the getty list so the
+        # console this guest is actually watched through gets a login
+        # prompt (verified live: `finix login:` appears ~5s after boot with
+        # stock finit 4.17, no version pin needed).
+        services.getty.ttys = [ "tty1" "tty2" "tty3" "tty4" "tty5" "tty6" "ttyS0" ];
+
         microbe.qemuRunner = pkgs.writeShellScriptBin "run-vm" ''
           exec ${lib.concatMapStringsSep " " lib.escapeShellArg
             (dropVirtfsArgs config.virtualisation.qemu.argv ++ explicitShareArgs)} "$@"

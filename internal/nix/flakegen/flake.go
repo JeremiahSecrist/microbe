@@ -41,7 +41,13 @@ func (st *Stack) RenderFlake() string {
 //     flake.finixConfigurations.<name>. finix.lib.finixSystem takes no
 //     `system` arg and has no implicit nixpkgs of its own (the finix flake
 //     input declares none) — lib and pkgs must be supplied explicitly via
-//     specialArgs, unlike nixosSystem above.
+//     specialArgs, unlike nixosSystem above. inputs.finix.nixosModules.getty
+//     is included explicitly: unlike core services (dbus/elogind/mdevd/...),
+//     getty isn't in finix's own nixosModules.default import list (see its
+//     modules/default.nix), so without this a finix guest boots to runlevel
+//     2 with no console-attached shell at all — not a hang, just nothing
+//     left to show on the console once boot finishes (verified live: this
+//     is what a genuinely-idle-with-no-getty finix guest looks like).
 func ServicePart(name, os string) string {
 	q := nixQuote(name)
 	if os == "finix" {
@@ -55,6 +61,7 @@ in
     specialArgs.pkgs = import inputs.nixpkgs { system = "x86_64-linux"; };
     modules = [
       (inputs.finix + "/modules/virtualisation/qemu.nix")
+      inputs.finix.nixosModules.getty
       config.flake.nixosModules.finix-base
       (compose.services.` + name + `.config or ({ ... }: { }))
     ];
