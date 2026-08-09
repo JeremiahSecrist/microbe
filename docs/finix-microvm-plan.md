@@ -65,18 +65,41 @@ switch-root fix; retrying reliably works. Not yet investigated further
 since it self-heals on retry and doesn't block boot when it doesn't
 occur.
 
-**Current blocker**: runlevel 2 starts (`loadkmap`, `suid-sgid-wrappers`,
-`sysctl` tasks fire in order) but console output stops there for the
-rest of a 90s boot window — no `getty on /dev/tty1` or `login:` line
-seen yet in 3 attempts, unlike finix's own `tests/boot.nix` reference
-boot which reaches getty. Not yet diagnosed whether this is a slow/stuck
-task after `sysctl`, a getty/agetty startup issue specific to the
-`ttyS0` serial console under this qemu config, or a console-output
-buffering artifact of `-nographic` piped to a file rather than a genuine
-guest hang. Next step: boot with `-serial file:...` instead of
-`-nographic`'s multiplexed stdio to rule out buffering, and/or run with
-`-d guest_errors,unimp` or an unbounded wait to see if it's just slow
-rather than hung.
+**Third bug found, fix in place, not fully resolved**: the `/nix/store`
+9p mount (fixed above) was intermittently failing on ~half of boots with
+the same `9pnet_virtio: no channels available` symptom — a well-known,
+pre-existing kernel/qemu race between virtio_pci binding the device and
+finit's mount attempt running (not introduced by the `-fsdev`/`-device`
+rewrite itself, confirmed via web search against existing kernel-list
+and forum reports of the same race on other distros). Mitigated by
+overriding `boot.initrd.finit.tasks."mount-nix-.ro-store".script` with a
+short retry loop (up to 50 tries, 200ms apart) instead of finit's
+generated single-shot mount command.
+
+**Current blocker**: with all three fixes in place, boot reliably
+reaches `finix, entering runlevel 2`, runs `loadkmap`/
+`suid-sgid-wrappers`, starts `sysctl[344]` — and then genuinely hangs.
+Confirmed hung, not slow: booted with a 150s wall-clock window (vs.
+~5s of guest boot time needed to reach this point) and the guest kernel
+clock in dmesg timestamps never advances past `5.246848` for the
+remaining ~145 real seconds — the qemu process keeps running (not
+crashed, not exited), but the guest makes zero further progress. Ruled
+out console-output buffering as the explanation (retried with explicit
+`-serial file:...` instead of `-nographic`'s multiplexed stdio; same
+stall point). Not yet root-caused *why* `sysctl` (or whatever runs
+immediately after it in finit's runlevel-2 queue) hangs. Next
+diagnostic step needs interactive tooling rather than more blind
+console-log iteration: attach a QEMU monitor
+(`-monitor unix:/tmp/qmon.sock,server,nowait` + `nc -U /tmp/qmon.sock`,
+or `Ctrl-A C` from the `-nographic` console) and check `info registers`/
+`info status` to see whether the vCPU is actually spinning, blocked on
+I/O, or waiting on something that never arrives (e.g. a udev/mdevd
+event, a device node that never appears, or DHCP with no network
+actually configured beyond the finit static setup finix-guest-base.nix
+would eventually add in Phase 1 — no such wiring exists yet in this
+Phase 0 slice, so if `sysctl` or a neighboring task is waiting on
+networking, that would explain the hang and point to it needing to be
+explicitly disabled/skipped for a Phase-0-scoped minimal boot).
 
 ---
 
