@@ -5,6 +5,10 @@ tree:
       desc: "Detailed TDD plan for two live-E2E blockers: tap ownership reconciliation in EnsureTaps, and volume image path/format alignment."
       updated: "2026-08-07T20:45:01.476Z"
       commit: feafc4e
+    finix-microvm-plan.md:
+      desc: "Plan to add finix (finit-based OS) as a microbe guest-OS flavor: schema, rendering, cloud-hypervisor boot, postgres milestone."
+      updated: "2026-08-09T04:14:20.467Z"
+      commit: 5db95f4
     microbe-plan.md:
       desc: "Authoritative microbe design/implementation spec; §13.1 defines the root microbe-provisiond daemon socket-activation design."
       updated: "2026-08-07T18:28:12.670Z"
