@@ -720,7 +720,7 @@ func TestAttachShareHostsDefaultsMissingHostAndCreatesDir(t *testing.T) {
 	}
 	st := &flakegen.Stack{Services: map[string]flakegen.Service{"a": {}}}
 
-	if err := attachShareHosts(dataDir, cfg, st); err != nil {
+	if err := attachShareHosts(dataDir, dataDir, cfg, st); err != nil {
 		t.Fatal(err)
 	}
 
@@ -736,10 +736,11 @@ func TestAttachShareHostsDefaultsMissingHostAndCreatesDir(t *testing.T) {
 	}
 }
 
-// TestAttachShareHostsLeavesExplicitHostAlone proves an explicit host path
-// is never overwritten or recorded in ShareHosts (renderer.nix should use
-// the compose file's own v.host, not fall back to generated.json).
-func TestAttachShareHostsLeavesExplicitHostAlone(t *testing.T) {
+// TestAttachShareHostsLeavesAbsoluteExplicitHostAlone proves an explicit
+// absolute host path is preserved verbatim, and is still recorded in
+// ShareHosts so renderer.nix (which reads generated.json, never Go's
+// in-memory cfg) sees the same value.
+func TestAttachShareHostsLeavesAbsoluteExplicitHostAlone(t *testing.T) {
 	dataDir := t.TempDir()
 	explicit := t.TempDir()
 	cfg := &config.Compose{
@@ -753,14 +754,45 @@ func TestAttachShareHostsLeavesExplicitHostAlone(t *testing.T) {
 	}
 	st := &flakegen.Stack{Services: map[string]flakegen.Service{"a": {}}}
 
-	if err := attachShareHosts(dataDir, cfg, st); err != nil {
+	if err := attachShareHosts(dataDir, dataDir, cfg, st); err != nil {
 		t.Fatal(err)
 	}
 	if got := cfg.Services["a"].Volumes[0].Host; got != explicit {
 		t.Errorf("cfg volume host = %q, want unchanged %q", got, explicit)
 	}
-	if _, ok := st.Services["a"].ShareHosts["data"]; ok {
-		t.Errorf("ShareHosts should not record an explicit host, got %+v", st.Services["a"].ShareHosts)
+	if got := st.Services["a"].ShareHosts["data"]; got != explicit {
+		t.Errorf("st ShareHosts[data] = %q, want %q", got, explicit)
+	}
+}
+
+// TestAttachShareHostsResolvesRelativeHostAgainstProjectDir proves a
+// relative host path (e.g. "./data") is resolved against projectDir, the
+// directory containing microbe.nix, rather than being passed through
+// as-is (which would break once evaluated from a different CWD).
+func TestAttachShareHostsResolvesRelativeHostAgainstProjectDir(t *testing.T) {
+	dataDir := t.TempDir()
+	projectDir := t.TempDir()
+	cfg := &config.Compose{
+		Services: map[string]config.Service{
+			"a": {
+				Volumes: []config.Volume{
+					{Type: "share", Name: "data", Host: "./data", Target: "/data"},
+				},
+			},
+		},
+	}
+	st := &flakegen.Stack{Services: map[string]flakegen.Service{"a": {}}}
+
+	if err := attachShareHosts(dataDir, projectDir, cfg, st); err != nil {
+		t.Fatal(err)
+	}
+
+	want := filepath.Join(projectDir, "data")
+	if got := cfg.Services["a"].Volumes[0].Host; got != want {
+		t.Errorf("cfg volume host = %q, want %q", got, want)
+	}
+	if got := st.Services["a"].ShareHosts["data"]; got != want {
+		t.Errorf("st ShareHosts[data] = %q, want %q", got, want)
 	}
 }
 

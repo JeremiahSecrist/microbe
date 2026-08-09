@@ -124,14 +124,23 @@ func attachShareOwners(cfg *config.Compose, st *flakegen.Stack) error {
 	return nil
 }
 
-// attachShareHosts assigns a docker-style managed directory
-// (<dataDir>/volumes/<name>) to any share volume that omits host, creating
-// the directory if it doesn't exist yet. The default is recorded on cfg (so
-// attachShareOwners's stat has somewhere to look) and on st.ShareHosts:
-// renderer.nix imports the user's raw microbe.nix directly rather than
-// Go's defaulted cfg, so it needs the default surfaced through
-// generated.json to fall back to (see flakegen.Service.ShareHosts).
-func attachShareHosts(dataDir string, cfg *config.Compose, st *flakegen.Stack) error {
+// attachShareHosts resolves every share volume's host path to an absolute
+// one and records it on cfg (so attachShareOwners's stat has somewhere to
+// look) and on st.ShareHosts: renderer.nix imports the user's raw
+// microbe.nix directly rather than Go's resolved cfg, so it always reads
+// the host path through generated.json instead of the (possibly relative)
+// value written in microbe.nix (see flakegen.Service.ShareHosts).
+//
+// A share that omits host gets a docker-style managed directory
+// (<dataDir>/volumes/<name>), created if it doesn't exist yet. A relative
+// host is resolved against projectDir (the directory containing
+// microbe.nix), so users can write paths like "./data" instead of having
+// to hardcode an absolute one.
+func attachShareHosts(dataDir, projectDir string, cfg *config.Compose, st *flakegen.Stack) error {
+	absProjectDir, err := filepath.Abs(projectDir)
+	if err != nil {
+		return err
+	}
 	for name, svcCfg := range cfg.Services {
 		svc, ok := st.Services[name]
 		if !ok {
@@ -139,12 +148,20 @@ func attachShareHosts(dataDir string, cfg *config.Compose, st *flakegen.Stack) e
 		}
 		for i := range svcCfg.Volumes {
 			vol := &svcCfg.Volumes[i]
-			if vol.Type != "share" || vol.Host != "" {
+			if vol.Type != "share" {
 				continue
 			}
-			path := filepath.Join(dataDir, "volumes", vol.Name)
-			if err := os.MkdirAll(path, 0o755); err != nil {
-				return fmt.Errorf("service %q: share %q: create default volume dir: %w", name, vol.Name, err)
+			var path string
+			switch {
+			case vol.Host == "":
+				path = filepath.Join(dataDir, "volumes", vol.Name)
+				if err := os.MkdirAll(path, 0o755); err != nil {
+					return fmt.Errorf("service %q: share %q: create default volume dir: %w", name, vol.Name, err)
+				}
+			case !filepath.IsAbs(vol.Host):
+				path = filepath.Join(absProjectDir, vol.Host)
+			default:
+				path = vol.Host
 			}
 			vol.Host = path
 			if svc.ShareHosts == nil {
@@ -182,7 +199,7 @@ func upRun(args []string, opts upOptions) error {
 	if err := attachVolumeImages(dataDir, cfg, st); err != nil {
 		return err
 	}
-	if err := attachShareHosts(dataDir, cfg, st); err != nil {
+	if err := attachShareHosts(dataDir, projectDir, cfg, st); err != nil {
 		return err
 	}
 	if err := attachShareOwners(cfg, st); err != nil {

@@ -104,6 +104,7 @@ func TestShareOwnerTranslatesUidGid(t *testing.T) {
 	st := mustStack(t, cfg)
 	db := st.Services["db"]
 	db.ShareOwners = map[string]ShareOwner{"data": {HostUID: 1000, HostGID: 100}}
+	db.ShareHosts = map[string]string{"data": shareHost}
 	st.Services["db"] = db
 	if err := WriteStack(dir, st); err != nil {
 		t.Fatal(err)
