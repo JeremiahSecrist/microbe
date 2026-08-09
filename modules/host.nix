@@ -97,8 +97,15 @@ in
       systemd.tmpfiles.rules = [ "d /var/lib/microbe 2775 root microbe -" ];
 
       services.udev.extraRules = ''
-        # Tap devices for the microbe group, KVM accelerator for the kvm group.
-        KERNEL=="tun", GROUP="microbe", MODE="0660", OPTIONS+="static_node=net/tun"
+        # tun left at the Linux default (0666, world-writable): nix's own
+        # build sandbox opens /dev/net/tun itself (via pasta) to give
+        # fixed-output derivations network access, and restricting it to
+        # the microbe group blocks nix's nixbld users from doing that on
+        # any host running this module. Tap creation is still gated by the
+        # root-only provisiond daemon (see below), not by this device's
+        # permissions, so loosening it doesn't widen microbe's own attack
+        # surface.
+        KERNEL=="tun", OPTIONS+="static_node=net/tun"
         KERNEL=="kvm", GROUP="kvm", MODE="0660", OPTIONS+="static_node=kvm"
       '';
 
