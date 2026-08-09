@@ -37,7 +37,7 @@ func psRun(configFile string, out io.Writer) error {
 	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
 		return err
 	}
-	printStore(out, store)
+	printStore(out, store, isTerminal(out))
 	return nil
 }
 

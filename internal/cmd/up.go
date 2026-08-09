@@ -165,7 +165,9 @@ func upRun(args []string, opts upOptions) error {
 	if err := flakegen.WriteStack(projectDir, st); err != nil {
 		return err
 	}
-	fmt.Fprintf(opts.out, "rendered %s\n", projectDir)
+	interactive := !opts.dryRun && isTerminal(opts.out)
+	p := newProgress(opts.out, interactive, terminalWidth(opts.out))
+	p.Step("rendered %s", projectDir)
 
 	selected := args
 	if len(selected) == 0 {
@@ -203,7 +205,7 @@ func upRun(args []string, opts upOptions) error {
 			return err
 		}
 		for i, svc := range selected {
-			fmt.Fprintf(opts.out, "%s -> %s\n", svc, paths[i])
+			p.Step("%s -> %s", svc, paths[i])
 		}
 	}
 
@@ -245,7 +247,7 @@ func upRun(args []string, opts upOptions) error {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(opts.out, "volume %s\n", path)
+			p.Step("volume %s", path)
 		}
 
 		runnerPath := filepath.Join(dataDir, "runners", svc)
@@ -263,7 +265,7 @@ func upRun(args []string, opts upOptions) error {
 				}
 			}
 			virtiofsdPIDs[svc] = virtiofsdPID
-			fmt.Fprintf(opts.out, "started virtiofsd for %s (pid %d)\n", svc, virtiofsdPID)
+			p.Step("started virtiofsd for %s (pid %d)", svc, virtiofsdPID)
 		}
 
 		pid, err := startService(context.Background(),
@@ -274,7 +276,7 @@ func upRun(args []string, opts upOptions) error {
 			return err
 		}
 		pids[svc] = pid
-		fmt.Fprintf(opts.out, "started %s (pid %d)\n", svc, pid)
+		p.Step("started %s (pid %d)", svc, pid)
 
 		if hc := cfg.Services[svc].Healthcheck; hc != nil {
 			ip := st.Services[svc].IPs[primaryNetwork(st.Services[svc])]
@@ -284,10 +286,11 @@ func upRun(args []string, opts upOptions) error {
 			}
 			if healthy {
 				statuses[svc] = serviceStatusHealthy
-				fmt.Fprintf(opts.out, "healthy %s\n", svc)
+				p.Step("healthy %s", svc)
 			} else {
 				statuses[svc] = serviceStatusDegraded
 				healthErr = fmt.Errorf("service %q did not become healthy within %s", svc, hc.StartPeriod)
+				p.Done()
 				fmt.Fprintf(opts.out, "degraded %s: %v\n", svc, healthErr)
 				// Stop the VM we just started: leaving it running would let
 				// a follow-up `up` race a second instance against it over
@@ -310,11 +313,12 @@ func upRun(args []string, opts upOptions) error {
 	}
 
 	if !opts.dryRun {
+		p.Done()
 		store := buildStore(cfg, st, pids, virtiofsdPIDs, statuses, filepath.Join(dataDir, "runners"))
 		if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 			return err
 		}
-		printStore(opts.out, store)
+		printStore(opts.out, store, isTerminal(opts.out))
 	}
 	if healthErr != nil {
 		return healthErr

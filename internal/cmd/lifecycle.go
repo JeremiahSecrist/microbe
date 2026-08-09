@@ -441,8 +441,23 @@ func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map
 	return store
 }
 
-// printStore renders the ps-style table.
-func printStore(out io.Writer, store *state.Store) {
+// statusColor maps a service status to its ANSI color code for interactive
+// output: green for up and running, red for anything degraded/crashed,
+// dim gray for stopped/unknown.
+func statusColor(status string) string {
+	switch status {
+	case serviceStatusRunning, serviceStatusHealthy:
+		return "32"
+	case serviceStatusDegraded, serviceStatusCrashed:
+		return "31"
+	default:
+		return "90"
+	}
+}
+
+// printStore renders the ps-style table. In interactive mode the status
+// column is colorized.
+func printStore(out io.Writer, store *state.Store, interactive bool) {
 	if len(store.Services) == 0 {
 		fmt.Fprintln(out, "no services")
 		return
@@ -471,6 +486,14 @@ func printStore(out io.Writer, store *state.Store) {
 			}
 		}
 		sort.Strings(ports)
-		fmt.Fprintf(out, "%-12s %-9s %-7d %-24s %s\n", name, svc.Status, svc.PID, strings.Join(ips, " "), strings.Join(ports, " "))
+		status := svc.Status
+		if interactive {
+			status = fmt.Sprintf("\x1b[%sm%s\x1b[0m", statusColor(svc.Status), svc.Status)
+		}
+		pad := 9 - len(svc.Status)
+		if pad < 0 {
+			pad = 0
+		}
+		fmt.Fprintf(out, "%-12s %s%*s %-7d %-24s %s\n", name, status, pad, "", svc.PID, strings.Join(ips, " "), strings.Join(ports, " "))
 	}
 }
