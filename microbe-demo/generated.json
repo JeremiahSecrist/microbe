@@ -74,7 +74,8 @@
       },
       "volumes": {
         "db-data": {
-          "image": "/var/lib/microbe/test-net/volumes/db-data.qcow2"
+          "hostGid": 100,
+          "hostUid": 1000
         }
       }
     },

@@ -219,6 +219,9 @@ func (c *Compose) validateVolumes() error {
 					return fmt.Errorf("config: duplicate disk volume %q (%s, %s)", v.Name, prev, svcName)
 				}
 				diskNames[v.Name] = svcName
+				if v.Owner != "" {
+					return fmt.Errorf("config: service %q: disk volume %q: owner only applies to share volumes", svcName, v.Name)
+				}
 			case "share":
 				if v.Name == "" {
 					return fmt.Errorf("config: service %q: share volume missing name", svcName)

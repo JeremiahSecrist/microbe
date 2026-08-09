@@ -208,6 +208,24 @@ func TestValidateShareVolumeDefaultsPass(t *testing.T) {
 	}
 }
 
+func TestValidateDiskVolumeRejectsOwner(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "bad",
+	  "networks": { "n": { "subnet": "10.0.0.0/24" } },
+	  "services": {
+	    "a": { "networks": [{ "name": "n" }], "volumes": [
+	      { "type": "disk", "name": "data", "target": "/data", "size": "2G", "owner": "postgres" }
+	    ] }
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "owner only applies to share volumes") {
+		t.Errorf("want owner-on-disk error, got %v", err)
+	}
+}
+
 func TestValidateOverlappingSubnets(t *testing.T) {
 	cfg, err := Parse([]byte(`{
 	  "name": "bad",

@@ -49,6 +49,32 @@ func TestRenderGeneratedIncludesAbsoluteVolumeImage(t *testing.T) {
 	}
 }
 
+func TestRenderGeneratedIncludesShareOwnerHostIDs(t *testing.T) {
+	cfg := fixtureConfig()
+	st := mustStack(t, cfg)
+
+	db := st.Services["db"]
+	db.ShareOwners = map[string]ShareOwner{"db-data": {HostUID: 1000, HostGID: 100}}
+	st.Services["db"] = db
+
+	got, err := st.RenderGenerated()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"volumes": {`) {
+		t.Errorf("RenderGenerated() missing volumes object:\n%s", got)
+	}
+	if !strings.Contains(got, `"db-data": {`) {
+		t.Errorf("RenderGenerated() missing db-data volume entry:\n%s", got)
+	}
+	if !strings.Contains(got, `"hostUid": 1000`) {
+		t.Errorf("RenderGenerated() missing hostUid:\n%s", got)
+	}
+	if !strings.Contains(got, `"hostGid": 100`) {
+		t.Errorf("RenderGenerated() missing hostGid:\n%s", got)
+	}
+}
+
 func TestRenderGeneratedOmitsSSHPublicKeyWhenUnset(t *testing.T) {
 	cfg := fixtureConfig()
 	st := mustStack(t, cfg)

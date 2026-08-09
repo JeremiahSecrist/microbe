@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
@@ -91,6 +92,37 @@ func attachVolumeImages(dataDir string, cfg *config.Compose, st *flakegen.Stack)
 	return nil
 }
 
+// attachShareOwners populates each service's owner-translated share volumes
+// with their host directory's actual owning uid/gid, so renderer.nix can
+// pass it to virtiofsd's --translate-uid/--translate-gid (see
+// flakegen.ShareOwner). Only Go can determine this — the guest side of the
+// mapping is resolved entirely in renderer.nix from the guest's own user
+// database.
+func attachShareOwners(cfg *config.Compose, st *flakegen.Stack) error {
+	for name, svcCfg := range cfg.Services {
+		svc, ok := st.Services[name]
+		if !ok {
+			continue
+		}
+		for _, vol := range svcCfg.Volumes {
+			if vol.Type != "share" || vol.Owner == "" {
+				continue
+			}
+			fi, err := os.Stat(vol.Host)
+			if err != nil {
+				return fmt.Errorf("service %q: share %q: stat host path for owner translation: %w", name, vol.Name, err)
+			}
+			stat := fi.Sys().(*syscall.Stat_t)
+			if svc.ShareOwners == nil {
+				svc.ShareOwners = map[string]flakegen.ShareOwner{}
+			}
+			svc.ShareOwners[vol.Name] = flakegen.ShareOwner{HostUID: int(stat.Uid), HostGID: int(stat.Gid)}
+		}
+		st.Services[name] = svc
+	}
+	return nil
+}
+
 // defaultVolumeFsType is applied to disk volumes that don't specify one.
 const defaultVolumeFsType = "ext4"
 
@@ -113,6 +145,9 @@ func upRun(args []string, opts upOptions) error {
 	projectDir := filepath.Dir(opts.file)
 	dataDir := datadir.Dir(cfg.Name)
 	if err := attachVolumeImages(dataDir, cfg, st); err != nil {
+		return err
+	}
+	if err := attachShareOwners(cfg, st); err != nil {
 		return err
 	}
 

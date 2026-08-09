@@ -58,6 +58,21 @@ type Service struct {
 	// host, populated by the caller (up.go knows the CLI's base dir). Empty
 	// unless the service declares disk volumes.
 	VolumeImages map[string]string
+
+	// ShareOwners maps a share volume name (with Owner set) to its host
+	// directory's actual owning uid/gid, populated by the caller
+	// (up.go's attachShareOwners) so renderer.nix can pass it to
+	// virtiofsd's --translate-uid/--translate-gid.
+	ShareOwners map[string]ShareOwner
+}
+
+// ShareOwner is a share volume's host-directory owning uid/gid, computed
+// by internal/cmd/up.go's attachShareOwners (Go-only data, like
+// VolumeImages) so renderer.nix can pass it to virtiofsd's
+// --translate-uid/--translate-gid.
+type ShareOwner struct {
+	HostUID int
+	HostGID int
 }
 
 // Host is one /etc/hosts entry shared by every guest.

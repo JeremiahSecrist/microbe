@@ -45,10 +45,13 @@ func (st *Stack) RenderGenerated() (string, error) {
 			"networkd": networkd,
 			"taps":     taps,
 		}
-		if len(s.VolumeImages) > 0 {
+		if len(s.VolumeImages) > 0 || len(s.ShareOwners) > 0 {
 			volumes := map[string]any{}
 			for volName, path := range s.VolumeImages {
 				volumes[volName] = map[string]any{"image": path}
+			}
+			for volName, owner := range s.ShareOwners {
+				volumes[volName] = map[string]any{"hostUid": owner.HostUID, "hostGid": owner.HostGID}
 			}
 			svc["volumes"] = volumes
 		}

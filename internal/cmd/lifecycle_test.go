@@ -651,6 +651,54 @@ func TestUpRunStopsProcessOnHealthcheckFailure(t *testing.T) {
 	}
 }
 
+func TestAttachShareOwnersRecordsHostOwnership(t *testing.T) {
+	hostDir := t.TempDir()
+	cfg := &config.Compose{
+		Services: map[string]config.Service{
+			"a": {
+				Volumes: []config.Volume{
+					{Type: "share", Name: "data", Host: hostDir, Target: "/data", Owner: "postgres"},
+				},
+			},
+		},
+	}
+	st := &flakegen.Stack{Services: map[string]flakegen.Service{"a": {}}}
+
+	if err := attachShareOwners(cfg, st); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := st.Services["a"].ShareOwners["data"]
+	if !ok {
+		t.Fatal("ShareOwners[data] not recorded")
+	}
+	if got.HostUID != os.Getuid() || got.HostGID != os.Getgid() {
+		t.Errorf("ShareOwners[data] = %+v, want uid=%d gid=%d", got, os.Getuid(), os.Getgid())
+	}
+}
+
+// TestAttachShareOwnersSkipsSharesWithoutOwner proves a share with no
+// Owner set never gets stat'd — a nonexistent Host must not error when
+// translation isn't requested.
+func TestAttachShareOwnersSkipsSharesWithoutOwner(t *testing.T) {
+	cfg := &config.Compose{
+		Services: map[string]config.Service{
+			"a": {
+				Volumes: []config.Volume{
+					{Type: "share", Name: "data", Host: "/does/not/exist", Target: "/data"},
+				},
+			},
+		},
+	}
+	st := &flakegen.Stack{Services: map[string]flakegen.Service{"a": {}}}
+
+	if err := attachShareOwners(cfg, st); err != nil {
+		t.Fatalf("attachShareOwners with no owner set: %v", err)
+	}
+	if len(st.Services["a"].ShareOwners) != 0 {
+		t.Errorf("ShareOwners = %+v, want empty", st.Services["a"].ShareOwners)
+	}
+}
+
 func TestUpRunGeneratedNixHasAbsoluteVolumeImage(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()

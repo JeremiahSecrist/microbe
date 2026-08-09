@@ -54,6 +54,13 @@ type Volume struct {
 	Mode     string `json:"mode,omitempty"`
 	Protocol string `json:"protocol,omitempty"`
 	FsType   string `json:"fsType,omitempty"`
+
+	// Owner, when set on a share volume, is the guest username that should
+	// own the mounted files -- virtiofsd translates between this guest
+	// uid/gid (resolved from the guest's own NixOS user database, see
+	// renderer.nix) and whatever uid/gid actually owns Host on the CLI's
+	// host (see internal/cmd/up.go's attachShareOwners).
+	Owner string `json:"owner,omitempty"`
 }
 
 // Attach binds a Service to a Network, optionally pinning it to a static

@@ -35,8 +35,13 @@
         };
       };
 
+      # Folder-bind (virtiofs, the default volume type) instead of a qcow2
+      # disk -- no size to manage, host-visible files, no root needed.
+      # owner: postgres needs to actually own its StateDirectory; virtiofsd
+      # translates guest uid 71 (postgres) <-> whatever uid owns `host` on
+      # this machine.
       volumes = [
-        { type = "disk"; name = "db-data"; target = "/var/lib/postgresql"; size = "2G"; }
+        { name = "db-data"; host = "/home/sky/Documents/code/nix/iso/microbe-demo/pgdata"; target = "/var/lib/postgresql"; owner = "postgres"; }
       ];
 
       networks = [
@@ -45,7 +50,7 @@
 
       ports = [ "5432:5432" ];
 
-      healthcheck = { port = 5432; };
+      # healthcheck = { port = 5432; };
     };
 
     web = {

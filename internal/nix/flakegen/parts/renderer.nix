@@ -57,15 +57,44 @@
         autoCreate = false;
       }) (builtins.filter (v: volumeType v == "disk") svc.volumes));
 
-      shares = lib.optionals (svc ? volumes) (map (v: {
-        tag = v.name;
-        source = v.host or (throw "microbe: service '${svcName}': share '${v.name}' needs a host path");
-        mountPoint = v.target;
-        # cloud-hypervisor only supports virtiofs shares, not 9p (see
-        # config.load's applyDefaults comment) -- virtiofs is the default.
-        proto = v.protocol or "virtiofs";
-        readOnly = (v.mode or "rw") == "ro";
-      }) (builtins.filter (v: volumeType v == "share") svc.volumes));
+      shares = lib.optionals (svc ? volumes) (map (v:
+        {
+          tag = v.name;
+          source = v.host or (throw "microbe: service '${svcName}': share '${v.name}' needs a host path");
+          mountPoint = v.target;
+          # cloud-hypervisor only supports virtiofs shares, not 9p (see
+          # config.load's applyDefaults comment) -- virtiofs is the default.
+          proto = v.protocol or "virtiofs";
+          readOnly = (v.mode or "rw") == "ro";
+        }
+        # v.owner: translate this share's files to appear owned by that
+        # guest user (resolved from the guest's own user database) instead
+        # of whatever uid virtiofsd itself runs as -- needed for anything
+        # that wants a fixed system uid to actually own its data (e.g.
+        # postgres's StateDirectory=). See internal/cmd/up.go's
+        # attachShareOwners for the host side of the mapping.
+        // lib.optionalAttrs (v ? owner) (
+          let
+            guestUser = config.users.users.${v.owner}
+              or (throw "microbe: service '${svcName}': share '${v.name}': no such guest user '${v.owner}' (declare it in this service's config, e.g. via the service module that owns it)");
+            guestUid = guestUser.uid
+              or (throw "microbe: service '${svcName}': share '${v.name}': guest user '${v.owner}' has no static uid (DynamicUser?)");
+            guestGid = config.users.groups.${guestUser.group}.gid
+              or (throw "microbe: service '${svcName}': share '${v.name}': guest group '${guestUser.group}' has no static gid");
+            hostUid = gen.volumes.${v.name}.hostUid
+              or (throw "microbe: service '${svcName}': no generated host uid for share '${v.name}'");
+            hostGid = gen.volumes.${v.name}.hostGid
+              or (throw "microbe: service '${svcName}': no generated host gid for share '${v.name}'");
+          in {
+            # --translate-uid/--translate-gid can't be combined with posix ACLs.
+            posixAcl = false;
+            extraArgs = [
+              "--translate-uid" "map:${toString guestUid}:${toString hostUid}:1"
+              "--translate-gid" "map:${toString guestGid}:${toString hostGid}:1"
+            ];
+          }
+        )
+      ) (builtins.filter (v: volumeType v == "share") svc.volumes));
 
       # One tap interface per attached network; id is the host-side tap name the
       # CLI creates (spec 8.2), resolved from generated.json so both sides agree.
