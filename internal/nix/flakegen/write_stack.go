@@ -32,6 +32,13 @@ func WriteStack(dir string, st *Stack) error {
 	for name, content := range mods {
 		files["parts/"+name] = content
 	}
+	agentFiles, err := AgentSource()
+	if err != nil {
+		return fmt.Errorf("write stack: %w", err)
+	}
+	for name, content := range agentFiles {
+		files["agent/"+name] = content
+	}
 	for _, name := range st.Names() {
 		files["parts/"+name+".nix"] = ServicePart(name)
 	}

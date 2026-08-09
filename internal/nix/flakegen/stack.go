@@ -39,10 +39,6 @@ type Stack struct {
 	// Internal marks which networks are airgapped from outbound access
 	// (config.Network.Internal), keyed by network name.
 	Internal map[string]bool
-
-	// SSHPublicKey, if set, is authorized for root in every guest (see
-	// guest-base.nix) so `microbe exec`/`microbe shell` can reach them.
-	SSHPublicKey string
 }
 
 type Service struct {

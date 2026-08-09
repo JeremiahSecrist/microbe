@@ -16,10 +16,8 @@ import (
 	"microbe/internal/hostnet"
 	"microbe/internal/nix"
 	"microbe/internal/nix/flakegen"
-	"microbe/internal/cmdrun"
 	"microbe/internal/provisiond"
 	"microbe/internal/runtime"
-	"microbe/internal/sshkey"
 	"microbe/internal/state"
 )
 
@@ -64,10 +62,6 @@ var (
 
 	stopService = func(ctx context.Context, pid int, grace time.Duration) error {
 		return runtime.StopService(ctx, pid, grace)
-	}
-
-	ensureSSHKeypair = func(run cmdrun.Runner, dir string) (privPath, pubKey string, err error) {
-		return sshkey.EnsureKeypair(run, dir)
 	}
 
 	vmState = chapi.VMState

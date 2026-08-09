@@ -6,16 +6,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newShellCmd is `exec <service>` with no trailing command: ssh opens an
-// interactive login shell when given none (incus's `shell` alias is the
-// same idea — `exec @ARGS@ -- su -l`, here just riding ssh's own default).
+// newShellCmd is `exec <service>` with no command and a pty: a real
+// interactive login shell (incus's `shell` alias is the same idea --
+// `exec @ARGS@ -- su -l`), unlike `exec`, which never allocates one.
 func newShellCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "shell <service>",
 		Short: "Open an interactive shell in a service",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return execRun(execOptions{
+			return shellRun(execOptions{
 				file:    file,
 				service: args[0],
 				stdin:   os.Stdin,
@@ -24,4 +24,12 @@ func newShellCmd() *cobra.Command {
 			})
 		},
 	}
+}
+
+func shellRun(opts execOptions) error {
+	udsPath, err := resolveGuestVsock(opts.file, opts.service)
+	if err != nil {
+		return err
+	}
+	return runAgentSession(udsPath, nil, true, opts.stdin, opts.stdout, opts.stderr)
 }

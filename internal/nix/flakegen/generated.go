@@ -71,9 +71,6 @@ func (st *Stack) RenderGenerated() (string, error) {
 		services[name] = svc
 	}
 	root := map[string]any{"services": services}
-	if st.SSHPublicKey != "" {
-		root["sshPublicKey"] = st.SSHPublicKey
-	}
 	out, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("render generated: %w", err)

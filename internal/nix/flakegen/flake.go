@@ -48,6 +48,7 @@ in
       config.flake.nixosModules.renderer
       config.flake.nixosModules.guest-base
       config.flake.nixosModules.virtiofsd-run
+      config.flake.nixosModules.agent
       { microCompose.serviceName = ` + q + `; }
       (compose.services.` + name + `.config or ({ ... }: { }))
     ];

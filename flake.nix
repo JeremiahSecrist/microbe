@@ -15,15 +15,23 @@
       pkgs = nixpkgs.legacyPackages.${system};
 
       # The microbe CLI, built from this repo. Dependencies are vendored in
-      # ./vendor (vendorHash = null).
+      # ./vendor (vendorHash = null). microbe-demo/ is excluded: it's a
+      # sample compose project living inside this repo for dogfooding, and
+      # `microbe up`/`build` there writes real files into it (flake.nix,
+      # generated.json, agent/{go.mod,main.go} -- see internal/nix/flakegen's
+      # WriteStack). Once agent/go.mod exists on disk it's a second Go
+      # module nested in the source tree, which buildGoModule's subpackage
+      # discovery doesn't skip the way plain `go build ./...` does, so
+      # without this filter the CLI's own build breaks the moment the demo
+      # gets built once.
       microbePkg = pkgs.buildGoModule {
         pname = "microbe";
         version = "0.1.0";
-        src = ./.;
+        src = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter = path: _type: !pkgs.lib.hasPrefix (toString ./microbe-demo) path;
+        };
         vendorHash = null;
-        # ssh-keygen: internal/sshkey's tests generate a real throwaway
-        # keypair (no fake for a binary this cheap to actually run).
-        nativeCheckInputs = [ pkgs.openssh ];
       };
 
       # The ISO image is built from this configuration. It is the intended

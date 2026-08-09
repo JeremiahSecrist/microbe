@@ -21,9 +21,12 @@ func TestWriteStackWritesAllArtifacts(t *testing.T) {
 		"parts/renderer.nix",
 		"parts/guest-base.nix",
 		"parts/virtiofsd-run.nix",
+		"parts/agent.nix",
 		"parts/db.nix",
 		"parts/jump.nix",
 		"parts/web.nix",
+		"agent/go.mod",
+		"agent/main.go",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 			t.Errorf("missing artifact %s: %v", f, err)

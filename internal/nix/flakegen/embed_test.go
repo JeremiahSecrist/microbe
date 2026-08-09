@@ -10,7 +10,7 @@ func TestFixedModulesEmbedded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"renderer.nix", "guest-base.nix", "virtiofsd-run.nix"} {
+	for _, name := range []string{"renderer.nix", "guest-base.nix", "virtiofsd-run.nix", "agent.nix"} {
 		content, ok := mods[name]
 		if !ok {
 			t.Errorf("missing fixed module %q", name)
@@ -90,13 +90,45 @@ func TestGuestBaseNixHasRequiredMarkers(t *testing.T) {
 	}
 	for _, marker := range []string{
 		"flake.nixosModules.guest-base",
-		"services.openssh",
 		"microvm.optimize.enable",
-		"builtins.fromJSON (builtins.readFile ../generated.json)",
-		"users.users.root.openssh.authorizedKeys.keys",
+		"networking.firewall.enable",
 	} {
 		if !strings.Contains(content, marker) {
 			t.Errorf("guest-base.nix missing marker %q", marker)
 		}
+	}
+}
+
+func TestAgentNixHasRequiredMarkers(t *testing.T) {
+	content, err := FixedModule("agent.nix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{
+		"flake.nixosModules.agent",
+		"pkgs.buildGoModule",
+		"src = ../agent",
+		"vendorHash = null",
+		"systemd.services.microbe-agent",
+	} {
+		if !strings.Contains(content, marker) {
+			t.Errorf("agent.nix missing marker %q", marker)
+		}
+	}
+}
+
+func TestAgentSourceEmbedded(t *testing.T) {
+	files, err := AgentSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"go.mod", "main.go"} {
+		content, ok := files[name]
+		if !ok || content == "" {
+			t.Errorf("AgentSource() missing or empty %q", name)
+		}
+	}
+	if !strings.Contains(files["go.mod"], "module microbe-agent") {
+		t.Errorf("agent go.mod missing module declaration:\n%s", files["go.mod"])
 	}
 }

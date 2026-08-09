@@ -81,7 +81,6 @@ in
       environment.systemPackages = [
         pkgs.qemu-utils # qemu-img for VM volume images
         pkgs.e2fsprogs # mkfs.ext4 to format them (EnsureVolume, unprivileged)
-        pkgs.openssh # ssh-keygen (up.go) + ssh (exec/shell) to reach guests
       ] ++ optionals (cfg.package != null) [ cfg.package ];
 
       users.groups.microbe = { };
@@ -90,8 +89,8 @@ in
         extraGroups = [ "microbe" "kvm" ];
       });
 
-      # Daemon-owned data dir (state.json, ssh keys, volumes, logs, VM run
-      # sockets), one subdir per stack name — mirrors /var/lib/docker.
+      # Daemon-owned data dir (state.json, volumes, logs, VM run sockets),
+      # one subdir per stack name — mirrors /var/lib/docker.
       # Setgid + group microbe so unprivileged group members can create
       # their stack's subdir themselves; no daemon round-trip needed for
       # plain file I/O, matching the existing group-membership trust model.
