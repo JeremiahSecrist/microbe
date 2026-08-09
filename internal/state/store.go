@@ -40,6 +40,12 @@ type Store struct {
 	Networks map[string]NetworkState `json:"networks"`
 	Services map[string]ServiceState `json:"services"`
 	Ports    map[string]PortState    `json:"ports"`
+
+	// Provisioned records the host interface devices (bridges and taps)
+	// microbe has created for this stack, so `down` can sweep any that the
+	// current config no longer names (spec §8.6 orphan sweep). Exact names
+	// only: hashed br-*/mvc-* names can't be attributed by prefix alone.
+	Provisioned []string `json:"provisioned,omitempty"`
 }
 
 // Load reads the store from path. A missing file yields an empty store, never

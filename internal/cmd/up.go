@@ -18,6 +18,7 @@ import (
 	"microbe/internal/nix/flakegen"
 	"microbe/internal/provisiond"
 	"microbe/internal/runtime"
+	"microbe/internal/state"
 )
 
 func newUpCmd() *cobra.Command {
@@ -341,6 +342,18 @@ func upRun(args []string, opts upOptions) error {
 	if !opts.dryRun {
 		p.Done()
 		store := buildStore(cfg, st, pids, virtiofsdPIDs, statuses, filepath.Join(dataDir, "runners"))
+		prev, err := state.Load(filepath.Join(dataDir, "state.json"))
+		if err != nil {
+			return err
+		}
+		if opts.noProvision {
+			store.Provisioned = prev.Provisioned
+		} else {
+			// Accumulate: a partial `up db` only provisions db's taps, but a
+			// later full down must still be able to sweep services a prior
+			// full up provisioned.
+			store.Provisioned = dedupeNames(append(prev.Provisioned, provisionedDeviceNames(cfg, st, selected)...))
+		}
 		if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 			return err
 		}

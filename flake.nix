@@ -14,8 +14,9 @@
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
 
-      # The microbe CLI, built from this repo. Dependencies are vendored in
-      # ./vendor (vendorHash = null). microbe-demo/ is excluded: it's a
+      # The microbe CLI, built from this repo. Dependencies are fetched from
+      # the go module proxy into the nix store at build time (see vendorHash),
+      # not committed under ./vendor. microbe-demo/ is excluded: it's a
       # sample compose project living inside this repo for dogfooding, and
       # `microbe up`/`build` there writes real files into it (flake.nix,
       # generated.json, agent/{go.mod,main.go} -- see internal/nix/flakegen's
@@ -31,7 +32,7 @@
           src = ./.;
           filter = path: _type: !pkgs.lib.hasPrefix (toString ./microbe-demo) path;
         };
-        vendorHash = null;
+        vendorHash = "sha256-xUewHRIi0qXOobWIRE5fQ9ZJIRDrYJJeNrVQZYIPtAo=";
       };
 
       # The ISO image is built from this configuration. It is the intended

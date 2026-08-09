@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	"github.com/spf13/cobra"
@@ -141,6 +143,43 @@ func downRun(args []string, opts downOptions) error {
 	}
 	if err := teardownHost(opts.ops, st.Name, nets, taps, ports); err != nil {
 		return err
+	}
+
+	// Sweep orphaned devices: any interface this stack may have provisioned
+	// (recorded in state, or reconstructible from config+state names) that
+	// this run's teardown isn't already removing and no staying-up service
+	// still needs. Exact-name deletion only — hashed br-*/mvc-* names can't
+	// be attributed by prefix, so nothing here is ever guessed from the host.
+	planned := map[string]bool{}
+	for _, net := range nets {
+		planned[hostnet.BridgeName(st.Name, net.Name)] = true
+	}
+	for _, tap := range taps {
+		planned[tap.Name] = true
+	}
+	retained := map[string]bool{}
+	for _, name := range retainedDeviceNames(cfg, st, store, selected) {
+		retained[name] = true
+	}
+	candidates := append(stackDeviceNames(cfg, st, store), store.Provisioned...)
+	var orphans []string
+	for _, name := range dedupeNames(candidates) {
+		if !planned[name] && !retained[name] {
+			orphans = append(orphans, name)
+		}
+	}
+	if len(orphans) > 0 {
+		if err := sweepOrphanLinks(opts.ops, orphans); err != nil {
+			return err
+		}
+		for _, name := range orphans {
+			fmt.Fprintf(opts.out, "sweeping orphaned link %s\n", name)
+		}
+	}
+	if !opts.dryRun {
+		// After teardown + sweep, the only devices left owned are the ones
+		// non-selected services still need.
+		store.Provisioned = dedupeNames(slices.Collect(maps.Keys(retained)))
 	}
 
 	if opts.removeVolumes {

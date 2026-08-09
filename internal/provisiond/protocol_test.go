@@ -11,14 +11,15 @@ import (
 
 // fakeOps records the arguments each Ops method receives and returns err.
 type fakeOps struct {
-	ensureNets   []hostnet.NetSpec
-	ensureTaps   []hostnet.TapSpec
-	applyPorts   []hostnet.PortSpec
-	teardownNets []hostnet.NetSpec
-	teardownTaps []hostnet.TapSpec
-	teardownPts  []hostnet.PortSpec
-	stack        string
-	err          error
+	ensureNets    []hostnet.NetSpec
+	ensureTaps    []hostnet.TapSpec
+	applyPorts    []hostnet.PortSpec
+	teardownNets  []hostnet.NetSpec
+	teardownTaps  []hostnet.TapSpec
+	teardownPts   []hostnet.PortSpec
+	teardownLinks []string
+	stack         string
+	err           error
 }
 
 func (f *fakeOps) EnsureNetworks(stack string, nets []hostnet.NetSpec) error {
@@ -43,6 +44,10 @@ func (f *fakeOps) TeardownTaps(taps []hostnet.TapSpec) error {
 }
 func (f *fakeOps) TeardownPorts(ports []hostnet.PortSpec) error {
 	f.teardownPts = ports
+	return f.err
+}
+func (f *fakeOps) TeardownLinks(links []string) error {
+	f.teardownLinks = links
 	return f.err
 }
 
@@ -119,6 +124,7 @@ func TestDispatchTeardown(t *testing.T) {
 		{MethodTeardownNetworks, Request{Method: MethodTeardownNetworks, Stack: "s", Nets: nets}},
 		{MethodTeardownTaps, Request{Method: MethodTeardownTaps, Taps: taps}},
 		{MethodTeardownPorts, Request{Method: MethodTeardownPorts, Ports: ports}},
+		{MethodTeardownLinks, Request{Method: MethodTeardownLinks, Links: []string{"br-x", "mvc-y"}}},
 	}
 	for _, c := range cases {
 		var buf bytes.Buffer
@@ -137,6 +143,9 @@ func TestDispatchTeardown(t *testing.T) {
 	}
 	if !reflect.DeepEqual(ops.teardownPts, ports) {
 		t.Errorf("TeardownPorts = %v", ops.teardownPts)
+	}
+	if !reflect.DeepEqual(ops.teardownLinks, []string{"br-x", "mvc-y"}) {
+		t.Errorf("TeardownLinks = %v", ops.teardownLinks)
 	}
 }
 

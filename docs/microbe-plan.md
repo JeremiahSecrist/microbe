@@ -390,11 +390,36 @@ microvm.shares += {
 | each attach | tap `mvc-<stack>-<svc>-<N>` | created `up`, removed `down` |
 | `ports` | nftables DNAT `<hostPort> → <guest ip>:<guestPort>` | created `up`, removed `down` |
 
+- **Provisioning record**: `up` appends every created bridge/tap to
+  `state.json`'s `provisioned` field (`json:"provisioned"`). `down` also
+  *culls orphaned links*: after tearing down a selected service, any
+  recorded device neither in the current config nor on a service staying up
+  is deleted (best-effort, exact-name) via the daemon's `teardown_links`
+  RPC, and swept names drop out of `provisioned`. This cleans leftovers from
+  earlier aborted runs.
 - **IP allocation**: CLI assigns static IPs deterministically — read
   `state.json`; if absent, next free host from `.2` upward, persisted. A
   restarted stack keeps the same IPs.
 - **MAC allocation**: `02:00:00:00:00:<2-hex>`, unique per interface across
   the stack, persisted in `generated.nix`/`state.json`.
+
+### 8.6.1 `microbe purge`
+
+Docker-style convergence/hammer command family, scoped to the current stack
+unless `--all` widens it host-wide across every `/var/lib/microbe/<stack>`:
+
+- bare `purge` (and `purge networks`/`nets`): deletes recorded bridges/taps
+  that neither the *current config* names nor a **live VM** is attached to
+  (live = recorded PID or an answering cloud-hypervisor API socket). State
+  drops the swept names.
+- `purge vms`: stops recorded PIDs (+ virtiofsd companions), then finds
+  **unrecorded** VMMs — a service whose state lost its PID but whose socket
+  still answers vm — by matching `/proc/*/cmdline` for `cloud-hypervisor
+  --api-socket`, scoped to the invoking user.
+- `purge volumes`/`vols`: removes the on-disk disk images a stack's services
+  declare and clears their state (like `rm`), with a confirmation prompt.
+- `purge all`: host-wide network sweep + VM purge (confirmation prompt; `-f`
+  skips prompts; `--dry-run` prints without mutating).
 
 ### 8.7 Ordering & health
 

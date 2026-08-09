@@ -115,6 +115,18 @@ func (NetOps) TeardownTaps(taps []hostnet.TapSpec) error {
 	return nil
 }
 
+// TeardownLinks deletes links by exact name. Best-effort, and safe when the
+// device no longer exists: it is how microbe sweeps orphaned devices without
+// enumerating the host's interfaces by fragile prefix matching (hashed names
+// collide with Docker's br-* scheme, so a name is only ever trusted here
+// because it was recorded at provisioning time or derived from state.json).
+func (NetOps) TeardownLinks(links []string) error {
+	for _, name := range links {
+		_ = delLinkByName(name)
+	}
+	return nil
+}
+
 func delLinkByName(name string) error {
 	link, err := netlink.LinkByName(name)
 	if err != nil {

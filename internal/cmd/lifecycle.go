@@ -44,6 +44,12 @@ var (
 		return ops.TeardownNetworks(stack, nets)
 	}
 
+	// sweepOrphanLinks deletes devices by exact name through the daemon.
+	// It is the seam down's orphan sweep calls; tests substitute a recorder.
+	sweepOrphanLinks = func(ops provisiond.Ops, links []string) error {
+		return ops.TeardownLinks(links)
+	}
+
 	buildRunner = func(dir, svc, outLink string) (string, error) {
 		return nix.BuildRunner(dir, svc, outLink)
 	}
@@ -158,6 +164,13 @@ func (p printOps) TeardownPorts(ports []hostnet.PortSpec) error {
 	return nil
 }
 
+func (p printOps) TeardownLinks(links []string) error {
+	for _, name := range links {
+		fmt.Fprintf(p.out, "teardown orphaned link %s\n", name)
+	}
+	return nil
+}
+
 // parsePort parses a "host:guest" port mapping.
 func parsePort(portMapping string) (host, guest int, err error) {
 	parts := strings.Split(portMapping, ":")
@@ -233,6 +246,141 @@ func netSpecsForTeardown(st *flakegen.Stack, selected []string) []hostnet.NetSpe
 	return specs
 }
 
+// dedupeNames returns names sorted, de-duplicated, and empty-string-free.
+func dedupeNames(names []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range names {
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// provisionedDeviceNames returns the device names upRun is about to ensure:
+// every bridge (networks are provisioned regardless of service selection) plus
+// the taps for exactly the selected services.
+func provisionedDeviceNames(cfg *config.Compose, st *flakegen.Stack, selected []string) []string {
+	var names []string
+	for _, net := range netSpecs(st) {
+		names = append(names, hostnet.BridgeName(st.Name, net.Name))
+	}
+	for _, tap := range tapSpecs(cfg, st, selected) {
+		names = append(names, tap.Name)
+	}
+	return dedupeNames(names)
+}
+
+// currentConfigDeviceNames returns the devices the current compose file
+// names: every bridge for a config network plus every service's tap. Unlike
+// stackDeviceNames, it ignores state-only names, so purge can distinguish
+// "the config wants this" from "state remembers an old leftover".
+func currentConfigDeviceNames(cfg *config.Compose, st *flakegen.Stack) []string {
+	if st == nil {
+		return nil
+	}
+	var names []string
+	for _, net := range netSpecs(st) {
+		names = append(names, hostnet.BridgeName(st.Name, net.Name))
+	}
+	for _, tap := range tapSpecs(cfg, st, st.Names()) {
+		names = append(names, tap.Name)
+	}
+	return dedupeNames(names)
+}
+
+// aliveDeviceNames returns the bridges and taps a service recorded in state
+// is currently attached to: a positive PID, or an api socket that answers a
+// vm. These devices must survive a purge even if the compose file stopped
+// naming their networks, because a running VM is still using them.
+func aliveDeviceNames(store *state.Store, stack, base string) []string {
+	var names []string
+	for name, svc := range store.Services {
+		alive := svc.PID > 0
+		if !alive {
+			if chState, err := vmState(vmSocketPath(base, name)); err == nil && chState != "" {
+				alive = true
+			}
+		}
+		if !alive {
+			continue
+		}
+		for net := range svc.IP {
+			names = append(names, hostnet.BridgeName(stack, net))
+			names = append(names, flakegen.TapID(stack, name, net))
+		}
+	}
+	return dedupeNames(names)
+}
+
+// stackDeviceNames returns every device name the stack may have provisioned,
+// reconstructed from both the current config and the persisted state. Names
+// are deterministic from (stack, network) and (stack, service, network), so
+// renaming or dropping a network/service in the config doesn't lose the old
+// device: state.json's Networks keys and per-service IP keys still name them.
+func stackDeviceNames(cfg *config.Compose, st *flakegen.Stack, store *state.Store) []string {
+	var names []string
+	for _, net := range netSpecs(st) {
+		names = append(names, hostnet.BridgeName(st.Name, net.Name))
+	}
+	for _, tap := range tapSpecs(cfg, st, st.Names()) {
+		names = append(names, tap.Name)
+	}
+	return dedupeNames(append(names, storeDeviceNames(store, st.Name)...))
+}
+
+// storeDeviceNames reconstructs device names from state alone, without a
+// config: every network in store.Networks as a bridge, plus each service's
+// tap per network from its IP keys. Used by host-wide purge for stacks whose
+// compose file microbe isn't currently pointed at.
+func storeDeviceNames(store *state.Store, stack string) []string {
+	var names []string
+	for net := range store.Networks {
+		names = append(names, hostnet.BridgeName(stack, net))
+	}
+	for name, svc := range store.Services {
+		for net := range svc.IP {
+			names = append(names, flakegen.TapID(stack, name, net))
+		}
+	}
+	return dedupeNames(names)
+}
+
+// retainedDeviceNames returns the devices a down of exactly `selected` must
+// leave alone: everything a service staying up (in config or, defensively,
+// in state) still attaches to. Tearing these down would yank the network out
+// from under a VM that isn't part of this run.
+func retainedDeviceNames(cfg *config.Compose, st *flakegen.Stack, store *state.Store, selected []string) []string {
+	isSelected := map[string]bool{}
+	for _, name := range selected {
+		isSelected[name] = true
+	}
+	var names []string
+	for name, svc := range st.Services {
+		if isSelected[name] {
+			continue
+		}
+		for _, net := range svc.Networks {
+			names = append(names, hostnet.BridgeName(st.Name, net))
+			names = append(names, flakegen.TapID(st.Name, name, net))
+		}
+	}
+	for name, svc := range store.Services {
+		if isSelected[name] {
+			continue
+		}
+		for net := range svc.IP {
+			names = append(names, hostnet.BridgeName(st.Name, net))
+			names = append(names, flakegen.TapID(st.Name, name, net))
+		}
+	}
+	return dedupeNames(names)
+}
+
 // svcNetPair identifies one service's attachment to one network.
 type svcNetPair struct{ service, network string }
 
@@ -275,7 +423,7 @@ func tapSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) []host
 			Bridge:     hostnet.BridgeName(st.Name, pair.network),
 			Owner:      os.Getuid(),
 			Group:      os.Getgid(),
-			MultiQueue: cfg.Services[pair.service].VCPUs > 1,
+			MultiQueue: cfg != nil && cfg.Services[pair.service].VCPUs > 1,
 		})
 	}
 	return specs

@@ -69,6 +69,7 @@ func TestClientRoundTripTeardown(t *testing.T) {
 	nets := []hostnet.NetSpec{{Name: "frontend", Gateway: "192.168.50.1", Prefix: 24}}
 	taps := []hostnet.TapSpec{{Name: "mvc-web", Bridge: "br-x"}}
 	ports := []hostnet.PortSpec{{HostPort: 8080, GuestIP: "1.2.3.4", GuestPort: 80}}
+	links := []string{"br-stale", "mvc-stale"}
 
 	if err := c.TeardownNetworks("s", nets); err != nil {
 		t.Fatal(err)
@@ -77,6 +78,9 @@ func TestClientRoundTripTeardown(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := c.TeardownPorts(ports); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.TeardownLinks(links); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,6 +92,9 @@ func TestClientRoundTripTeardown(t *testing.T) {
 	}
 	if !reflect.DeepEqual(ops.teardownPts, ports) {
 		t.Errorf("TeardownPorts = %v", ops.teardownPts)
+	}
+	if !reflect.DeepEqual(ops.teardownLinks, links) {
+		t.Errorf("TeardownLinks = %v", ops.teardownLinks)
 	}
 }
 

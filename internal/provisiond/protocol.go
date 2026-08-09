@@ -27,6 +27,7 @@ const (
 	MethodTeardownNetworks Method = "teardown_networks"
 	MethodTeardownTaps     Method = "teardown_taps"
 	MethodTeardownPorts    Method = "teardown_ports"
+	MethodTeardownLinks    Method = "teardown_links"
 )
 
 // Request is one RPC sent over the socket. Exactly one of the payload fields
@@ -37,6 +38,7 @@ type Request struct {
 	Nets   []hostnet.NetSpec  `json:"nets,omitempty"`
 	Taps   []hostnet.TapSpec  `json:"taps,omitempty"`
 	Ports  []hostnet.PortSpec `json:"ports,omitempty"`
+	Links  []string           `json:"links,omitempty"`
 }
 
 // Response is the daemon's reply. Error is empty on success.
@@ -53,6 +55,9 @@ type Ops interface {
 	TeardownNetworks(stack string, nets []hostnet.NetSpec) error
 	TeardownTaps(taps []hostnet.TapSpec) error
 	TeardownPorts(ports []hostnet.PortSpec) error
+	// TeardownLinks deletes links by exact name. Used to sweep orphaned
+	// devices recorded in state.json that no current config still names.
+	TeardownLinks(links []string) error
 }
 
 // dispatch runs a request against ops and writes the response to w.
@@ -71,6 +76,8 @@ func dispatch(w io.Writer, ops Ops, req Request) error {
 		err = ops.TeardownTaps(req.Taps)
 	case MethodTeardownPorts:
 		err = ops.TeardownPorts(req.Ports)
+	case MethodTeardownLinks:
+		err = ops.TeardownLinks(req.Links)
 	default:
 		err = fmt.Errorf("provisiond: unknown method %q", req.Method)
 	}

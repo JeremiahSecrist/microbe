@@ -242,6 +242,7 @@ func (f *fakeOps) ApplyPorts(ports []hostnet.PortSpec) error {
 func (f *fakeOps) TeardownNetworks(stack string, nets []hostnet.NetSpec) error { return nil }
 func (f *fakeOps) TeardownTaps(taps []hostnet.TapSpec) error                   { return nil }
 func (f *fakeOps) TeardownPorts(ports []hostnet.PortSpec) error                { return nil }
+func (f *fakeOps) TeardownLinks(links []string) error                          { return nil }
 
 func recordHost(hr *hostRecorder, events *[]string, tag string) func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
 	return func(_ provisiond.Ops, stack string, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
@@ -1144,6 +1145,164 @@ func TestDownRunWarnsOnUntrackedLiveVM(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "db") || !strings.Contains(buf.String(), "untracked") {
 		t.Errorf("output = %q, want a warning naming db as an untracked live VM", buf.String())
+	}
+}
+
+// TestDownRunSweepsOrphanedLinks is the red-green gate for the orphan sweep:
+// devices microbe created for a network/service that the current config no
+// longer names (here: a legacy network and two recorded-but-now-unknown
+// names) must be deleted by exact name through a teardown-links call, and the
+// surviving state must no longer record them.
+func tapNames(cfg *config.Compose, st *flakegen.Stack, names []string) []string {
+	var out []string
+	for _, tap := range tapSpecs(cfg, st, names) {
+		out = append(out, tap.Name)
+	}
+	return out
+}
+
+func TestDownRunSweepsOrphanedLinks(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
+
+	legacyBridge := hostnet.BridgeName("test-net", "legacy-net")
+	store := &state.Store{
+		Stack: "test-net",
+		Networks: map[string]state.NetworkState{
+			"backend":    {CIDR: "192.168.51.0/24"},
+			"frontend":   {CIDR: "192.168.50.0/24"},
+			"legacy-net": {CIDR: "192.168.99.0/24"},
+		},
+		Services: map[string]state.ServiceState{
+			"db":  {Status: "running", PID: 1000},
+			"web": {Status: "running", PID: 2000},
+		},
+		// Recorded from an even older config than the one in the store above.
+		Provisioned: []string{"br-ancient", legacyBridge, "mvc-dead"},
+	}
+	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	var swept []string
+	origTeardown, origStop, origSweep := teardownHost, stopService, sweepOrphanLinks
+	teardownHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
+	stopService = func(context.Context, int, time.Duration) error { return nil }
+	sweepOrphanLinks = func(_ provisiond.Ops, links []string) error {
+		swept = links
+		return nil
+	}
+	defer func() {
+		teardownHost, stopService, sweepOrphanLinks = origTeardown, origStop, origSweep
+	}()
+
+	var buf bytes.Buffer
+	if err := downRun(nil, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The stale bridge (legacy net not in the config) and the two phantom
+	// recorded devices are orphans. The current config's bridges/taps are
+	// handled by teardownHost and must NOT appear here.
+	want := []string{legacyBridge, "br-ancient", "mvc-dead"}
+	if !reflect.DeepEqual(swept, want) {
+		t.Errorf("swept links = %v, want %v", swept, want)
+	}
+
+	got, err := state.Load(filepath.Join(dataDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Provisioned) != 0 {
+		t.Errorf("Provisioned after full down = %v, want empty", got.Provisioned)
+	}
+}
+
+func TestDownRunKeepsLinksForStayingServices(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
+	cfg, st := loadStack(t, cfgPath)
+
+	back := hostnet.BridgeName("test-net", "backend")
+	front := hostnet.BridgeName("test-net", "frontend")
+	store := &state.Store{
+		Stack: "test-net",
+		Networks: map[string]state.NetworkState{
+			"backend":  {CIDR: "192.168.51.0/24"},
+			"frontend": {CIDR: "192.168.50.0/24"},
+		},
+		Services: map[string]state.ServiceState{
+			"db":  {IP: map[string]string{"backend": "192.168.51.2"}, Status: "running", PID: 1000},
+			"web": {IP: map[string]string{"backend": "192.168.51.3", "frontend": "192.168.50.3"}, Status: "running", PID: 2000},
+		},
+		Provisioned: dedupeNames(append([]string{back, front},
+			tapNames(cfg, st, st.Names())...)),
+	}
+	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	var swept []string
+	origTeardown, origStop, origSweep := teardownHost, stopService, sweepOrphanLinks
+	teardownHost = func(_ provisiond.Ops, _ string, _ []hostnet.NetSpec, _ []hostnet.TapSpec, _ []hostnet.PortSpec) error { return nil }
+	stopService = func(_ context.Context, _ int, _ time.Duration) error { return nil }
+	sweepOrphanLinks = func(_ provisiond.Ops, links []string) error { swept = links; return nil }
+	defer func() {
+		teardownHost, stopService, sweepOrphanLinks = origTeardown, origStop, origSweep
+	}()
+
+	var buf bytes.Buffer
+	// Bring only web down: db stays up, so db's backend bridge and tap must
+	// survive the orphan sweep.
+	if err := downRun([]string{"web"}, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(swept) != 0 {
+		t.Errorf("swept links = %v, want none (db's devices must survive)", swept)
+	}
+	got, err := state.Load(filepath.Join(dataDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := dedupeNames(append([]string{back, flakegen.TapID("test-net", "db", "backend")},
+		tapNames(cfg, st, []string{"db"})...))
+	if !reflect.DeepEqual(got.Provisioned, want) {
+		t.Errorf("Provisioned after partial down = %v, want %v (only db's devices)", got.Provisioned, want)
+	}
+}
+
+func TestUpRunRecordsProvisioned(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
+	cfg, st := loadStack(t, cfgPath)
+
+	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
+	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
+	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	defer func() {
+		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
+	}()
+
+	var buf bytes.Buffer
+	if err := upRun(nil, upOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := provisionedDeviceNames(cfg, st, st.Names())
+	store, err := state.Load(filepath.Join(dataDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(store.Provisioned, want) {
+		t.Errorf("Provisioned = %v, want %v", store.Provisioned, want)
 	}
 }
 

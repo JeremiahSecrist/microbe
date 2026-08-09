@@ -5,6 +5,8 @@
 /bin/
 *.test
 coverage.out
+/vendor/
 
 # microbe runtime artifacts
 /.microbe/
+/microvm.sock.lock

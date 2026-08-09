@@ -75,3 +75,8 @@ func (c *Client) TeardownTaps(taps []hostnet.TapSpec) error {
 func (c *Client) TeardownPorts(ports []hostnet.PortSpec) error {
 	return c.call(Request{Method: MethodTeardownPorts, Ports: ports})
 }
+
+// TeardownLinks asks the daemon to delete links by exact name (best-effort).
+func (c *Client) TeardownLinks(links []string) error {
+	return c.call(Request{Method: MethodTeardownLinks, Links: links})
+}
