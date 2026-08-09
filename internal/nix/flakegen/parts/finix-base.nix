@@ -55,6 +55,57 @@
       config = {
         boot.kernelParams = [ "console=ttyS0" ];
 
+        # finix has no default root filesystem -- unlike NixOS, nothing
+        # forces fileSystems."/" to exist. Without it, no fs ever has
+        # mountPoint "/", so filesystems/options.nix's neededForBoot-forcing
+        # (pathsNeededForBoot includes "/") never fires, /sysroot is never
+        # mounted, and stage-1's switch-root task (finit/initrd.nix) silently
+        # takes its "not a mountpoint" failure branch -- printing "rescue
+        # shell is disabled / rebooting in 10s" and rebooting, with no
+        # further diagnostic. finix's own test harness
+        # (tests/lib/default.nix) sets exactly this tmpfs root for every VM
+        # it boots; mirror it here.
+        fileSystems."/" = {
+          device = "tmpfs";
+          fsType = "tmpfs";
+          options = [ "mode=755" ];
+        };
+
+        # The virtio-9p PCI device for the nix-store share is intermittently
+        # not yet bound by virtio_pci when finit's stage-1 mount task runs
+        # (a widely-reported, pre-existing kernel/qemu race between PCI
+        # driver probing and the 9p mount attempt -- see e.g.
+        # https://forum.proxmox.com/threads/debian-guest-virtio-9p-no-channels-available.30525/
+        # and the LKML thread "9p: Fix probe failed when modprobe
+        # 9pnet_virtio" -- not something introduced by finix-base.nix's own
+        # -fsdev/-device rewrite above, which is otherwise correct and was
+        # verified working). Observed live: roughly half of boots hit
+        # "9pnet_virtio: no channels available for device nix-store" on the
+        # first mount attempt and never recover, since finit/mount.nix's
+        # generated task has no retry. Override just this one task's command
+        # with a short retry loop -- mirrors the same polling pattern
+        # finit/mount.nix itself already uses for its own wait-dev tasks --
+        # instead of failing immediately. Set via `.script` (not `.command`
+        # directly): scriptOpts (finit/stage1.nix) is what makes finit copy
+        # the generated script derivation into the initrd's closed content
+        # set (initrd.nix's mkScriptFile) -- a bare `.command` pointing at a
+        # derivation is never added to /etc/finit.d's referenced store paths
+        # and fails at finit startup with "skipping ...: No such file or
+        # directory" (verified live).
+        boot.initrd.finit.tasks."mount-nix-.ro-store".script = ''
+          tries=50
+          i=0
+          while [ "$i" -lt "$tries" ]; do
+            if mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose,X-mount.mkdir nix-store /sysroot/nix/.ro-store; then
+              exit 0
+            fi
+            i=$((i + 1))
+            sleep 0.2
+          done
+          printf 'mount-nix-.ro-store: giving up after %s tries\n' "$tries" >&2
+          exit 1
+        '';
+
         microbe.qemuRunner = pkgs.writeShellScriptBin "run-vm" ''
           exec ${lib.concatMapStringsSep " " lib.escapeShellArg
             (dropVirtfsArgs config.virtualisation.qemu.argv ++ explicitShareArgs)} "$@"

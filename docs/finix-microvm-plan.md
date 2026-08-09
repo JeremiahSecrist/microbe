@@ -44,12 +44,39 @@ to drop `-virtfs` and use the equivalent explicit `-fsdev` + `-device
 virtio-9p-pci` pair instead — verified live: `mount-nix-store` now
 succeeds.
 
-**Current blocker**: boot still doesn't reach a shell. After
-`mount-nix-store` succeeds, `switch-root` starts and the guest reboots
-~10s later without further console output — looks like `switch-root`
-itself hangs or fails silently rather than an error being surfaced. Not
-yet diagnosed. This is what blocks M1 ("boot to a shell/getty") and,
-per §3's gate, Phase 1.
+**Second bug found and fixed**: `switch-root` was silently rebooting
+~10s after starting, no error printed. Root cause: finix declares no
+default root filesystem (unlike NixOS) — without `fileSystems."/"`,
+nothing has mountpoint `/`, `neededForBoot` forcing never fires,
+`/sysroot` never gets mounted, and stage-1's switch-root task takes its
+"not a mountpoint" failure branch, which just prints "rescue shell is
+disabled / rebooting in 10s" and reboots with no further diagnostic.
+`finix-base.nix` now declares `fileSystems."/" = { device = "tmpfs";
+fsType = "tmpfs"; options = ["mode=755"]; }`, mirroring what finix's own
+test harness (`tests/lib/default.nix`) sets for every VM it boots.
+
+**Verified live after the fix**: `switch_root` succeeds, stage 2 is
+reached (`<<< finix - stage 2 >>>`), and finit enters runlevel 2
+(`finix, entering runlevel 2`) — confirmed on 3 separate boots. The
+`/nix/store` 9p attach (the first bug's fix) is intermittently flaky
+under this host — 1 of 3 boots hit a transient `9pnet_virtio: no
+channels available` on the store mount specifically, unrelated to the
+switch-root fix; retrying reliably works. Not yet investigated further
+since it self-heals on retry and doesn't block boot when it doesn't
+occur.
+
+**Current blocker**: runlevel 2 starts (`loadkmap`, `suid-sgid-wrappers`,
+`sysctl` tasks fire in order) but console output stops there for the
+rest of a 90s boot window — no `getty on /dev/tty1` or `login:` line
+seen yet in 3 attempts, unlike finix's own `tests/boot.nix` reference
+boot which reaches getty. Not yet diagnosed whether this is a slow/stuck
+task after `sysctl`, a getty/agetty startup issue specific to the
+`ttyS0` serial console under this qemu config, or a console-output
+buffering artifact of `-nographic` piped to a file rather than a genuine
+guest hang. Next step: boot with `-serial file:...` instead of
+`-nographic`'s multiplexed stdio to rule out buffering, and/or run with
+`-d guest_errors,unimp` or an unbounded wait to see if it's just slow
+rather than hung.
 
 ---
 
