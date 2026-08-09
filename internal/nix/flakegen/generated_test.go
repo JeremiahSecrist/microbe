@@ -2,6 +2,7 @@ package flakegen
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -117,6 +118,50 @@ func TestRenderGeneratedIncludesBuildTarget(t *testing.T) {
 	}
 	if !strings.Contains(got, `"buildTarget": ".#nixosConfigurations.web.config.microvm.declaredRunner"`) {
 		t.Errorf("RenderGenerated() missing nixos buildTarget for web:\n%s", got)
+	}
+}
+
+func TestLoadGeneratedCID(t *testing.T) {
+	cfg := fixtureConfig()
+	st := mustStack(t, cfg)
+	generated, err := st.RenderGenerated()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "generated.json"), []byte(generated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadGeneratedCID(dir, "db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := st.Services["db"].CID; got != want {
+		t.Errorf("LoadGeneratedCID() = %d, want %d", got, want)
+	}
+}
+
+func TestLoadGeneratedCIDUnknownService(t *testing.T) {
+	cfg := fixtureConfig()
+	st := mustStack(t, cfg)
+	generated, err := st.RenderGenerated()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "generated.json"), []byte(generated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadGeneratedCID(dir, "nope"); err == nil {
+		t.Error("LoadGeneratedCID() for unknown service = nil error, want error")
+	}
+}
+
+func TestLoadGeneratedCIDMissingFile(t *testing.T) {
+	if _, err := LoadGeneratedCID(t.TempDir(), "db"); err == nil {
+		t.Error("LoadGeneratedCID() with no generated.json = nil error, want error")
 	}
 }
 

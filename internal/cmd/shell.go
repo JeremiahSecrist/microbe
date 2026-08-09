@@ -27,9 +27,9 @@ func newShellCmd() *cobra.Command {
 }
 
 func shellRun(opts execOptions) error {
-	udsPath, err := resolveGuestVsock(opts.file, opts.service)
+	addr, err := resolveGuestVsock(opts.file, opts.service)
 	if err != nil {
 		return err
 	}
-	return runAgentSession(udsPath, nil, true, opts.stdin, opts.stdout, opts.stderr)
+	return runAgentSession(addr, nil, true, opts.stdin, opts.stdout, opts.stderr)
 }

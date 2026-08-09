@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 )
@@ -77,6 +79,34 @@ func (st *Stack) RenderGenerated() (string, error) {
 		return "", fmt.Errorf("render generated: %w", err)
 	}
 	return string(out) + "\n", nil
+}
+
+// LoadGeneratedCID reads dir/generated.json (written by WriteStack) and
+// returns svc's assigned vsock CID. Used at `microbe shell`/`exec` time for
+// finix guests, which reach their agent over real AF_VSOCK (addressed by
+// CID) rather than the nixos path's hybrid-vsock UDS -- unlike that UDS
+// (a filesystem path the guest's compose config already carries around),
+// the CID has to be looked up, since it's assigned once at render time and
+// otherwise only known to the rendered Nix (finix-agent.nix reads the same
+// file to wire the QEMU vsock device with the same value).
+func LoadGeneratedCID(dir, svc string) (int, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "generated.json"))
+	if err != nil {
+		return 0, fmt.Errorf("load generated.json: %w", err)
+	}
+	var root struct {
+		Services map[string]struct {
+			CID int `json:"cid"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(data, &root); err != nil {
+		return 0, fmt.Errorf("load generated.json: %w", err)
+	}
+	entry, ok := root.Services[svc]
+	if !ok {
+		return 0, fmt.Errorf("load generated.json: no service %q", svc)
+	}
+	return entry.CID, nil
 }
 
 func renderNetworkd(svcName string, s Service) (map[string]any, error) {

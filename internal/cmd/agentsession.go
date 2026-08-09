@@ -11,14 +11,28 @@ import (
 
 	"microbe/internal/config"
 	"microbe/internal/datadir"
+	"microbe/internal/nix/flakegen"
 	"microbe/internal/state"
 	"microbe/internal/vsockexec"
 )
 
+// guestAddr is where to reach svc's agent: exactly one of UDSPath (nixos,
+// cloud-hypervisor's hybrid-vsock UDS) or CID (finix, real AF_VSOCK) is
+// meaningful, selected by OS -- the two guest types have no shared
+// transport, see dialAgent.
+type guestAddr struct {
+	OS      string // "nixos" or "finix"
+	UDSPath string
+	CID     uint32
+}
+
 // dialAgent is a seam so tests can fake the vsock connection without a real
-// guest; production always goes through vsockexec.DialHybridVsock.
-var dialAgent = func(udsPath string) (io.ReadWriteCloser, error) {
-	return vsockexec.DialHybridVsock(udsPath, vsockexec.AgentPort)
+// guest; production dispatches on addr.OS to the matching real transport.
+var dialAgent = func(addr guestAddr) (io.ReadWriteCloser, error) {
+	if addr.OS == "finix" {
+		return vsockexec.DialVsock(addr.CID, vsockexec.AgentPort)
+	}
+	return vsockexec.DialHybridVsock(addr.UDSPath, vsockexec.AgentPort)
 }
 
 // defaultShellArgv is what `microbe shell` runs when given no explicit
@@ -26,31 +40,43 @@ var dialAgent = func(udsPath string) (io.ReadWriteCloser, error) {
 // meaning ssh gave `microbe shell` before.
 var defaultShellArgv = []string{"/bin/sh", "-l"}
 
-// resolveGuestVsock loads the compose config (to confirm svc exists and to
-// find the stack's data dir) and the running state (to confirm svc is up)
-// to find the notify.vsock cloud-hypervisor exposes for svc: the
-// CLI-owned, permission-gated UNIX socket that bridges the host to the
-// guest's own vsock device (see internal/vsockexec, and up.go's runDir
-// convention, base/runs/<svc>). Unlike SSH this needs no IP, no network
-// attachment, and no keys -- reachability is a local filesystem
-// permission, not a network path.
-func resolveGuestVsock(file, svc string) (string, error) {
+// resolveGuestVsock loads the compose config (to confirm svc exists and
+// find its OS) and the running state (to confirm svc is up), then returns
+// where to reach svc's agent -- a notify.vsock UNIX socket path for nixos
+// guests (cloud-hypervisor's own hybrid-vsock device, see up.go's runDir
+// convention, base/runs/<svc>), or a CID for finix guests (real AF_VSOCK,
+// looked up from generated.json since it's assigned once at render time
+// and otherwise only known to the rendered Nix -- see
+// flakegen.LoadGeneratedCID and finix-agent.nix, which reads the same
+// file to wire the matching QEMU vsock device). Unlike SSH this needs no
+// IP, no network attachment, and no keys -- reachability is a local
+// filesystem permission (nixos) or a kernel-assigned CID (finix), not a
+// network path.
+func resolveGuestVsock(file, svc string) (guestAddr, error) {
 	cfg, err := config.Load(file)
 	if err != nil {
-		return "", err
+		return guestAddr{}, err
 	}
-	if _, ok := cfg.Services[svc]; !ok {
-		return "", fmt.Errorf("no service %q", svc)
+	svcCfg, ok := cfg.Services[svc]
+	if !ok {
+		return guestAddr{}, fmt.Errorf("no service %q", svc)
 	}
 	base := datadir.Dir(cfg.Name)
 	store, err := state.Load(filepath.Join(base, "state.json"))
 	if err != nil {
-		return "", err
+		return guestAddr{}, err
 	}
 	if _, ok := store.Services[svc]; !ok {
-		return "", fmt.Errorf("service %q is not running", svc)
+		return guestAddr{}, fmt.Errorf("service %q is not running", svc)
 	}
-	return filepath.Join(base, "runs", svc, "notify.vsock"), nil
+	if svcCfg.OS == "finix" {
+		cid, err := flakegen.LoadGeneratedCID(filepath.Dir(file), svc)
+		if err != nil {
+			return guestAddr{}, err
+		}
+		return guestAddr{OS: "finix", CID: uint32(cid)}, nil
+	}
+	return guestAddr{OS: "nixos", UDSPath: filepath.Join(base, "runs", svc, "notify.vsock")}, nil
 }
 
 // frameWriter serializes frame writes to the agent connection: stdin
@@ -123,13 +149,13 @@ func watchTTY(fw *frameWriter, stdin, stdout *os.File) func() {
 	}
 }
 
-// runAgentSession dials svc's agent at udsPath, sends the command header,
+// runAgentSession dials svc's agent at addr, sends the command header,
 // then pumps stdin/stdout/stderr as frames until the guest sends an exit
 // frame. A nonzero guest exit code surfaces as an error, matching the
 // prior ssh-based exec's behavior (an *exec.ExitError also just became a
 // generic error).
-func runAgentSession(udsPath string, command []string, tty bool, stdin, stdout, stderr *os.File) error {
-	conn, err := dialAgent(udsPath)
+func runAgentSession(addr guestAddr, command []string, tty bool, stdin, stdout, stderr *os.File) error {
+	conn, err := dialAgent(addr)
 	if err != nil {
 		return err
 	}

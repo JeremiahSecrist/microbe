@@ -61,6 +61,8 @@ in
       (inputs.finix + "/modules/virtualisation/qemu.nix")
       inputs.finix.nixosModules.getty
       config.flake.nixosModules.finix-base
+      config.flake.nixosModules.finix-agent
+      { microCompose.serviceName = "db"; }
       (compose.services.db.config or ({ ... }: { }))
     ];
   };

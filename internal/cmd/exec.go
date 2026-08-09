@@ -35,9 +35,9 @@ type execOptions struct {
 // behavior: ssh was never given `-t`, so even an interactive command run
 // via `exec` (as opposed to `shell`) got a plain pipe, not a terminal.
 func execRun(opts execOptions) error {
-	udsPath, err := resolveGuestVsock(opts.file, opts.service)
+	addr, err := resolveGuestVsock(opts.file, opts.service)
 	if err != nil {
 		return err
 	}
-	return runAgentSession(udsPath, opts.command, false, opts.stdin, opts.stdout, opts.stderr)
+	return runAgentSession(addr, opts.command, false, opts.stdin, opts.stdout, opts.stderr)
 }

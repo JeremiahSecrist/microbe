@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -16,6 +17,38 @@ import (
 func writeState(t *testing.T, base string, store *state.Store) {
 	t.Helper()
 	if err := store.Save(filepath.Join(base, "state.json")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeFinixConfig writes a single-service compose file with os: "finix"
+// to path, for tests exercising resolveGuestVsock's finix (real AF_VSOCK)
+// branch instead of the default nixos one.
+func writeFinixConfig(t *testing.T, path string) {
+	t.Helper()
+	finixConfigJSON := `{
+  "schemaVersion": 1,
+  "name": "test-net",
+  "networks": { "backend": { "subnet": "192.168.51.0/24" } },
+  "services": {
+    "web": {
+      "os": "finix",
+      "networks": [ { "name": "backend", "ip": "192.168.51.3" } ]
+    }
+  }
+}`
+	if err := os.WriteFile(path, []byte(finixConfigJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeGeneratedJSON writes a minimal generated.json (the shape
+// LoadGeneratedCID reads) into dir, for tests that need a finix service's
+// CID on disk without going through a full flakegen.Stack render.
+func writeGeneratedJSON(t *testing.T, dir, svc string, cid int) {
+	t.Helper()
+	content := fmt.Sprintf(`{"services": {%q: {"cid": %d}}}`, svc, cid)
+	if err := os.WriteFile(filepath.Join(dir, "generated.json"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -35,9 +68,38 @@ func TestResolveGuestVsockRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got.OS != "nixos" {
+		t.Errorf("resolveGuestVsock().OS = %q, want %q", got.OS, "nixos")
+	}
 	want := filepath.Join(dataDir, "runs", "web", "notify.vsock")
-	if got != want {
-		t.Errorf("resolveGuestVsock() = %q, want %q", got, want)
+	if got.UDSPath != want {
+		t.Errorf("resolveGuestVsock().UDSPath = %q, want %q", got.UDSPath, want)
+	}
+}
+
+func TestResolveGuestVsockFinix(t *testing.T) {
+	cfgDir := t.TempDir()
+	cfgPath := filepath.Join(cfgDir, "microbe.json")
+	writeFinixConfig(t, cfgPath)
+	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
+	writeState(t, dataDir, &state.Store{
+		Services: map[string]state.ServiceState{
+			"web": {Status: "running"},
+		},
+	})
+	writeGeneratedJSON(t, cfgDir, "web", 7)
+
+	got, err := resolveGuestVsock(cfgPath, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OS != "finix" {
+		t.Errorf("resolveGuestVsock().OS = %q, want %q", got.OS, "finix")
+	}
+	if got.CID != 7 {
+		t.Errorf("resolveGuestVsock().CID = %d, want 7", got.CID)
 	}
 }
 
@@ -82,7 +144,7 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 func withFakeAgent(t *testing.T, fa *fakeAgent) {
 	t.Helper()
 	orig := dialAgent
-	dialAgent = func(string) (io.ReadWriteCloser, error) { return fa.hostConn, nil }
+	dialAgent = func(guestAddr) (io.ReadWriteCloser, error) { return fa.hostConn, nil }
 	t.Cleanup(func() { dialAgent = orig })
 }
 
@@ -146,7 +208,7 @@ func TestRunAgentSessionSendsHeaderAndPlumbsOutput(t *testing.T) {
 	outW, outCleanup := fileFromWriter(t, &outBuf)
 	errW, errCleanup := fileFromWriter(t, &errBuf)
 
-	err := runAgentSession("unused", []string{"echo", "hi"}, false, fileFromReader(t, bytes.NewReader(nil)), outW, errW)
+	err := runAgentSession(guestAddr{}, []string{"echo", "hi"}, false, fileFromReader(t, bytes.NewReader(nil)), outW, errW)
 	outCleanup()
 	errCleanup()
 	if err != nil {
@@ -187,7 +249,7 @@ func TestRunAgentSessionNonzeroExitIsError(t *testing.T) {
 	defer outCleanup()
 	defer errCleanup()
 
-	err := runAgentSession("unused", []string{"false"}, false, fileFromReader(t, bytes.NewReader(nil)), outW, errW)
+	err := runAgentSession(guestAddr{}, []string{"false"}, false, fileFromReader(t, bytes.NewReader(nil)), outW, errW)
 	if err == nil {
 		t.Error("runAgentSession() with nonzero guest exit = nil error, want error")
 	}
