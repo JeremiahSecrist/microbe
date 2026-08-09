@@ -2,7 +2,8 @@
 
 `microbe`: static Go binary built from `../iso`. `microbe.nix`: 3-VM stack —
 `db` (postgres, healthcheck on 5432), `web` (httpd, depends on db), `jump`
-(no static IP, auto-allocated).
+(no static IP, auto-allocated, has a folder-bind volume sharing `./shared`
+into `/shared` — the default volume type, runs unprivileged, see below).
 
 Requires membership in the `microbe` group (talks to the root
 `microbe-provisiond` daemon over `/run/microbe.sock`); no sudo needed. If
@@ -56,6 +57,10 @@ curl http://192.168.51.3:80/
 microbe shell db
 ping -c1 1.1.1.1
 ping -c1 google.com
+
+# folder-bind volume (virtiofs): jump's /shared is ./shared on the host,
+# mounted unprivileged (a companion virtiofsd process, no root needed):
+microbe exec jump -- cat /shared/hello.txt
 ```
 
 ## Tear down

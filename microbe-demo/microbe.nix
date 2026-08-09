@@ -71,6 +71,13 @@
         services.openssh.enable = true;
       };
 
+      # Folder-bind volume (virtiofs), the default volume type when `type`
+      # is omitted — see internal/config/load.go's applyDefaults. Runs
+      # unprivileged (internal/nix/flakegen/parts/virtiofsd-run.nix).
+      volumes = [
+        { name = "notes"; host = "/home/sky/Documents/code/nix/iso/microbe-demo/shared"; target = "/shared"; }
+      ];
+
       networks = [
         { name = "frontend"; }
         { name = "backend"; }
