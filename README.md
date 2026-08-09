@@ -1,5 +1,7 @@
 # microbe
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Docker-compose-style orchestration for [microvm.nix](https://github.com/astro/microvm.nix). Define a stack of VMs in one `microbe.nix`, then `microbe up`.
 
 ## Install
