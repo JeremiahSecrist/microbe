@@ -64,6 +64,14 @@ type Service struct {
 	// (up.go's attachShareOwners) so renderer.nix can pass it to
 	// virtiofsd's --translate-uid/--translate-gid.
 	ShareOwners map[string]ShareOwner
+
+	// ShareHosts maps a share volume name that omitted "host" to the
+	// CLI-managed directory path up.go's attachShareHosts defaulted it to
+	// (docker-style managed volume). renderer.nix imports the user's raw
+	// microbe.nix directly, so it can't see this Go-computed default
+	// itself -- it falls back to generated.json (this field) when the
+	// compose file's own v.host is absent.
+	ShareHosts map[string]string
 }
 
 // ShareOwner is a share volume's host-directory owning uid/gid, computed

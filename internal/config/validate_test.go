@@ -208,6 +208,28 @@ func TestValidateShareVolumeDefaultsPass(t *testing.T) {
 	}
 }
 
+// TestValidateShareVolumeHostOptional proves a share volume can omit host:
+// up.go's attachShareHosts defaults it to a CLI-managed directory under
+// datadir (docker-style, like an unnamed/managed volume) rather than
+// requiring the user to point at an existing host path.
+func TestValidateShareVolumeHostOptional(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "ok",
+	  "networks": { "n": { "subnet": "10.0.0.0/24" } },
+	  "services": {
+	    "a": { "networks": [{ "name": "n" }], "volumes": [
+	      { "name": "data", "target": "/data" }
+	    ] }
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("want no error for share volume without host, got %v", err)
+	}
+}
+
 func TestValidateDiskVolumeRejectsOwner(t *testing.T) {
 	cfg, err := Parse([]byte(`{
 	  "name": "bad",

@@ -230,9 +230,9 @@ func (c *Compose) validateVolumes() error {
 					return fmt.Errorf("config: service %q: duplicate share volume name %q", svcName, v.Name)
 				}
 				shareNames[v.Name] = true
-				if v.Host == "" {
-					return fmt.Errorf("config: service %q: share volume missing host", svcName)
-				}
+				// Host is optional: up.go's attachShareHosts defaults an
+				// omitted host to a CLI-managed directory under datadir,
+				// docker-style, rather than requiring an existing path.
 				if v.Protocol != "9p" && v.Protocol != "virtiofs" {
 					return fmt.Errorf("config: service %q: share volume has unknown protocol %q (want 9p or virtiofs)", svcName, v.Protocol)
 				}

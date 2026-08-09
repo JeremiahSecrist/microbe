@@ -123,6 +123,40 @@ func attachShareOwners(cfg *config.Compose, st *flakegen.Stack) error {
 	return nil
 }
 
+// attachShareHosts assigns a docker-style managed directory
+// (<dataDir>/volumes/<name>) to any share volume that omits host, creating
+// the directory if it doesn't exist yet. The default is recorded on cfg (so
+// attachShareOwners's stat has somewhere to look) and on st.ShareHosts:
+// renderer.nix imports the user's raw microbe.nix directly rather than
+// Go's defaulted cfg, so it needs the default surfaced through
+// generated.json to fall back to (see flakegen.Service.ShareHosts).
+func attachShareHosts(dataDir string, cfg *config.Compose, st *flakegen.Stack) error {
+	for name, svcCfg := range cfg.Services {
+		svc, ok := st.Services[name]
+		if !ok {
+			continue
+		}
+		for i := range svcCfg.Volumes {
+			vol := &svcCfg.Volumes[i]
+			if vol.Type != "share" || vol.Host != "" {
+				continue
+			}
+			path := filepath.Join(dataDir, "volumes", vol.Name)
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				return fmt.Errorf("service %q: share %q: create default volume dir: %w", name, vol.Name, err)
+			}
+			vol.Host = path
+			if svc.ShareHosts == nil {
+				svc.ShareHosts = map[string]string{}
+			}
+			svc.ShareHosts[vol.Name] = path
+		}
+		cfg.Services[name] = svcCfg
+		st.Services[name] = svc
+	}
+	return nil
+}
+
 // defaultVolumeFsType is applied to disk volumes that don't specify one.
 const defaultVolumeFsType = "ext4"
 
@@ -145,6 +179,9 @@ func upRun(args []string, opts upOptions) error {
 	projectDir := filepath.Dir(opts.file)
 	dataDir := datadir.Dir(cfg.Name)
 	if err := attachVolumeImages(dataDir, cfg, st); err != nil {
+		return err
+	}
+	if err := attachShareHosts(dataDir, cfg, st); err != nil {
 		return err
 	}
 	if err := attachShareOwners(cfg, st); err != nil {

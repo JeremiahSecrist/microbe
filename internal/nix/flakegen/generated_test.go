@@ -75,6 +75,34 @@ func TestRenderGeneratedIncludesShareOwnerHostIDs(t *testing.T) {
 	}
 }
 
+// TestRenderGeneratedIncludesShareHostAndMergesWithOwner proves ShareHosts
+// renders alongside ShareOwners under the same volume entry instead of one
+// clobbering the other -- a share volume can have both a defaulted host
+// (ShareHosts) and an owner translation (ShareOwners) at once.
+func TestRenderGeneratedIncludesShareHostAndMergesWithOwner(t *testing.T) {
+	cfg := fixtureConfig()
+	st := mustStack(t, cfg)
+
+	db := st.Services["db"]
+	db.ShareHosts = map[string]string{"db-data": "/var/lib/microbe/test-net/volumes/db-data"}
+	db.ShareOwners = map[string]ShareOwner{"db-data": {HostUID: 1000, HostGID: 100}}
+	st.Services["db"] = db
+
+	got, err := st.RenderGenerated()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"host": "/var/lib/microbe/test-net/volumes/db-data"`) {
+		t.Errorf("RenderGenerated() missing default host:\n%s", got)
+	}
+	if !strings.Contains(got, `"hostUid": 1000`) {
+		t.Errorf("RenderGenerated() lost hostUid when merged with host:\n%s", got)
+	}
+	if !strings.Contains(got, `"hostGid": 100`) {
+		t.Errorf("RenderGenerated() lost hostGid when merged with host:\n%s", got)
+	}
+}
+
 func TestRenderGeneratedOmitsSSHPublicKeyWhenUnset(t *testing.T) {
 	cfg := fixtureConfig()
 	st := mustStack(t, cfg)

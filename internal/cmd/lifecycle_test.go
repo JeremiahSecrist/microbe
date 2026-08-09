@@ -699,6 +699,70 @@ func TestAttachShareOwnersSkipsSharesWithoutOwner(t *testing.T) {
 	}
 }
 
+// TestAttachShareHostsDefaultsMissingHostAndCreatesDir proves a share
+// volume that omits host gets a docker-style managed directory under
+// dataDir/volumes/<name>, that the directory actually gets created (so
+// virtiofsd and attachShareOwners's stat both have somewhere to look), and
+// that the default lands on both cfg (for attachShareOwners) and st (for
+// generated.json/renderer.nix, which reads the raw compose file directly
+// and can't see cfg's in-memory default).
+func TestAttachShareHostsDefaultsMissingHostAndCreatesDir(t *testing.T) {
+	dataDir := t.TempDir()
+	cfg := &config.Compose{
+		Services: map[string]config.Service{
+			"a": {
+				Volumes: []config.Volume{
+					{Type: "share", Name: "data", Target: "/data"},
+				},
+			},
+		},
+	}
+	st := &flakegen.Stack{Services: map[string]flakegen.Service{"a": {}}}
+
+	if err := attachShareHosts(dataDir, cfg, st); err != nil {
+		t.Fatal(err)
+	}
+
+	want := filepath.Join(dataDir, "volumes", "data")
+	if got := cfg.Services["a"].Volumes[0].Host; got != want {
+		t.Errorf("cfg volume host = %q, want %q", got, want)
+	}
+	if got := st.Services["a"].ShareHosts["data"]; got != want {
+		t.Errorf("st ShareHosts[data] = %q, want %q", got, want)
+	}
+	if fi, err := os.Stat(want); err != nil || !fi.IsDir() {
+		t.Errorf("default volume dir not created: %v", err)
+	}
+}
+
+// TestAttachShareHostsLeavesExplicitHostAlone proves an explicit host path
+// is never overwritten or recorded in ShareHosts (renderer.nix should use
+// the compose file's own v.host, not fall back to generated.json).
+func TestAttachShareHostsLeavesExplicitHostAlone(t *testing.T) {
+	dataDir := t.TempDir()
+	explicit := t.TempDir()
+	cfg := &config.Compose{
+		Services: map[string]config.Service{
+			"a": {
+				Volumes: []config.Volume{
+					{Type: "share", Name: "data", Host: explicit, Target: "/data"},
+				},
+			},
+		},
+	}
+	st := &flakegen.Stack{Services: map[string]flakegen.Service{"a": {}}}
+
+	if err := attachShareHosts(dataDir, cfg, st); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Services["a"].Volumes[0].Host; got != explicit {
+		t.Errorf("cfg volume host = %q, want unchanged %q", got, explicit)
+	}
+	if _, ok := st.Services["a"].ShareHosts["data"]; ok {
+		t.Errorf("ShareHosts should not record an explicit host, got %+v", st.Services["a"].ShareHosts)
+	}
+}
+
 func TestUpRunGeneratedNixHasAbsoluteVolumeImage(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()

@@ -60,7 +60,12 @@
       shares = lib.optionals (svc ? volumes) (map (v:
         {
           tag = v.name;
-          source = v.host or (throw "microbe: service '${svcName}': share '${v.name}' needs a host path");
+          # v.host omitted -> up.go's attachShareHosts defaulted it to a
+          # CLI-managed directory (docker-style managed volume) and
+          # surfaced it via generated.json, since this module reads the
+          # raw compose file and never sees Go's in-memory default.
+          source = v.host or gen.volumes.${v.name}.host
+            or (throw "microbe: service '${svcName}': share '${v.name}' needs a host path");
           mountPoint = v.target;
           # cloud-hypervisor only supports virtiofs shares, not 9p (see
           # config.load's applyDefaults comment) -- virtiofs is the default.
