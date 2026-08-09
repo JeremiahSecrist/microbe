@@ -14,6 +14,7 @@ func (st *Stack) RenderFlake() string {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     microvm.url = "github:microvm-nix/microvm.nix";
+    finix.url = "github:finix-community/finix";
     flake-parts.url = "github:hercules-ci/flake-parts";
     import-tree.url = "github:vic/import-tree";
   };
@@ -27,15 +28,40 @@ func (st *Stack) RenderFlake() string {
 `
 }
 
-// ServicePart emits the per-service flake-parts module: the whole
-// nixosSystem for name, self-registered as flake.nixosConfigurations.<name>
-// rather than built by a shared factory function. config.flake.nixosModules.
-// renderer/.guest-base/.virtiofsd-run resolve to the fixed modules' own
-// self-registered values (flake-parts' shared module-system config, no
-// explicit imports needed — same mechanism as the Dendritic pattern's
-// cross-part references).
-func ServicePart(name string) string {
+// ServicePart emits the per-service flake-parts module for name, branching
+// on os ("nixos" or "finix"):
+//
+//   - "nixos": the whole nixosSystem, self-registered as
+//     flake.nixosConfigurations.<name>. config.flake.nixosModules.
+//     renderer/.guest-base/.virtiofsd-run/.agent resolve to the fixed
+//     modules' own self-registered values (flake-parts' shared
+//     module-system config, no explicit imports needed — same mechanism as
+//     the Dendritic pattern's cross-part references).
+//   - "finix": a finixSystem call, self-registered as
+//     flake.finixConfigurations.<name>. finix.lib.finixSystem takes no
+//     `system` arg and has no implicit nixpkgs of its own (the finix flake
+//     input declares none) — lib and pkgs must be supplied explicitly via
+//     specialArgs, unlike nixosSystem above.
+func ServicePart(name, os string) string {
 	q := nixQuote(name)
+	if os == "finix" {
+		return `{ inputs, config, ... }:
+let
+  compose = import ../microbe.nix;
+in
+{
+  flake.finixConfigurations.` + name + ` = inputs.finix.lib.finixSystem {
+    lib = inputs.nixpkgs.lib;
+    specialArgs.pkgs = import inputs.nixpkgs { system = "x86_64-linux"; };
+    modules = [
+      (inputs.finix + "/modules/virtualisation/qemu.nix")
+      config.flake.nixosModules.finix-base
+      (compose.services.` + name + `.config or ({ ... }: { }))
+    ];
+  };
+}
+`
+	}
 	return `{ inputs, config, ... }:
 let
   compose = import ../microbe.nix;

@@ -35,6 +35,7 @@ type Service struct {
 	VCPUs         int          `json:"vcpu"`
 	Mem           int          `json:"mem"`
 	Hypervisor    string       `json:"hypervisor"`
+	OS            string       `json:"os,omitempty"`
 	ConfigPresent bool         `json:"configPresent,omitempty"`
 	Volumes       []Volume     `json:"volumes,omitempty"`
 	Networks      []Attach     `json:"networks,omitempty"`

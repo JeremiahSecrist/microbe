@@ -1,7 +1,55 @@
 # finix as a microbe guest OS — implementation plan
 
-Status: **Draft for review** · Part 1 of microbe's guest-OS flavors
+Status: **Phase 0 in progress** · Part 1 of microbe's guest-OS flavors
 Date: 2026-08-09
+
+## Phase 0 status (2026-08-09)
+
+`os = "nixos" | "finix"` is wired end-to-end through config schema,
+validation, `flakegen.Stack`/`generated.json`, and `ServicePart`'s
+finixSystem branch (see `internal/nix/flakegen/parts/finix-base.nix`).
+`TestFinixStackEvaluates` proves a finix service evaluates against the real
+`finix-community/finix` flake input and produces a buildable
+`microbe.qemuRunner` derivation.
+
+**Real assumptions this superseded** (the original §2-§7 below described an
+earlier, unverified design; kept for the boot-model reasoning, but these
+specifics turned out wrong against the actual finix flake):
+- finix has no cloud-hypervisor backend at all — only QEMU
+  (`modules/virtualisation/qemu.nix`). Phase 0 boots under QEMU.
+- `finixSystem` takes no `system` arg and no implicit nixpkgs; `lib` and
+  `specialArgs.pkgs` must be passed explicitly.
+- finit has no `pre:`/`run:`/`ready:` vocabulary — the real API is
+  `finit.services.<name>` / `finit.tasks.<name>` submodules with
+  `conditions`/`notify`/`command`.
+- `virtualisation.qemu.argv` is a plain list of strings, not a buildable
+  derivation — `finix-base.nix` wraps it in its own `microbe.qemuRunner`
+  (`pkgs.writeShellScriptBin`) since finix exposes no equivalent to
+  microvm.nix's `declaredRunner`.
+- `virtualisation/qemu.nix` isn't auto-imported by finix's own
+  `nixosModules.default` — `ServicePart`'s finix branch imports it by path
+  from the finix flake input instead.
+
+**Verified by real boot** (`nix build` the runner, run it under
+`-nographic`, read the console): kernel/initrd/`init=` handoff, virtio
+module loading, and finit stage 1 all confirmed correct — console output
+matches finix's own `tests/boot.nix` markers exactly
+(`finix - stage 1, entering runlevel S`).
+
+**Bug found and fixed**: qemu.nix's `-virtfs` shorthand for the
+`/nix/store` share didn't attach a working virtio-9p channel under this
+qemu/machine-type combination (`9pnet_virtio: no channels available`,
+confirmed live). `finix-base.nix` now rewrites `virtualisation.qemu.argv`
+to drop `-virtfs` and use the equivalent explicit `-fsdev` + `-device
+virtio-9p-pci` pair instead — verified live: `mount-nix-store` now
+succeeds.
+
+**Current blocker**: boot still doesn't reach a shell. After
+`mount-nix-store` succeeds, `switch-root` starts and the guest reboots
+~10s later without further console output — looks like `switch-root`
+itself hangs or fails silently rather than an error being surfaced. Not
+yet diagnosed. This is what blocks M1 ("boot to a shell/getty") and,
+per §3's gate, Phase 1.
 
 ---
 

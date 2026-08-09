@@ -11,6 +11,7 @@ const (
 	DefaultVCPUs      = 1
 	DefaultMem        = 512
 	DefaultHypervisor = "cloud-hypervisor"
+	DefaultOS         = "nixos"
 )
 
 // Parse decodes a Compose document from JSON and fills in any omitted
@@ -41,6 +42,9 @@ func applyDefaults(c *Compose) {
 		}
 		if svc.Hypervisor == "" {
 			svc.Hypervisor = DefaultHypervisor
+		}
+		if svc.OS == "" {
+			svc.OS = DefaultOS
 		}
 		for i := range svc.Volumes {
 			v := &svc.Volumes[i]

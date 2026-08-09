@@ -36,14 +36,15 @@ func (st *Stack) RenderGenerated() (string, error) {
 			taps[net] = s.Taps[net]
 		}
 		svc := map[string]any{
-			"cid":      s.CID,
-			"macs":     s.MACs,
-			"ips":      s.IPs,
-			"gateway":  s.Gateway,
-			"prefix":   s.Prefix,
-			"hosts":    hostsVal,
-			"networkd": networkd,
-			"taps":     taps,
+			"cid":         s.CID,
+			"macs":        s.MACs,
+			"ips":         s.IPs,
+			"gateway":     s.Gateway,
+			"prefix":      s.Prefix,
+			"hosts":       hostsVal,
+			"networkd":    networkd,
+			"taps":        taps,
+			"buildTarget": s.BuildTarget,
 		}
 		if len(s.VolumeImages) > 0 || len(s.ShareOwners) > 0 || len(s.ShareHosts) > 0 {
 			volumes := map[string]any{}

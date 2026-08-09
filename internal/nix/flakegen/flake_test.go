@@ -18,7 +18,7 @@ func TestRenderFlakeMatchesGolden(t *testing.T) {
 }
 
 func TestServicePart(t *testing.T) {
-	got := ServicePart("db")
+	got := ServicePart("db", "nixos")
 	want := `{ inputs, config, ... }:
 let
   compose = import ../microbe.nix;
@@ -39,6 +39,33 @@ in
 }
 `
 	if got != want {
-		t.Errorf("ServicePart(\"db\") =\n%s\nwant:\n%s", got, want)
+		t.Errorf("ServicePart(\"db\", \"nixos\") =\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestServicePartFinix proves a finix service renders a finixSystem call
+// (finix.lib.finixSystem, per the real flake's signature -- no `system`
+// arg, lib passed explicitly) instead of nixosSystem, registered under
+// flake.finixConfigurations rather than flake.nixosConfigurations.
+func TestServicePartFinix(t *testing.T) {
+	got := ServicePart("db", "finix")
+	want := `{ inputs, config, ... }:
+let
+  compose = import ../microbe.nix;
+in
+{
+  flake.finixConfigurations.db = inputs.finix.lib.finixSystem {
+    lib = inputs.nixpkgs.lib;
+    specialArgs.pkgs = import inputs.nixpkgs { system = "x86_64-linux"; };
+    modules = [
+      (inputs.finix + "/modules/virtualisation/qemu.nix")
+      config.flake.nixosModules.finix-base
+      (compose.services.db.config or ({ ... }: { }))
+    ];
+  };
+}
+`
+	if got != want {
+		t.Errorf("ServicePart(\"db\", \"finix\") =\n%s\nwant:\n%s", got, want)
 	}
 }

@@ -10,7 +10,7 @@ func TestFixedModulesEmbedded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"renderer.nix", "guest-base.nix", "virtiofsd-run.nix", "agent.nix"} {
+	for _, name := range []string{"renderer.nix", "guest-base.nix", "virtiofsd-run.nix", "agent.nix", "finix-base.nix"} {
 		content, ok := mods[name]
 		if !ok {
 			t.Errorf("missing fixed module %q", name)
@@ -113,6 +113,23 @@ func TestAgentNixHasRequiredMarkers(t *testing.T) {
 	} {
 		if !strings.Contains(content, marker) {
 			t.Errorf("agent.nix missing marker %q", marker)
+		}
+	}
+}
+
+func TestFinixBaseNixHasRequiredMarkers(t *testing.T) {
+	content, err := FixedModule("finix-base.nix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{
+		"flake.nixosModules.finix-base",
+		"microbe.qemuRunner",
+		"config.virtualisation.qemu.argv",
+		"console=ttyS0",
+	} {
+		if !strings.Contains(content, marker) {
+			t.Errorf("finix-base.nix missing marker %q", marker)
 		}
 	}
 }

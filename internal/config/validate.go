@@ -74,6 +74,18 @@ func (c *Compose) Validate() error {
 	if err := c.validateHealthchecks(); err != nil {
 		return err
 	}
+	if err := c.validateOS(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Compose) validateOS() error {
+	for svcName, svc := range c.Services {
+		if svc.OS != "nixos" && svc.OS != "finix" {
+			return fmt.Errorf("config: service %q: unknown os %q (want nixos or finix)", svcName, svc.OS)
+		}
+	}
 	return nil
 }
 

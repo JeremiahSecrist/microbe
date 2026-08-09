@@ -103,6 +103,23 @@ func TestRenderGeneratedIncludesShareHostAndMergesWithOwner(t *testing.T) {
 	}
 }
 
+func TestRenderGeneratedIncludesBuildTarget(t *testing.T) {
+	cfg := fixtureConfig()
+	cfg.Services["db"] = config.Service{OS: "finix", Networks: cfg.Services["db"].Networks}
+	st := mustStack(t, cfg)
+
+	got, err := st.RenderGenerated()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"buildTarget": ".#finixConfigurations.db.config.microbe.qemuRunner"`) {
+		t.Errorf("RenderGenerated() missing finix buildTarget for db:\n%s", got)
+	}
+	if !strings.Contains(got, `"buildTarget": ".#nixosConfigurations.web.config.microvm.declaredRunner"`) {
+		t.Errorf("RenderGenerated() missing nixos buildTarget for web:\n%s", got)
+	}
+}
+
 func mustStack(t *testing.T, cfg *config.Compose) *Stack {
 	t.Helper()
 	plan, err := hostnet.Plan(cfg)

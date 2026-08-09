@@ -248,6 +248,51 @@ func TestValidateDiskVolumeRejectsOwner(t *testing.T) {
 	}
 }
 
+func TestServiceOSDefaultsToNixos(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "ok",
+	  "networks": { "n": { "subnet": "10.0.0.0/24" } },
+	  "services": { "a": { "networks": [{ "name": "n" }] } }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := cfg.Services["a"].OS; got != "nixos" {
+		t.Errorf("os default = %q, want nixos", got)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("want no error for defaulted os, got %v", err)
+	}
+}
+
+func TestServiceOSAcceptsFinix(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "ok",
+	  "networks": { "n": { "subnet": "10.0.0.0/24" } },
+	  "services": { "a": { "os": "finix", "networks": [{ "name": "n" }] } }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("want no error for os=finix, got %v", err)
+	}
+}
+
+func TestValidateUnknownOS(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "bad",
+	  "networks": { "n": { "subnet": "10.0.0.0/24" } },
+	  "services": { "a": { "os": "plan9", "networks": [{ "name": "n" }] } }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "unknown os") {
+		t.Errorf("want unknown-os error, got %v", err)
+	}
+}
+
 func TestValidateOverlappingSubnets(t *testing.T) {
 	cfg, err := Parse([]byte(`{
 	  "name": "bad",

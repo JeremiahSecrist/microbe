@@ -40,7 +40,7 @@ func WriteStack(dir string, st *Stack) error {
 		files["agent/"+name] = content
 	}
 	for _, name := range st.Names() {
-		files["parts/"+name+".nix"] = ServicePart(name)
+		files["parts/"+name+".nix"] = ServicePart(name, st.Services[name].OS)
 	}
 	for path, content := range files {
 		p := filepath.Join(dir, path)

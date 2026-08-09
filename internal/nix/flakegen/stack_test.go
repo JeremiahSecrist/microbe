@@ -101,6 +101,38 @@ func TestFromConfigStack(t *testing.T) {
 	}
 }
 
+func TestFromConfigBuildTarget(t *testing.T) {
+	cfg := &config.Compose{
+		SchemaVersion: 1,
+		Name:          "os-test",
+		Networks:      map[string]config.Network{"n": {Subnet: "192.168.70.0/24"}},
+		Services: map[string]config.Service{
+			"a": {OS: "nixos", Networks: []config.Attach{{Name: "n"}}},
+			"b": {OS: "finix", Networks: []config.Attach{{Name: "n"}}},
+		},
+	}
+	plan, err := hostnet.Plan(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := FromConfig(cfg, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := st.Services["a"].OS, "nixos"; got != want {
+		t.Errorf("a.OS = %q, want %q", got, want)
+	}
+	if got, want := st.Services["a"].BuildTarget, ".#nixosConfigurations.a.config.microvm.declaredRunner"; got != want {
+		t.Errorf("a.BuildTarget = %q, want %q", got, want)
+	}
+	if got, want := st.Services["b"].OS, "finix"; got != want {
+		t.Errorf("b.OS = %q, want %q", got, want)
+	}
+	if got, want := st.Services["b"].BuildTarget, ".#finixConfigurations.b.config.microbe.qemuRunner"; got != want {
+		t.Errorf("b.BuildTarget = %q, want %q", got, want)
+	}
+}
+
 func TestStackHosts(t *testing.T) {
 	cfg := fixtureConfig()
 	plan, err := hostnet.Plan(cfg)

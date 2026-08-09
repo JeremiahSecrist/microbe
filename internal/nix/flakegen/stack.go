@@ -43,12 +43,19 @@ type Stack struct {
 
 type Service struct {
 	CID      int
+	OS       string   // "nixos" or "finix" (config.Service.OS, copied verbatim)
 	Networks []string // declared order (first is primary default route)
 	MACs     map[string]string
 	IPs      map[string]string
 	Gateway  map[string]string
 	Prefix   map[string]int
 	Taps     map[string]string // net -> host tap id (see maxTapNameLen)
+
+	// BuildTarget is the nix attrpath ServicePart's rendered flake.nix
+	// exposes for this service's bootable runner derivation, computed from
+	// OS. `nix build <BuildTarget>` (relative to the rendered project dir)
+	// produces the same kind of runner regardless of guest OS.
+	BuildTarget string
 
 	// VolumeImages maps disk volume name to its absolute qcow2 path on the
 	// host, populated by the caller (up.go knows the CLI's base dir). Empty
@@ -100,13 +107,15 @@ func FromConfig(cfg *config.Compose, plan *hostnet.NetworkPlan) (*Stack, error) 
 	for i, name := range names {
 		svcCfg := cfg.Services[name]
 		s := Service{
-			CID:      i + firstGuestCID,
-			Networks: declaredNets(svcCfg),
-			MACs:     plan.MACs[name],
-			IPs:      plan.IPs[name],
-			Gateway:  map[string]string{},
-			Prefix:   map[string]int{},
-			Taps:     map[string]string{},
+			CID:         i + firstGuestCID,
+			OS:          svcCfg.OS,
+			BuildTarget: buildTarget(name, svcCfg.OS),
+			Networks:    declaredNets(svcCfg),
+			MACs:        plan.MACs[name],
+			IPs:         plan.IPs[name],
+			Gateway:     map[string]string{},
+			Prefix:      map[string]int{},
+			Taps:        map[string]string{},
 		}
 		for _, netName := range s.Networks {
 			p, err := netip.ParsePrefix(cfg.Networks[netName].Subnet)
@@ -120,6 +129,18 @@ func FromConfig(cfg *config.Compose, plan *hostnet.NetworkPlan) (*Stack, error) 
 		st.Services[name] = s
 	}
 	return st, nil
+}
+
+// buildTarget returns the nix attrpath (relative to the rendered project's
+// flake.nix) for a service's bootable runner derivation. Empty os is
+// treated as "nixos" (config.Compose.Validate rejects any other empty
+// value once parsed through config.Parse, but callers constructing a
+// config.Service literal directly, as tests do, may leave it zero-valued).
+func buildTarget(name, os string) string {
+	if os == "finix" {
+		return ".#finixConfigurations." + name + ".config.microbe.qemuRunner"
+	}
+	return ".#nixosConfigurations." + name + ".config.microvm.declaredRunner"
 }
 
 func declaredNets(svc config.Service) []string {
