@@ -226,7 +226,7 @@ func upRun(args []string, opts upOptions) error {
 	if opts.dryRun {
 		for _, svc := range selected {
 			outLink := filepath.Join(dataDir, "runners", svc)
-			fmt.Fprintf(opts.out, "nix build .#nixosConfigurations.%s.config.microvm.declaredRunner -> %s\n", svc, outLink)
+			fmt.Fprintf(opts.out, "nix build %s -> %s\n", st.Services[svc].BuildTarget, outLink)
 		}
 	} else {
 		// Each service's derivation is independent, so build them concurrently
@@ -237,7 +237,7 @@ func upRun(args []string, opts upOptions) error {
 		for i, svc := range selected {
 			i, svc := i, svc
 			g.Go(func() error {
-				path, err := buildRunner(projectDir, svc, filepath.Join(dataDir, "runners", svc))
+				path, err := buildRunner(projectDir, st.Services[svc].BuildTarget, filepath.Join(dataDir, "runners", svc))
 				if err != nil {
 					return err
 				}

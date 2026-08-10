@@ -118,7 +118,12 @@
         # stock finit 4.17, no version pin needed).
         services.getty.ttys = [ "tty1" "tty2" "tty3" "tty4" "tty5" "tty6" "ttyS0" ];
 
-        microbe.qemuRunner = pkgs.writeShellScriptBin "run-vm" ''
+        # Named microvm-run, not run-vm: runtime.StartService
+        # (internal/runtime/runner.go) hardcodes bin/microvm-run as the
+        # script it execs for every service regardless of OS -- nixos
+        # guests get that name for free from microvm.nix's own
+        # declaredRunner, this is finix's side of the same contract.
+        microbe.qemuRunner = pkgs.writeShellScriptBin "microvm-run" ''
           exec ${lib.concatMapStringsSep " " lib.escapeShellArg
             (dropVirtfsArgs config.virtualisation.qemu.argv ++ explicitShareArgs)} "$@"
         '';

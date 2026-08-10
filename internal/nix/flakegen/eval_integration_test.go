@@ -109,8 +109,12 @@ func TestFinixStackEvaluates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("eval %s: %v\n%s", target, err, stderr.String())
 	}
-	if !strings.Contains(string(out), "run-vm") {
-		t.Errorf("qemuRunner = %s, want a run-vm store path", out)
+	// bin/microvm-run, not bin/run-vm: runtime.StartService (internal/
+	// runtime/runner.go) hardcodes that binName for every service
+	// regardless of OS, so finix's qemuRunner derivation must ship its
+	// script under that name for `microbe up` to find it.
+	if !strings.Contains(string(out), "microvm-run") {
+		t.Errorf("qemuRunner = %s, want a microvm-run store path", out)
 	}
 }
 

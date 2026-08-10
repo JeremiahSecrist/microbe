@@ -50,8 +50,8 @@ var (
 		return ops.TeardownLinks(links)
 	}
 
-	buildRunner = func(dir, svc, outLink string) (string, error) {
-		return nix.BuildRunner(dir, svc, outLink)
+	buildRunner = func(dir, target, outLink string) (string, error) {
+		return nix.BuildRunner(dir, target, outLink)
 	}
 
 	startService = func(ctx context.Context, runnerPath, runDir, logPath string) (int, error) {
