@@ -118,6 +118,62 @@ func TestFinixStackEvaluates(t *testing.T) {
 	}
 }
 
+// TestMultipleFinixServicesEvaluate proves two finix services can coexist in
+// one stack. flake.nixosConfigurations is declared by flake-parts itself as
+// a lazyAttrsOf, so per-service files each contributing one key merge fine;
+// flake.finixConfigurations has no such declaration anywhere (not in
+// flake-parts, not in microbe's own fixed modules) until one is added, so a
+// second finix service's file collides with the first ("defined multiple
+// times") instead of merging.
+func TestMultipleFinixServicesEvaluate(t *testing.T) {
+	if _, err := exec.LookPath("nix"); err != nil {
+		t.Skip("nix not in PATH")
+	}
+
+	dir := t.TempDir()
+	userNix := `{
+  name = "finix-multi-test";
+  networks = { backend = { subnet = "192.168.93.0/24"; }; };
+  services = {
+    a = {
+      os = "finix";
+      networks = [ { name = "backend"; ip = "192.168.93.2"; } ];
+    };
+    b = {
+      os = "finix";
+      networks = [ { name = "backend"; ip = "192.168.93.3"; } ];
+    };
+  };
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "microbe.nix"), []byte(userNix), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Compose{
+		SchemaVersion: 1,
+		Name:          "finix-multi-test",
+		Networks:      map[string]config.Network{"backend": {Subnet: "192.168.93.0/24"}},
+		Services: map[string]config.Service{
+			"a": {OS: "finix", Networks: []config.Attach{{Name: "backend", IP: "192.168.93.2"}}},
+			"b": {OS: "finix", Networks: []config.Attach{{Name: "backend", IP: "192.168.93.3"}}},
+		},
+	}
+	st := mustStack(t, cfg)
+	if err := WriteStack(dir, st); err != nil {
+		t.Fatal(err)
+	}
+
+	target := st.Services["b"].BuildTarget
+	cmd := exec.Command("nix", "eval", "--json", "--no-write-lock-file", target)
+	cmd.Dir = dir
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if _, err := cmd.Output(); err != nil {
+		t.Fatalf("eval %s: %v\n%s", target, err, stderr.String())
+	}
+}
+
 // TestShareOwnerTranslatesUidGid proves renderer.nix's owner-translation
 // path end to end: a share volume declaring owner = "postgres" (a user
 // the guest config actually creates via services.postgresql.enable) must
