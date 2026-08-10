@@ -580,3 +580,51 @@ loop with no `sleep` at all closes that last window. Confirmed live: clean
 boot to `finix, entering runlevel 2` and `finix login:`, `microbe shell a`
 works, both `/nix/store` and the user share mount and read correctly, same
 as the sleep-based version. `go test ./...`: 195 passed throughout.
+
+## Boot-speed investigation (2026-08-10, same session)
+
+Total guest boot: ~5.4s to `finix, entering runlevel 2` / login prompt,
+reproducible across every live boot this session.
+
+**Getty trim (kept):** `services.getty.ttys` was `[ "tty1" ... "tty6"
+"ttyS0" ]`, inherited from the original QEMU-path fix (finix's default
+getty targets are invisible under this hypervisor's serial redirection, so
+`ttyS0` had to be added — see the earlier "There is no boot hang" note).
+Only `ttyS0` is ever actually watched; the six virtual-console gettys were
+dead weight. Trimmed to `[ "ttyS0" ]` — verified live: console now shows a
+single `Starting tty:S0` instead of seven separate tty/getty task spawns,
+same successful boot outcome, shell + both mounts still work.
+
+**~1s stall investigated, not fixed — reverted the attempted patch.**
+`cond_set_oneshot_noupdate():Failed creating onshot cond
+task/modprobe.<name>:N/success: No such file or directory` fires reliably
+right before entering runlevel 2, costing a fixed ~1s (the gap to
+`entering runlevel 2` is always exactly this — looks like a hardcoded
+fallback/timeout finit takes after the failure). Root cause traced into
+finit 4.17's own C source (`src/cond-w.c`): four kernel-triggered on-demand
+modprobe events (`vmw_vsock_virtio_transport`, `fuse`, `loop`, `atkbd`) land
+concurrently during this boot phase, and one of them always fails.
+
+First hypothesis (wrong): `cond_path()` returns a pointer into a
+function-local *static* buffer, and `cond_set_oneshot_noupdate()` holds
+that pointer across two calls without copying it — looked like a classic
+reentrancy clobber. Patched it (copy into a local stack buffer
+immediately), built `pkgs.finit.overrideAttrs` with the patch, wired it in
+via `finit.package`, confirmed via the `/init` symlink's store hash that
+the patched binary was genuinely the one used at boot — **and the exact
+same failure reproduced identically.** Hypothesis falsified.
+
+Second hypothesis (more likely, not attempted): `err(1, ...)` in
+`cond_set_oneshot_noupdate()` would kill PID 1 outright if called from
+finit's main loop, but boot continues normally afterward — so this must run
+in a forked subprocess per modprobe event. `cond_checkpath()`'s `mkpath()`
+(from `libite`, not finit itself — `src/makepath.c`) is a classic recursive
+mkdir-p that discards the return value of its own recursive parent-creation
+calls; with four *real, concurrent OS processes* (not just reentrant calls
+within one process) racing to create the same parent directory tree, a
+transient-missing-intermediate-directory race is plausible. Not verified or
+patched — would need strace/gdb inside the guest to pin down precisely,
+which isn't set up in this environment, and the payoff (~1s of ~5.4s) didn't
+justify the further iteration cost (each attempt is a full live-boot cycle,
+~1-2 min). `finit.package` override and the patch file were reverted;
+`finix-base.nix` ships stock `pkgs.finit`.

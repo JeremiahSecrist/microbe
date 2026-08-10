@@ -336,10 +336,14 @@
         # consoles) by default -- invisible under cloud-hypervisor's
         # `--serial tty`, and disjoint from the kernel cmdline's
         # `console=ttyS0` above (that only routes kernel/finit log output,
-        # it doesn't add a getty). Add ttyS0 to the getty list so the
-        # console this guest is actually watched through gets a login
-        # prompt (verified live under QEMU; same console convention here).
-        services.getty.ttys = [ "tty1" "tty2" "tty3" "tty4" "tty5" "tty6" "ttyS0" ];
+        # it doesn't add a getty). Set ttyS0 as the *only* getty target --
+        # not the default tty1-6 virtual consoles, which are invisible
+        # under cloud-hypervisor's `--serial tty` and never watched --
+        # shaving 6 unnecessary "Starting tty:N"/"Starting getty" task
+        # spawns off every boot (verified live under QEMU originally with
+        # the fuller tty1-6+ttyS0 list; trimmed here since only ttyS0 was
+        # ever actually used).
+        services.getty.ttys = [ "ttyS0" ];
 
         # symlinkJoin, not a bare writeShellScriptBin, so finix-virtiofsd-
         # run.nix's bin/virtiofsd-run can land in the same runner output
