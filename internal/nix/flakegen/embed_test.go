@@ -125,7 +125,7 @@ func TestFinixBaseNixHasRequiredMarkers(t *testing.T) {
 	for _, marker := range []string{
 		"flake.nixosModules.finix-base",
 		"microbe.qemuRunner",
-		"config.virtualisation.qemu.argv",
+		"cloud-hypervisor",
 		"console=ttyS0",
 	} {
 		if !strings.Contains(content, marker) {

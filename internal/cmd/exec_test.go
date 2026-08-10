@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"net"
 	"os"
@@ -22,8 +21,9 @@ func writeState(t *testing.T, base string, store *state.Store) {
 }
 
 // writeFinixConfig writes a single-service compose file with os: "finix"
-// to path, for tests exercising resolveGuestVsock's finix (real AF_VSOCK)
-// branch instead of the default nixos one.
+// to path, for tests exercising resolveGuestVsock against a finix service
+// -- it resolves to the same notify.vsock UDS convention as nixos now that
+// finix also drives cloud-hypervisor (finix-base.nix), not raw AF_VSOCK.
 func writeFinixConfig(t *testing.T, path string) {
 	t.Helper()
 	finixConfigJSON := `{
@@ -38,17 +38,6 @@ func writeFinixConfig(t *testing.T, path string) {
   }
 }`
 	if err := os.WriteFile(path, []byte(finixConfigJSON), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// writeGeneratedJSON writes a minimal generated.json (the shape
-// LoadGeneratedCID reads) into dir, for tests that need a finix service's
-// CID on disk without going through a full flakegen.Stack render.
-func writeGeneratedJSON(t *testing.T, dir, svc string, cid int) {
-	t.Helper()
-	content := fmt.Sprintf(`{"services": {%q: {"cid": %d}}}`, svc, cid)
-	if err := os.WriteFile(filepath.Join(dir, "generated.json"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -68,15 +57,16 @@ func TestResolveGuestVsockRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.OS != "nixos" {
-		t.Errorf("resolveGuestVsock().OS = %q, want %q", got.OS, "nixos")
-	}
 	want := filepath.Join(dataDir, "runs", "web", "notify.vsock")
 	if got.UDSPath != want {
 		t.Errorf("resolveGuestVsock().UDSPath = %q, want %q", got.UDSPath, want)
 	}
 }
 
+// TestResolveGuestVsockFinix proves finix services resolve to the same
+// notify.vsock UDS convention as nixos -- both guest OSes drive
+// cloud-hypervisor now (finix-base.nix), so there's no OS-specific branch
+// left in resolveGuestVsock.
 func TestResolveGuestVsockFinix(t *testing.T) {
 	cfgDir := t.TempDir()
 	cfgPath := filepath.Join(cfgDir, "microbe.json")
@@ -89,17 +79,14 @@ func TestResolveGuestVsockFinix(t *testing.T) {
 			"web": {Status: "running"},
 		},
 	})
-	writeGeneratedJSON(t, cfgDir, "web", 7)
 
 	got, err := resolveGuestVsock(cfgPath, "web")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.OS != "finix" {
-		t.Errorf("resolveGuestVsock().OS = %q, want %q", got.OS, "finix")
-	}
-	if got.CID != 7 {
-		t.Errorf("resolveGuestVsock().CID = %d, want 7", got.CID)
+	want := filepath.Join(dataDir, "runs", "web", "notify.vsock")
+	if got.UDSPath != want {
+		t.Errorf("resolveGuestVsock().UDSPath = %q, want %q", got.UDSPath, want)
 	}
 }
 

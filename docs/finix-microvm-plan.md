@@ -451,3 +451,113 @@ both services `running`/`healthy` in the same `microbe up` table.
    `virtiofsd` process per share (the demo already does this for volumes —
    reuse that machinery for the store). Verified by: Phase 0 boot smoke
    (store share) and Phase 2 acceptance (volume share).
+
+## finix → cloud-hypervisor port (2026-08-10, in progress)
+
+Plan file: `~/.claude/plans/parsed-puzzling-mitten.md`. Goal: finix guests
+drive cloud-hypervisor directly (finix has no upstream cloud-hypervisor
+support; `microvm.nix`'s NixOS module can't be imported into a finix guest
+tree since it assumes systemd, finix runs finit) instead of plain QEMU, so
+both guest OSes share one hypervisor.
+
+**Code changes, all done, uncommitted, `go test ./...` green (192 passed):**
+- `flake.go`/`flake_test.go`: dropped `(inputs.finix + "/modules/
+  virtualisation/qemu.nix")` from `ServicePart`'s finix branch; added
+  `config.flake.nixosModules.finix-virtiofsd-run`.
+- `finix-base.nix`: full rewrite. Hand-built `cloud-hypervisor` invocation
+  (`--kernel <kernel.dev>/vmlinux`, `--initramfs <initrd.package>/initrd`,
+  `--vsock cid=...,socket=notify.vsock`, `--fs tag=...,socket=...` per
+  virtiofs share, `--net tap=...,mac=...` per network, `--api-socket
+  <svc>.sock`). `microbe.qemuRunner` is now `pkgs.symlinkJoin` of
+  `bin/microvm-run` + `bin/virtiofsd-run` (new `microbe.extraRunnerBins`
+  option, populated by `finix-virtiofsd-run.nix`). Declares
+  `boot.initrd.supportedFilesystems.virtiofs.enable` and
+  `boot.supportedFilesystems.virtiofs.enable` options ourselves — finix has
+  no `filesystems/virtiofs.nix` module (confirmed: only btrfs/ext2/ext4/
+  f2fs/vfat/xfs/zfs/luks/lvm/ntfs3/tmpfs/9p/none/fuse.mergerfs exist), so
+  without these, any `neededForBoot` virtiofs `fileSystems` entry throws
+  "option does not exist". `/nix/store` share mount overrides the
+  auto-generated `boot.initrd.finit.tasks."mount-nix-.ro-store"` with a
+  retry loop (`mount -t virtiofs nix-store /sysroot/nix/.ro-store`, 50
+  tries × 0.2s) — **verified live this session**: the virtio-fs PCI device
+  for the store share is intermittently not yet bound when the
+  auto-generated (non-retrying) task runs, same race class as the old 9p
+  bug (`virtio-fs: tag <nix-store> not found` then `discovered new tag:
+  nix-store` a few ms later) — without the retry, boot hangs forever, no
+  reboot, no diagnostic beyond one kernel line.
+- `finix-agent.nix`: trimmed — dropped the `-device vhost-vsock-pci` QEMU
+  arg (superseded by `finix-base.nix`'s own `--vsock`), kept
+  `boot.kernelModules = [ "vmw_vsock_virtio_transport" ]` (still needed,
+  hypervisor-agnostic — same guest driver gap either way).
+- `finix-network.nix`: `virtualisation.qemu.nics` → `microbe.netInterfaces`
+  (new option on `finix-base.nix`, consumed for `--net` args). Static-IP
+  finit task unchanged (MAC-match under `/sys/class/net`, hypervisor-
+  agnostic).
+- `finix-virtiofsd-run.nix` (new): mirrors `virtiofsd-run.nix`'s
+  supervisord-multiplexing pattern, built from `config.microbe.
+  virtiofsShares` (new option on `finix-base.nix`, always includes the
+  mandatory `/nix/store` share plus user-declared share volumes).
+- `finix-configurations.nix`: unrelated earlier fix, still in place
+  (`flake.finixConfigurations` needs a `lazyAttrsOf` declaration for
+  multiple finix services to coexist).
+- Go side: `internal/cmd/lifecycle.go`'s `hasVirtiofsShare`/
+  `virtiofsShareSockets` are now OS-aware (finix always needs virtiofsd,
+  even with zero declared volumes — nixos only when a share volume is
+  declared, unaffected). `internal/cmd/agentsession.go`'s `guestAddr`
+  collapsed from `{OS, UDSPath, CID}` to just `{UDSPath}` — both guest OSes
+  use the same hybrid-vsock UDS now. Removed `vsockexec.DialVsock` (real
+  kernel AF_VSOCK, no longer needed) and `flakegen.LoadGeneratedCID` (no
+  longer needed to look up a CID for dialing) plus their tests.
+
+**Live verification: complete (2026-08-10).** The vhost-user failure noted
+below turned out to be a stale-log artifact as suspected — a clean rerun
+showed both virtiofsd instances (`nix-store`, `shared`) connect fine. Real
+boot bugs did exist, but they were three different, unrelated problems, all
+found and fixed this session:
+
+1. **Store mount never actually retried** (`finix-base.nix`): the retry-loop
+   override for `mount-nix-.ro-store` hand-wrote the `mount -t virtiofs`
+   command instead of reusing finix's auto-generated one, and dropped the
+   `-o X-mount.mkdir` option in the process. Without it, `/sysroot/nix/.ro-store`
+   never gets created, so the mount fails on literally every one of the 50
+   retries (mount point doesn't exist — not the PCI-probe race the loop was
+   written for). Console output actively hid this: finit's boot-progress UI
+   prints `[ OK ]` for a task as soon as it *starts*, not when it completes,
+   so a task silently failing in the background for ~10s looks identical to
+   one that already succeeded. Fix: add `-o X-mount.mkdir` back. Regression
+   test: `TestFinixStoreMountCreatesMountpoint`.
+2. **Missing `init=` kernel param** (`finix-base.nix`): the hand-built
+   cloud-hypervisor `--cmdline` never carried `init=${config.system.topLevel}/init`
+   — previously supplied unconditionally by finix's own `virtualisation/qemu.nix`,
+   which this port no longer imports. Without it, stage-1's switch-root
+   script falls back to a bare `/init` default that nothing creates, so
+   switch-root's `-x` check always fails and the guest reboot-loops forever
+   right at the switch-root boundary. Fix: add the `init=` param explicitly.
+   Regression test: `TestFinixRunnerSetsInitKernelParam`.
+3. **User share volumes were declared but never mounted** (`finix-base.nix`):
+   finix has no stage-2 equivalent of NixOS/systemd's automount for ordinary
+   `fileSystems` entries — only stage-1's `mount.nix` handles `neededForBoot`
+   entries, and share volumes are deliberately not `neededForBoot`. Verified
+   live: `mountpoint` on the share's target failed in a booted guest despite
+   the virtiofs device being attached. Fix: one retry-loop `finit.tasks`
+   entry per declared share volume, stage-2 (post-switch-root) namespace,
+   same retry pattern as the store mount. Regression test:
+   `TestFinixShareVolumeGetsMountTask`.
+
+(One dead end worth recording: early in this session a two-condition finit
+task — `<task/mount-root/success,task/mount-nix-.ro-store/success>` — never
+ran, which looked like a finit condition-scheduling bug, and was initially
+"fixed" by restructuring around it. That restructuring was reverted once bug
+#1 above was found: the referenced task was never actually *succeeding*, so
+nothing gated on its success condition could ever run — ordinary,
+correctly-behaving condition gating, not a finit bug. Lesson banked in the
+code comments: don't trust finit's `[ OK ]` console marker as a completion
+signal when the guest's own timing is being inferred from wall-clock gaps.)
+
+**Final live verification, this session:** clean `microbe up` (real host
+provisioning) → guest reaches `finix, entering runlevel 2` and the `finix
+login:` prompt in ~5s guest-time, no reboot loop. `microbe shell a` connects
+over real `DialHybridVsock`. Inside the guest: `/nix/store` is populated and
+readable (real store contents listed), and `/mnt/shared/marker.txt` reads
+back `hello` — both the mandatory store share and a user-declared share
+volume are mounted and working end to end. `go test ./...`: 195 passed.

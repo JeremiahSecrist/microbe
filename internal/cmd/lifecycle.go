@@ -90,9 +90,16 @@ const (
 
 // hasVirtiofsShare reports whether svc declares any virtiofs share, i.e.
 // whether its runner build carries a bin/virtiofsd-run companion script
-// (microvm.nix's microvm.binScripts.virtiofsd-run, gated by
-// requiresVirtiofsd) that up must start before the VM.
+// that up must start before the VM. finix services always need it,
+// regardless of declared volumes: unlike nixos (which only shares /nix/
+// store via virtiofs when a share happens to be named exactly that, which
+// renderer.nix never does -- microvm.nix defaults nixos guests to a baked
+// store-disk image instead), finix intentionally live-shares /nix/store
+// via virtiofs unconditionally (see finix-base.nix's module comment).
 func hasVirtiofsShare(svc config.Service) bool {
+	if svc.OS == "finix" {
+		return true
+	}
 	for _, v := range svc.Volumes {
 		if v.Type == "share" && v.Protocol == "virtiofs" {
 			return true
@@ -105,9 +112,14 @@ func hasVirtiofsShare(svc config.Service) bool {
 // starting svc's VM, one per virtiofs share, relative to the service's
 // runDir. Matches microvm.nix's own default (nixos-modules/microvm/
 // options.nix): "<hostname>-virtiofs-<tag>.sock", tag = the volume name
-// (see renderer.nix's `tag = v.name`).
+// (see renderer.nix's `tag = v.name`) -- and finix-base.nix/finix-
+// virtiofsd-run.nix's own analogue, tag "nix-store" for the mandatory
+// store share.
 func virtiofsShareSockets(svcName string, svc config.Service) []string {
 	var out []string
+	if svc.OS == "finix" {
+		out = append(out, fmt.Sprintf("%s-virtiofs-nix-store.sock", svcName))
+	}
 	for _, v := range svc.Volumes {
 		if v.Type == "share" && v.Protocol == "virtiofs" {
 			out = append(out, fmt.Sprintf("%s-virtiofs-%s.sock", svcName, v.Name))

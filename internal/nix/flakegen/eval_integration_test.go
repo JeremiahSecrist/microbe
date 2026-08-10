@@ -100,21 +100,29 @@ func TestFinixStackEvaluates(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A real `nix build`, not just `nix eval`: qemuRunner is now a
+	// symlinkJoin of bin/microvm-run (cloud-hypervisor invocation) and
+	// bin/virtiofsd-run (mandatory /nix/store share, see finix-base.nix/
+	// finix-virtiofsd-run.nix) -- proves both actually realize, not just
+	// that the attrpath evaluates.
 	target := st.Services["a"].BuildTarget
-	cmd := exec.Command("nix", "eval", "--json", "--no-write-lock-file", target)
+	cmd := exec.Command("nix", "build", "--no-write-lock-file", "--print-out-paths", "--no-link", target)
 	cmd.Dir = dir
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("eval %s: %v\n%s", target, err, stderr.String())
+		t.Fatalf("build %s: %v\n%s", target, err, stderr.String())
 	}
+	outPath := strings.TrimSpace(string(out))
 	// bin/microvm-run, not bin/run-vm: runtime.StartService (internal/
 	// runtime/runner.go) hardcodes that binName for every service
 	// regardless of OS, so finix's qemuRunner derivation must ship its
 	// script under that name for `microbe up` to find it.
-	if !strings.Contains(string(out), "microvm-run") {
-		t.Errorf("qemuRunner = %s, want a microvm-run store path", out)
+	for _, bin := range []string{"microvm-run", "virtiofsd-run"} {
+		if _, err := os.Stat(filepath.Join(outPath, "bin", bin)); err != nil {
+			t.Errorf("qemuRunner build %s missing bin/%s: %v", outPath, bin, err)
+		}
 	}
 }
 
@@ -171,6 +179,216 @@ func TestMultipleFinixServicesEvaluate(t *testing.T) {
 	cmd.Stderr = &stderr
 	if _, err := cmd.Output(); err != nil {
 		t.Fatalf("eval %s: %v\n%s", target, err, stderr.String())
+	}
+}
+
+// TestFinixStoreMountCreatesMountpoint is a regression test for a real
+// boot hang found via a live cloud-hypervisor boot: finix-base.nix's
+// retry-loop override of the "mount-nix-.ro-store" task (see the task's
+// own comment) hand-writes the `mount -t virtiofs` command instead of
+// using finix's own auto-generated one (mount.nix's `mount -o ${opts}`,
+// where opts always includes "X-mount.mkdir" to create the mountpoint
+// directory first). Without -o X-mount.mkdir, /sysroot/nix/.ro-store never
+// gets created, so the mount fails on literally every one of the 50
+// retries (mount point does not exist -- not the PCI-probe race the retry
+// loop was written for), the task never succeeds, and everything
+// downstream (the /nix/store bind mount, switch-root's init= existence
+// check) fails in turn, reboot-looping the guest. Console output alone
+// hid this: finit's boot-progress UI prints "[ OK ]" for a task as soon as
+// it *starts*, not when it completes, so a task silently failing in the
+// background for the next ~10s looks identical to one that already
+// succeeded.
+func TestFinixStoreMountCreatesMountpoint(t *testing.T) {
+	if _, err := exec.LookPath("nix"); err != nil {
+		t.Skip("nix not in PATH")
+	}
+
+	dir := t.TempDir()
+	userNix := `{
+  name = "finix-bindmount-test";
+  networks = { backend = { subnet = "192.168.91.0/24"; }; };
+  services = {
+    a = {
+      os = "finix";
+      networks = [ { name = "backend"; ip = "192.168.91.2"; } ];
+    };
+  };
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "microbe.nix"), []byte(userNix), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Compose{
+		SchemaVersion: 1,
+		Name:          "finix-bindmount-test",
+		Networks:      map[string]config.Network{"backend": {Subnet: "192.168.91.0/24"}},
+		Services: map[string]config.Service{
+			"a": {OS: "finix", Networks: []config.Attach{{Name: "backend", IP: "192.168.91.2"}}},
+		},
+	}
+	st := mustStack(t, cfg)
+	if err := WriteStack(dir, st); err != nil {
+		t.Fatal(err)
+	}
+
+	target := ".#finixConfigurations.a.config.boot.initrd.finit.tasks.\"mount-nix-.ro-store\""
+	cmd := exec.Command("nix", "eval", "--json", "--no-write-lock-file", target)
+	cmd.Dir = dir
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("eval %s: %v\n%s", target, err, stderr.String())
+	}
+
+	var task struct {
+		Script string `json:"script"`
+	}
+	if err := json.Unmarshal(out, &task); err != nil {
+		t.Fatalf("unmarshal task: %v\n%s", err, out)
+	}
+	if !strings.Contains(task.Script, "X-mount.mkdir") {
+		t.Errorf("mount-nix-.ro-store script never passes -o X-mount.mkdir -- the mountpoint directory never gets created, so every mount attempt fails regardless of retries:\n%s", task.Script)
+	}
+}
+
+// TestFinixRunnerSetsInitKernelParam is a regression test for a real boot
+// hang found via a live cloud-hypervisor boot: finix-base.nix builds its
+// own cloud-hypervisor --cmdline (finix's own virtualisation/qemu.nix,
+// which used to supply "init=${config.system.topLevel}/init", is no longer
+// imported at all -- see the module's own header comment). Without an
+// init= kernel param, stage-1's switch-root script (finix's
+// modules/finit/initrd.nix) falls back to its "/init" default, which
+// nothing ever creates in the tmpfs root, so switch-root always takes its
+// failure path ("rescue shell is disabled, rebooting in 10s") -- verified
+// live: the guest boots, mounts everything correctly, then reboot-loops
+// forever right at switch-root without this.
+func TestFinixRunnerSetsInitKernelParam(t *testing.T) {
+	if _, err := exec.LookPath("nix"); err != nil {
+		t.Skip("nix not in PATH")
+	}
+
+	dir := t.TempDir()
+	userNix := `{
+  name = "finix-init-param-test";
+  networks = { backend = { subnet = "192.168.92.0/24"; }; };
+  services = {
+    a = {
+      os = "finix";
+      networks = [ { name = "backend"; ip = "192.168.92.2"; } ];
+    };
+  };
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "microbe.nix"), []byte(userNix), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Compose{
+		SchemaVersion: 1,
+		Name:          "finix-init-param-test",
+		Networks:      map[string]config.Network{"backend": {Subnet: "192.168.92.0/24"}},
+		Services: map[string]config.Service{
+			"a": {OS: "finix", Networks: []config.Attach{{Name: "backend", IP: "192.168.92.2"}}},
+		},
+	}
+	st := mustStack(t, cfg)
+	if err := WriteStack(dir, st); err != nil {
+		t.Fatal(err)
+	}
+
+	target := st.Services["a"].BuildTarget
+	cmd := exec.Command("nix", "build", "--no-write-lock-file", "--print-out-paths", "--no-link", target)
+	cmd.Dir = dir
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("build %s: %v\n%s", target, err, stderr.String())
+	}
+	outPath := strings.TrimSpace(string(out))
+
+	script, err := os.ReadFile(filepath.Join(outPath, "bin", "microvm-run"))
+	if err != nil {
+		t.Fatalf("read bin/microvm-run: %v", err)
+	}
+	if !strings.Contains(string(script), "init=/nix/store") {
+		t.Errorf("bin/microvm-run --cmdline has no init= kernel param (switch-root always fails without it):\n%s", script)
+	}
+}
+
+// TestFinixShareVolumeGetsMountTask is a regression test for a real gap
+// found via live boot testing: finix has no stage-2 equivalent of NixOS's
+// systemd automount for ordinary `fileSystems` entries (grepped finix's
+// own modules/finit/stage2.nix: no fileSystems handling at all -- only
+// stage-1's mount.nix handles neededForBoot entries, and user share
+// volumes are deliberately not neededForBoot). Without an explicit
+// post-switch-root finit task, a declared share volume stays declared in
+// fileSystems but never actually gets mounted, verified live (`mountpoint
+// -q` on the share's target failed in a booted guest despite the
+// virtiofs device being attached).
+func TestFinixShareVolumeGetsMountTask(t *testing.T) {
+	if _, err := exec.LookPath("nix"); err != nil {
+		t.Skip("nix not in PATH")
+	}
+
+	dir := t.TempDir()
+	shareHost := t.TempDir()
+	userNix := `{
+  name = "finix-share-mount-test";
+  networks = { backend = { subnet = "192.168.94.0/24"; }; };
+  services = {
+    a = {
+      os = "finix";
+      networks = [ { name = "backend"; ip = "192.168.94.2"; } ];
+      volumes = [
+        { name = "shared"; host = "` + shareHost + `"; target = "/mnt/shared"; }
+      ];
+    };
+  };
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "microbe.nix"), []byte(userNix), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Compose{
+		SchemaVersion: 1,
+		Name:          "finix-share-mount-test",
+		Networks:      map[string]config.Network{"backend": {Subnet: "192.168.94.0/24"}},
+		Services: map[string]config.Service{
+			"a": {
+				OS:       "finix",
+				Networks: []config.Attach{{Name: "backend", IP: "192.168.94.2"}},
+				Volumes:  []config.Volume{{Name: "shared", Type: "share", Protocol: "virtiofs", Host: shareHost, Target: "/mnt/shared"}},
+			},
+		},
+	}
+	st := mustStack(t, cfg)
+	svc := st.Services["a"]
+	svc.ShareHosts = map[string]string{"shared": shareHost}
+	st.Services["a"] = svc
+	if err := WriteStack(dir, st); err != nil {
+		t.Fatal(err)
+	}
+
+	target := ".#finixConfigurations.a.config.finit.tasks.\"mount-share-shared\".command"
+	cmd := exec.Command("nix", "build", "--no-write-lock-file", "--print-out-paths", "--no-link", target)
+	cmd.Dir = dir
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("build %s: %v\n%s", target, err, stderr.String())
+	}
+	scriptPath := strings.TrimSpace(string(out))
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", scriptPath, err)
+	}
+	if !strings.Contains(string(script), "mount") || !strings.Contains(string(script), "/mnt/shared") {
+		t.Errorf("mount-share-shared command doesn't mount /mnt/shared:\n%s", script)
 	}
 }
 

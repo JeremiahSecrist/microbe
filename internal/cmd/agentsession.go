@@ -11,27 +11,22 @@ import (
 
 	"microbe/internal/config"
 	"microbe/internal/datadir"
-	"microbe/internal/nix/flakegen"
 	"microbe/internal/state"
 	"microbe/internal/vsockexec"
 )
 
-// guestAddr is where to reach svc's agent: exactly one of UDSPath (nixos,
-// cloud-hypervisor's hybrid-vsock UDS) or CID (finix, real AF_VSOCK) is
-// meaningful, selected by OS -- the two guest types have no shared
-// transport, see dialAgent.
+// guestAddr is where to reach svc's agent: a notify.vsock UNIX socket path
+// (cloud-hypervisor's hybrid-vsock device, see up.go's runDir convention,
+// base/runs/<svc>) -- both guest OSes use the same transport now that finix
+// also drives cloud-hypervisor (finix-base.nix), not QEMU's raw kernel
+// AF_VSOCK.
 type guestAddr struct {
-	OS      string // "nixos" or "finix"
 	UDSPath string
-	CID     uint32
 }
 
 // dialAgent is a seam so tests can fake the vsock connection without a real
-// guest; production dispatches on addr.OS to the matching real transport.
+// guest; production always dials the hybrid-vsock UDS.
 var dialAgent = func(addr guestAddr) (io.ReadWriteCloser, error) {
-	if addr.OS == "finix" {
-		return vsockexec.DialVsock(addr.CID, vsockexec.AgentPort)
-	}
 	return vsockexec.DialHybridVsock(addr.UDSPath, vsockexec.AgentPort)
 }
 
@@ -40,25 +35,18 @@ var dialAgent = func(addr guestAddr) (io.ReadWriteCloser, error) {
 // meaning ssh gave `microbe shell` before.
 var defaultShellArgv = []string{"/bin/sh", "-l"}
 
-// resolveGuestVsock loads the compose config (to confirm svc exists and
-// find its OS) and the running state (to confirm svc is up), then returns
-// where to reach svc's agent -- a notify.vsock UNIX socket path for nixos
-// guests (cloud-hypervisor's own hybrid-vsock device, see up.go's runDir
-// convention, base/runs/<svc>), or a CID for finix guests (real AF_VSOCK,
-// looked up from generated.json since it's assigned once at render time
-// and otherwise only known to the rendered Nix -- see
-// flakegen.LoadGeneratedCID and finix-agent.nix, which reads the same
-// file to wire the matching QEMU vsock device). Unlike SSH this needs no
-// IP, no network attachment, and no keys -- reachability is a local
-// filesystem permission (nixos) or a kernel-assigned CID (finix), not a
-// network path.
+// resolveGuestVsock loads the compose config (to confirm svc exists) and
+// the running state (to confirm svc is up), then returns where to reach
+// svc's agent -- a notify.vsock UNIX socket path, same convention for both
+// guest OSes. Unlike SSH this needs no IP, no network attachment, and no
+// keys -- reachability is a local filesystem permission, not a network
+// path.
 func resolveGuestVsock(file, svc string) (guestAddr, error) {
 	cfg, err := config.Load(file)
 	if err != nil {
 		return guestAddr{}, err
 	}
-	svcCfg, ok := cfg.Services[svc]
-	if !ok {
+	if _, ok := cfg.Services[svc]; !ok {
 		return guestAddr{}, fmt.Errorf("no service %q", svc)
 	}
 	base := datadir.Dir(cfg.Name)
@@ -69,14 +57,7 @@ func resolveGuestVsock(file, svc string) (guestAddr, error) {
 	if _, ok := store.Services[svc]; !ok {
 		return guestAddr{}, fmt.Errorf("service %q is not running", svc)
 	}
-	if svcCfg.OS == "finix" {
-		cid, err := flakegen.LoadGeneratedCID(filepath.Dir(file), svc)
-		if err != nil {
-			return guestAddr{}, err
-		}
-		return guestAddr{OS: "finix", CID: uint32(cid)}, nil
-	}
-	return guestAddr{OS: "nixos", UDSPath: filepath.Join(base, "runs", svc, "notify.vsock")}, nil
+	return guestAddr{UDSPath: filepath.Join(base, "runs", svc, "notify.vsock")}, nil
 }
 
 // frameWriter serializes frame writes to the agent connection: stdin

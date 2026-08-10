@@ -78,6 +78,37 @@ func loadStack(t *testing.T, cfgPath string) (*config.Compose, *flakegen.Stack) 
 	return cfg, st
 }
 
+// TestHasVirtiofsShareFinixAlwaysTrue proves finix services always need
+// virtiofsd, even with zero declared share volumes -- unlike nixos, finix
+// live-shares /nix/store via virtiofs unconditionally (see finix-base.nix's
+// module comment: nixos defaults to a baked store-disk image instead, since
+// renderer.nix never declares a share named exactly "/nix/store").
+func TestHasVirtiofsShareFinixAlwaysTrue(t *testing.T) {
+	if !hasVirtiofsShare(config.Service{OS: "finix"}) {
+		t.Error("hasVirtiofsShare(finix, no volumes) = false, want true (mandatory /nix/store share)")
+	}
+}
+
+func TestHasVirtiofsShareNixosNeedsDeclaredVolume(t *testing.T) {
+	if hasVirtiofsShare(config.Service{OS: "nixos"}) {
+		t.Error("hasVirtiofsShare(nixos, no volumes) = true, want false")
+	}
+}
+
+func TestVirtiofsShareSocketsFinixIncludesStore(t *testing.T) {
+	sockets := virtiofsShareSockets("db", config.Service{OS: "finix"})
+	want := "db-virtiofs-nix-store.sock"
+	found := false
+	for _, s := range sockets {
+		if s == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("virtiofsShareSockets(finix) = %v, want to include %q", sockets, want)
+	}
+}
+
 func TestParsePort(t *testing.T) {
 	host, guest, err := parsePort("8080:80")
 	if err != nil || host != 8080 || guest != 80 {
