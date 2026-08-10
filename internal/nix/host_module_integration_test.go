@@ -139,7 +139,7 @@ func TestHostModuleConfiguresHost(t *testing.T) {
 		t.Fatalf("decode eval: %v\n%s", err, out)
 	}
 
-	for _, want := range []string{"tun", "br_netfilter", "vhost", "vhost_net"} {
+	for _, want := range []string{"tun", "br_netfilter", "vhost", "vhost_net", "vhost_vsock"} {
 		if !containsStr(got.KernelModules, want) {
 			t.Errorf("boot.kernelModules missing %q: %v", want, got.KernelModules)
 		}

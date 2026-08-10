@@ -60,6 +60,7 @@ in
         "br_netfilter" # let nftables see bridged traffic (DNAT on bridges)
         "vhost" # virtio-net acceleration
         "vhost_net"
+        "vhost_vsock" # AF_VSOCK transport for `microbe shell`/`exec` into finix guests
         # Loaded when the CPU supports them; modprobe warns harmlessly
         # otherwise (e.g. booting the ISO on hardware without the feature).
         "kvm_intel"

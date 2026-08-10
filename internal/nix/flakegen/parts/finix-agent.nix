@@ -57,6 +57,19 @@
           "vhost-vsock-pci,id=vsock0,guest-cid=${toString gen.cid}"
         ];
 
+        # The vhost-vsock-pci device on the QEMU command line above gives
+        # the guest kernel a PCI device, but CONFIG_VIRTIO_VSOCKETS is
+        # built as a module (vmw_vsock_virtio_transport.ko), not built in,
+        # and nothing auto-probes it: finix's modprobe.nix only generates a
+        # modprobe.<mod> task per entry in boot.kernelModules (verified live
+        # -- boot.kernelModules = ["fuse" "9p" "loop" "atkbd"] on this guest
+        # produced exactly those four modprobe.* finit tasks and no others,
+        # so PF_VSOCK registered from the always-built core but the PCI
+        # transport driver never loaded and microbe-agent's AF_VSOCK listen
+        # silently never came up -- `ss --vsock -a` on the host showed no
+        # listener and DialVsock timed out after a real boot+connect test).
+        boot.kernelModules = [ "vmw_vsock_virtio_transport" ];
+
         # finit's analogue of agent.nix's systemd unit: respawn = true is
         # Restart=always; restart_sec is RestartSec. finit has no
         # unit-dependency graph (no after = network.target equivalent) --
