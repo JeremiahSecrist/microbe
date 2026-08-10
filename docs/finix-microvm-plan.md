@@ -149,6 +149,69 @@ closed the investigation.
 
 </details>
 
+## AF_VSOCK for finix guests (2026-08-09)
+
+`microbe shell`/`microbe exec` reach NixOS guests over vsock: cloud-hypervisor
+exposes a hybrid-vsock UNIX socket (`notify.vsock`, dialed via
+`vsockexec.DialHybridVsock`'s `CONNECT <port>\n` handshake) that
+`microbe-agent` (a stdlib-only Go binary, `internal/nix/flakegen/agent/main.go`)
+listens on, run as a systemd unit (`parts/agent.nix`). None of this existed
+for finix guests: no vsock device on the QEMU command line, no agent
+running, and the host-side dial code only knew the hybrid-UDS scheme, which
+doesn't apply to finix's plain-QEMU boot path (no cloud-hypervisor
+involved) or its `finit` init system (no systemd).
+
+**Wired up, real kernel AF_VSOCK instead of hybrid vsock** (finix uses
+plain QEMU, whose `vhost-vsock-pci` device is the traditional
+CID-addressed kernel transport — a different mechanism from
+cloud-hypervisor's hybrid UDS scheme, not just a different unit type):
+
+- `parts/finix-agent.nix` (new): adds
+  `-device vhost-vsock-pci,id=vsock0,guest-cid=<cid>` to the guest's QEMU
+  args (CID read back from `generated.json`, the same value NixOS guests
+  get via `microvm.vsock.cid` — CID assignment itself was already
+  OS-agnostic, `stack.go` assigns one to every service regardless of `os`)
+  and runs `microbe-agent` as a `finit.services` unit (`respawn`/
+  `restart_sec` standing in for systemd's `Restart=always`/`RestartSec`).
+  `virtualisation.qemu.extraArgs` is a pure addition here — finix's own
+  `qemu.nix` appends it to `argv` itself, so `finix-base.nix`'s existing
+  `-virtfs`-stripping argv rewrite passes it through untouched, no changes
+  needed there.
+- `flakegen.LoadGeneratedCID` (new): `generated.json` had no Go-side
+  reader before this — `RenderGenerated` only ever wrote it. Needed so
+  `resolveGuestVsock` can find a finix guest's CID at `shell`/`exec` time.
+- `vsockexec.DialVsock` (new): real `AF_VSOCK` connect via
+  `golang.org/x/sys/unix` (already a direct dependency), with a retry loop
+  (10s/200ms, matching `finix-base.nix`'s own boot-time mount-retry
+  cadence) since there's no socket file to poll for existence the way
+  `DialHybridVsock`'s UDS can be — the guest's agent just takes a few
+  seconds after boot before finit has it listening. Returns `*os.File`,
+  not `net.Conn`: Go's `net.FileConn` rejects `AF_VSOCK` sockets outright
+  (the `net` package doesn't recognize the address family) — same reason
+  the guest-side agent already hands its accepted connections around as
+  `*os.File` rather than wrapping them.
+- `agentsession.go`: `resolveGuestVsock`/`dialAgent` now dispatch on the
+  service's `os` through a single `guestAddr{OS, UDSPath, CID}`-typed seam
+  (nixos → `UDSPath`, finix → `CID`) instead of a bare path string —
+  one seam for tests to fake, not two.
+
+**Verified**: `go test ./...` (192 passed, including a real loopback
+`AF_VSOCK` round-trip test — this dev host has the `vsock`/
+`vsock_loopback` kernel modules loaded, so `DialVsock` exercises a real
+kernel socket end-to-end even without a guest). `TestFinixStackEvaluates`
+(a real `nix eval`) passes with the new module wired in. Built the actual
+runner by hand: the rendered QEMU command line carries
+`guest-cid=3` matching `generated.json`, and the rendered finit config is
+`service [234] name:microbe-agent cgroup.system restart:10 restart_sec:1
+respawn notify:none .../bin/microbe-agent`.
+
+**Not verified**: an actual booted guest answering a real `DialVsock` call
+end-to-end. That needs the host's `vhost_vsock` kernel module loaded
+(`/dev/vhost-vsock` doesn't exist on this dev host currently) and root to
+load it — noted as the operational prerequisite in `finix-agent.nix`
+itself. `modprobe vhost_vsock`, then `microbe up` a finix service and
+`microbe shell` it, is the remaining real-world check.
+
 ---
 
 ## 1. Overview & Motivation
