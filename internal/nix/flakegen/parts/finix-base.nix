@@ -79,6 +79,42 @@
       # regardless of guest OS, so finix needs no special-cased dial path.
       vsockPath = "notify.vsock";
 
+      # Mounts a virtiofs share by tag, waiting for the device to actually
+      # be ready with no `sleep`-based polling anywhere:
+      #  1. try the mount immediately (fast path -- the device may already
+      #     be up).
+      #  2. if that fails, block on a read of /dev/kmsg (opened *before*
+      #     the first attempt, so a tag discovered in the gap isn't missed
+      #     -- /dev/kmsg only replays messages written after open) for the
+      #     kernel's own "discovered new tag: <tag>" line. This wakes up
+      #     exactly when virtio_pci finishes probing the device, no busy-
+      #     wait, no arbitrary poll interval. `timeout` bounds the wait so
+      #     boot fails loudly instead of hanging forever if the device
+      #     never shows.
+      #  3. even after that kmsg line prints, the mount can still fail a
+      #     few more times -- verified live: the printk lands a hair before
+      #     the tag is actually usable by mount(2), a genuine sub-
+      #     millisecond kernel-internal race, not something a single retry
+      #     reliably wins. A short, sleep-free, iteration-bounded tight
+      #     loop (not time-bounded) closes that window without
+      #     reintroducing an arbitrary delay.
+      mountVirtiofs = tag: mountPoint: ''
+        exec 3</dev/kmsg
+        if ! mount -t virtiofs -o X-mount.mkdir ${lib.escapeShellArg tag} ${lib.escapeShellArg mountPoint}; then
+          timeout 20 sh -c 'while read -r line; do case "$line" in *"discovered new tag: ${tag}"*) exit 0 ;; esac; done' <&3
+          exec 3<&-
+          tries=0
+          while [ "$tries" -lt 1000 ]; do
+            mount -t virtiofs -o X-mount.mkdir ${lib.escapeShellArg tag} ${lib.escapeShellArg mountPoint} && break
+            tries=$((tries + 1))
+          done
+          if [ "$tries" -ge 1000 ]; then
+            printf 'mountVirtiofs ${tag}: mount still failing after tag discovery\n' >&2
+            exit 1
+          fi
+        fi
+      '';
+
       # init=<toplevel>/init: previously supplied by finix's own
       # virtualisation/qemu.nix (no longer imported -- see module comment
       # above), which set this from config.system.topLevel unconditionally.
@@ -252,19 +288,7 @@
         finit.tasks = builtins.listToAttrs (map (s: {
           name = "mount-share-${s.tag}";
           value = {
-            command = pkgs.writeShellScript "mount-share-${s.tag}" ''
-              tries=50
-              i=0
-              while [ "$i" -lt "$tries" ]; do
-                if mount -t virtiofs -o X-mount.mkdir ${lib.escapeShellArg s.tag} ${lib.escapeShellArg s.mountPoint}; then
-                  exit 0
-                fi
-                i=$((i + 1))
-                sleep 0.2
-              done
-              printf 'mount-share-${s.tag}: giving up after %s tries\n' "$tries" >&2
-              exit 1
-            '';
+            command = pkgs.writeShellScript "mount-share-${s.tag}" (mountVirtiofs s.tag s.mountPoint);
           };
         }) userShares);
 
@@ -288,34 +312,24 @@
         # auto-generated task has no retry, so boot silently hangs forever
         # with no reboot and no diagnostic beyond the one kernel line).
         #
-        # Override just this one task with a short retry loop, mirroring
-        # the polling pattern finit's own wait-dev tasks already use.
-        # Critically, unlike finix's own auto-generated command (mount.nix's
-        # `mount -o ${opts}`, where opts always includes "X-mount.mkdir"),
-        # our hand-written mount command must pass -o X-mount.mkdir itself
-        # -- verified live the hard way: without it, /sysroot/nix/.ro-store
-        # never gets created, so `mount -t virtiofs` fails on literally
-        # every one of the 50 retries (mount point does not exist, not a
-        # PCI race), the task never succeeds, and everything downstream
-        # (the /nix/store bind mount, switch-root's init= existence check)
-        # fails in turn -- easy to misdiagnose as a finit condition/
-        # scheduling bug from the console alone, since finit's boot-progress
-        # UI prints "[ OK ]" for a task as soon as it *starts*, not when it
-        # completes, which makes a task that's silently failing in the
-        # background look identical to one that already succeeded.
-        boot.initrd.finit.tasks."mount-nix-.ro-store".script = ''
-          tries=50
-          i=0
-          while [ "$i" -lt "$tries" ]; do
-            if mount -t virtiofs -o X-mount.mkdir nix-store /sysroot/nix/.ro-store; then
-              exit 0
-            fi
-            i=$((i + 1))
-            sleep 0.2
-          done
-          printf 'mount-nix-.ro-store: giving up after %s tries\n' "$tries" >&2
-          exit 1
-        '';
+        # Override just this one task to wait on the kernel's own tag-
+        # discovery event (see mountVirtiofs above) instead of finit's
+        # single unretried attempt. Critically, unlike finix's own
+        # auto-generated command (mount.nix's `mount -o ${opts}`, where
+        # opts always includes "X-mount.mkdir"), our hand-written mount
+        # command must pass -o X-mount.mkdir itself -- verified live the
+        # hard way: without it, /sysroot/nix/.ro-store never gets created,
+        # so `mount -t virtiofs` always fails (mount point does not exist,
+        # not the PCI race this override exists for), the task never
+        # succeeds, and everything downstream (the /nix/store bind mount,
+        # switch-root's init= existence check) fails in turn -- easy to
+        # misdiagnose as a finit condition/scheduling bug from the console
+        # alone, since finit's boot-progress UI prints "[ OK ]" for a task
+        # as soon as it *starts*, not when it completes, which makes a task
+        # that's silently failing in the background look identical to one
+        # that already succeeded.
+        boot.initrd.finit.tasks."mount-nix-.ro-store".script =
+          mountVirtiofs "nix-store" "/sysroot/nix/.ro-store";
 
         # There is no boot hang: runlevel 2 completes in ~5s regardless of
         # finit version. `services.getty` only spawns on tty1-6 (virtual

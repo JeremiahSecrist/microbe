@@ -561,3 +561,22 @@ over real `DialHybridVsock`. Inside the guest: `/nix/store` is populated and
 readable (real store contents listed), and `/mnt/shared/marker.txt` reads
 back `hello` — both the mandatory store share and a user-declared share
 volume are mounted and working end to end. `go test ./...`: 195 passed.
+
+**Follow-up, same session: removed all `sleep`-based polling from the mount
+scripts.** The two retry loops above originally polled `mount` in a `sleep
+0.2` loop (a fixed interval, unrelated to when the virtio-fs PCI device
+actually finishes probing). Replaced with `mountVirtiofs` (`finix-base.nix`):
+try the mount once immediately, and only if that fails, block on a read of
+`/dev/kmsg` (opened *before* the first attempt, so a tag discovered in the
+gap isn't missed) for the kernel's own "discovered new tag: `<tag>`" line —
+a real event-driven wake-up instead of a poll interval, bounded by `timeout`
+so boot still fails loudly rather than hanging if the device never shows.
+Verified live this still isn't quite enough on its own: the kernel prints
+that line a hair *before* the tag is actually usable by `mount(2)` — a
+genuine sub-millisecond kernel-internal race — so one more mount attempt
+right after the kmsg event still intermittently failed. Final shape: after
+the kmsg event, a short **iteration-bounded** (not time-bounded) tight retry
+loop with no `sleep` at all closes that last window. Confirmed live: clean
+boot to `finix, entering runlevel 2` and `finix login:`, `microbe shell a`
+works, both `/nix/store` and the user share mount and read correctly, same
+as the sleep-based version. `go test ./...`: 195 passed throughout.
