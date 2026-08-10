@@ -64,6 +64,7 @@ in
       inputs.finix.nixosModules.getty
       config.flake.nixosModules.finix-base
       config.flake.nixosModules.finix-agent
+      config.flake.nixosModules.finix-network
       { microCompose.serviceName = ` + q + `; }
       (compose.services.` + name + `.config or ({ ... }: { }))
     ];
