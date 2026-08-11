@@ -315,6 +315,13 @@
           "virtiofs"
         ];
 
+        # finix's default availableKernelModules includes physical-hardware
+        # drivers (uhci_hcd, ata_piix, sd_mod, etc.) that don't exist in the
+        # trimmed microVM kernel. modules-shrunk hard-errors if any listed
+        # module is absent. Clear the list -- all virtio drivers are built-in
+        # (=y) so they don't need to be in availableKernelModules.
+        boot.initrd.availableKernelModules = lib.mkForce [ ];
+
         # Kernel trimming has moved to parts/microbe-kernel.nix, which
         # applies to both finix and NixOS guests and is imported by
         # ServicePart for both OS types. The config in microbe-kernel.nix
