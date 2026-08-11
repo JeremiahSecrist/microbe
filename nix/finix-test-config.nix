@@ -34,7 +34,7 @@ in
   users.users.admin = {
     isNormalUser = true;
     extraGroups = [ "wheel" ];
-    initialPassword = "";
+    password = "";
   };
 
   microbe.finix = {
