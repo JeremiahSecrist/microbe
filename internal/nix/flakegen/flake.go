@@ -65,6 +65,7 @@ in
       config.flake.nixosModules.finix-agent
       config.flake.nixosModules.finix-network
       config.flake.nixosModules.finix-virtiofsd-run
+      config.flake.nixosModules.microbe-kernel
       { microCompose.serviceName = ` + q + `; }
       (compose.services.` + name + `.config or ({ ... }: { }))
     ];
@@ -85,6 +86,7 @@ in
       config.flake.nixosModules.guest-base
       config.flake.nixosModules.virtiofsd-run
       config.flake.nixosModules.agent
+      config.flake.nixosModules.microbe-kernel
       { microCompose.serviceName = ` + q + `; }
       (compose.services.` + name + `.config or ({ ... }: { }))
     ];

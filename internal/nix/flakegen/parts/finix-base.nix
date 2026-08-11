@@ -304,121 +304,16 @@
           "virtiofs"
         ];
 
-        # Trim the guest kernel's build config for a cloud-hypervisor-only
-        # VM guest with no physical hardware and no disk-type volumes (see
-        # the userShares comment above -- disk volumes aren't wired for
-        # finix yet, so root stays tmpfs and everything else is virtiofs).
-        # Uses boot.kernelPatches (not an override of boot.kernelPackages
-        # directly) because finix's own modules/boot/kernel.nix already
-        # merges config.boot.kernelPatches into config.boot.kernelPackages
-        # via its `apply` function -- see that module's `kernelPatches =
-        # (originalArgs.kernelPatches or [ ]) ++ config.boot.kernelPatches`.
-        # `patch = null` (no actual source patch, config-only) is the
-        # documented pattern for a structuredExtraConfig-only kernelPatches
-        # entry. Nixpkgs's generic kernel builder validates the resulting
-        # .config against what was requested and fails the *build* loudly
-        # on any option it couldn't actually satisfy (e.g. a Kconfig
-        # `select` conflict) -- so a bad entry here is caught before any
-        # boot attempt, not a silent runtime risk. Deliberately not setting
-        # `ignoreConfigErrors` anywhere, which would suppress that check.
-        boot.kernelPatches = [{
-          name = "microbe-finix-guest-trim";
-          patch = null;
-          structuredExtraConfig = with lib.kernel; {
-            # Filesystem drivers this guest never mounts -- root is tmpfs,
-            # /nix/store and share volumes are virtiofs (FUSE_FS/VIRTIO_FS
-            # deliberately left untouched, virtiofs depends on FUSE_FS), and
-            # no disk-type volumes exist for finix yet, so none of the
-            # on-disk or network filesystem drivers below are reachable.
-            # Kept to the subset nixpkgs' generic kernel builder actually
-            # accepts cleanly (see the long list of things *not* trimmed
-            # below, and why, for everything that didn't fit that bar).
-            XFS_FS = no;
-            JFS_FS = no;
-            HFS_FS = no;
-            HFSPLUS_FS = no;
-            "9P_FS" = no; # superseded by the virtiofs path this port added.
-            AFS_FS = no;
-            OVERLAY_FS = no;
-
-            # One piece of physical hardware this VM guest never has: no
-            # PS/2 keyboard controller (ttyS0 is the only input/output path
-            # -- see the "There is no boot hang" note below -- and ATKBD's
-            # on-demand modprobe was one of the four concurrent module
-            # loads implicated in the ~1s runlevel-2 stall
-            # docs/finix-microvm-plan.md's boot-speed investigation traced
-            # but didn't fix; removing the driver entirely means that
-            # modprobe now fails fast instead of racing).
-            KEYBOARD_ATKBD = no;
-
-            # Confirmed via /proc/modules on a booted guest (real ground
-            # truth, not a guess): dm_mod and loop both load by default but
-            # neither is ever actually used -- no LVM/device-mapper target
-            # and no loop device is ever created anywhere in this guest's
-            # boot path (root is tmpfs, everything else is a direct
-            # virtiofs mount, see mountVirtiofs above).
-            BLK_DEV_DM = no;
-            BLK_DEV_LOOP = no;
-
-            # --- Everything below was tried and deliberately reverted ---
-            #
-            # nixpkgs' generic kernel builder validates the resulting
-            # .config against what was requested and fails the *build*
-            # loudly (never reaching a boot attempt) whenever an option it
-            # was explicitly told to enable becomes unreachable, or when a
-            # requested value collides with one nixpkgs already sets at
-            # equal priority. Every option below hit one of those two
-            # failure modes, all caught at build time:
-            #
-            # EXT4_FS, EXT2_FS, BTRFS_FS, CIFS, CEPH_FS: common-config.nix
-            # sets each of these filesystems' xattr/posix_acl/security
-            # suboptions with a bare `= yes;` (not the softer `option yes`
-            # helper most other filesystems use), so disabling the parent
-            # makes those suboptions unreachable -- a hard error, not a
-            # dependency the module system can quietly resolve away.
-            #
-            # F2FS_FS, UDF_FS, NFS_FS, NFSD, ISO9660_FS: common-config.nix
-            # sets these filesystems (or, for NFSD, its ACL/V4 suboptions)
-            # directly at normal (non-default) module-system priority --
-            # `no` collided outright ("conflicting definition values")
-            # rather than cleanly overriding.
-            #
-            # NTFS3_FS: Kconfig itself (not the Nix module system) forces
-            # it on -- the deprecated read-only NTFS_FS driver `select`s
-            # NTFS3_FS whenever NTFS_FS is enabled, so "n" isn't even a
-            # legal answer for it (kernel config generation kept
-            # re-asking and the build died on EOF).
-            #
-            # VFAT_FS, MSDOS_FS, FAT_FS: disabling all three still left
-            # FAT_FS itself flagged as an unreachable explicitly-requested
-            # option elsewhere in the generic x86 config (not traced to a
-            # specific source file -- not worth the further digging for a
-            # driver this small).
-            #
-            # SOUND: common-config.nix explicitly enables a long list of
-            # Intel SOF sound-DSP submodules (SND_SOC_SOF_*) at normal
-            # priority; disabling SOUND makes every one of those
-            # unreachable. Fixing it would mean overriding each submodule
-            # individually too -- well past "easy win" for a driver that,
-            # being a module, was never going to load anyway without
-            # matching hardware.
-            #
-            # WLAN, CFG80211, MAC80211, BT: same "explicit enable becomes
-            # unreachable" problem, this time across a long tail of
-            # individual wifi/bluetooth radio and HID drivers
-            # (RTW88/RTW88_8822BE/RT2800USB_RT53XX/NVIDIA_SHIELD_FF/etc.).
-            # None of them are ever reachable at runtime on this guest (no
-            # matching hardware exists to probe for), so the cost of
-            # leaving them buildable is build-time-only, and fighting each
-            # cascade individually isn't worth it here.
-            #
-            # DRM, FB, USB_SUPPORT: common-config.nix sets DRM=y at normal
-            # (non-default) priority; `no` collided outright the same way
-            # the filesystem group above did. Left alone rather than
-            # reaching for lib.mkForce to fight a value nixpkgs evidently
-            # wants non-negotiable for its generic kernel build.
-          };
-        }];
+        # Kernel trimming has moved to parts/microbe-kernel.nix, which
+        # applies to both finix and NixOS guests and is imported by
+        # ServicePart for both OS types. The config in microbe-kernel.nix
+        # supersedes the boot.kernelPatches block that previously lived
+        # here -- it sets boot.kernelPackages directly (overriding the base
+        # kernel entirely) rather than patching it, which means finix's own
+        # modules/boot/kernel.nix `apply` function still sees a valid
+        # kernelPackages value and does not need boot.kernelPatches at all.
+        # The constraint landscape (what's safe to trim vs. what conflicts
+        # with nixpkgs common-config.nix) is documented in nix/microbe-kernel.nix.
 
         # The virtio-fs PCI device for the nix-store share is intermittently
         # not yet bound by virtio_pci when finit's auto-generated stage-1

@@ -14,6 +14,11 @@
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
 
+      microbeKernelPackages = import ./nix/microbe-kernel.nix {
+        inherit pkgs;
+        lib = nixpkgs.lib;
+      };
+
       # The microbe CLI, built from this repo. Dependencies are fetched from
       # the go module proxy into the nix store at build time (see vendorHash),
       # not committed under ./vendor. microbe-demo/ is excluded: it's a
@@ -59,6 +64,7 @@
         modules = [
           microvm.nixosModules.microvm
           ./microvm-config.nix
+          { boot.kernelPackages = microbeKernelPackages; }
         ];
       };
     in
@@ -67,6 +73,7 @@
         microbe = microbePkg;
         iso = iso.config.system.build.isoImage;
         microvm = microvmCfg.config.microvm.declaredRunner;
+        microvm-kernel = microbeKernelPackages.kernel;
         default = iso.config.system.build.isoImage;
       };
 
