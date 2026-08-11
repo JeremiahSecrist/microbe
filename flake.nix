@@ -7,10 +7,7 @@
       url = "github:microvm-nix/microvm.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    finix = {
-      url = "github:finix-community/finix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    finix.url = "github:finix-community/finix";
   };
 
   outputs = { self, nixpkgs, microvm, finix }:
@@ -80,11 +77,11 @@
       finixTestCfg = finix.lib.finixSystem {
         lib = nixpkgs.lib;
         specialArgs = {
-          pkgs = pkgs;
           inputs = { inherit finix; };
         };
         modules = [
           finix.nixosModules.getty
+          { nixpkgs.pkgs = pkgs; }
           { boot.kernelPackages = microbeKernelPackages; }
           (import ./internal/nix/flakegen/parts/finix-base.nix).flake.nixosModules.finix-base
           (import ./internal/nix/flakegen/parts/finix-virtiofsd-run.nix).flake.nixosModules.finix-virtiofsd-run

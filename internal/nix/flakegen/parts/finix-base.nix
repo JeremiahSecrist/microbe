@@ -322,6 +322,20 @@
         # (=y) so they don't need to be in availableKernelModules.
         boot.initrd.availableKernelModules = lib.mkForce [ ];
 
+        # finix's default kernel.nix adds ["loop" "atkbd"] to
+        # boot.kernelModules, which finit's modules-load plugin reads and
+        # creates per-module modprobe tasks for. Since loop and atkbd are
+        # built-in (=y) in our kernel config, clear the list to avoid
+        # unnecessary modprobe tasks that cause a ~1s race stall.
+        boot.kernelModules = lib.mkForce [ ];
+
+        # All drivers in the microVM kernel are built-in (=y) — no module
+        # loading is ever needed. Disable finix's modprobe module entirely:
+        # it creates a finit batch task, writes /proc/sys/kernel/modprobe,
+        # and installs kmod — none of which we need. The finit task was
+        # also racing on cond_set_oneshot_noupdate() (~1s stall).
+        boot.modprobeConfig.enable = false;
+
         # Kernel trimming has moved to parts/microbe-kernel.nix, which
         # applies to both finix and NixOS guests and is imported by
         # ServicePart for both OS types. The config in microbe-kernel.nix
