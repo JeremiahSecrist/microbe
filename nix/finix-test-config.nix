@@ -39,10 +39,8 @@ in
     password = "";
   };
 
-  security.sudo = {
-    enable = true;
-    wheelNeedsPassword = false;
-  };
+  environment.systemPackages = [ pkgs.sudo ];
+  environment.etc."sudoers".text = "%wheel ALL=(ALL:ALL) NOPASSWD: ALL\n";
 
   microbe.finix = {
     inherit svcName cid;
