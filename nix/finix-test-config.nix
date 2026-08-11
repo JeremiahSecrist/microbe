@@ -31,6 +31,12 @@ let
   ];
 in
 {
+  users.users.admin = {
+    isNormalUser = true;
+    extraGroups = [ "wheel" ];
+    initialPassword = "";
+  };
+
   microbe.finix = {
     inherit svcName cid;
     vcpu       = 1;
