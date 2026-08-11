@@ -31,10 +31,17 @@ let
   ];
 in
 {
+  users.users.root.password = "";
+
   users.users.admin = {
     isNormalUser = true;
     extraGroups = [ "wheel" ];
     password = "";
+  };
+
+  security.sudo = {
+    enable = true;
+    wheelNeedsPassword = false;
   };
 
   microbe.finix = {
