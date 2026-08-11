@@ -79,12 +79,16 @@
       # generated service stacks via flake.go's ServicePart).
       finixTestCfg = finix.lib.finixSystem {
         lib = nixpkgs.lib;
-        specialArgs.pkgs = pkgs;
+        specialArgs = {
+          pkgs = pkgs;
+          inputs = { inherit finix; };
+        };
         modules = [
           finix.nixosModules.getty
           { boot.kernelPackages = microbeKernelPackages; }
           (import ./internal/nix/flakegen/parts/finix-base.nix).flake.nixosModules.finix-base
           (import ./internal/nix/flakegen/parts/finix-virtiofsd-run.nix).flake.nixosModules.finix-virtiofsd-run
+          (import ./internal/nix/flakegen/parts/finix-sudo.nix).flake.nixosModules.finix-sudo
           ./nix/finix-test-config.nix
         ];
       };
