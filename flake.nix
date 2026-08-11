@@ -7,9 +7,13 @@
       url = "github:microvm-nix/microvm.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    finix = {
+      url = "github:finix-community/finix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, microvm }:
+  outputs = { self, nixpkgs, microvm, finix }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -67,6 +71,23 @@
           { boot.kernelPackages = microbeKernelPackages; }
         ];
       };
+
+      # Standalone finix test VM -- no compose/generated files needed.
+      # finix-base.nix reads config.microbe.finix.* which finix-test-config.nix
+      # sets directly with hardcoded values. finix-compose.nix is intentionally
+      # omitted (that module reads the compose file; it's only imported in
+      # generated service stacks via flake.go's ServicePart).
+      finixTestCfg = finix.lib.finixSystem {
+        lib = nixpkgs.lib;
+        specialArgs.pkgs = pkgs;
+        modules = [
+          finix.nixosModules.getty
+          { boot.kernelPackages = microbeKernelPackages; }
+          (import ./internal/nix/flakegen/parts/finix-base.nix).flake.nixosModules.finix-base
+          (import ./internal/nix/flakegen/parts/finix-virtiofsd-run.nix).flake.nixosModules.finix-virtiofsd-run
+          ./nix/finix-test-config.nix
+        ];
+      };
     in
     {
       packages.${system} = {
@@ -74,6 +95,7 @@
         iso = iso.config.system.build.isoImage;
         microvm = microvmCfg.config.microvm.declaredRunner;
         microvm-kernel = microbeKernelPackages.kernel;
+        microvm-finix = finixTestCfg.config.microbe.qemuRunner;
         default = iso.config.system.build.isoImage;
       };
 
@@ -84,6 +106,10 @@
         microvm-nixos = {
           type = "app";
           program = "${microvmCfg.config.microvm.declaredRunner}/bin/microvm-run";
+        };
+        microvm-finix = {
+          type = "app";
+          program = "${finixTestCfg.config.microbe.qemuRunner}/bin/microvm-run";
         };
         # Keep the old name working.
         microvm = {
@@ -101,6 +127,7 @@
         toplevel = iso.config.system.build.toplevel;
         # Verifies the MicroVM runner graph builds.
         microvm = microvmCfg.config.microvm.declaredRunner;
+        microvm-finix = finixTestCfg.config.microbe.qemuRunner;
       };
 
       nixosConfigurations = {

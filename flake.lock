@@ -1,5 +1,20 @@
 {
   "nodes": {
+    "finix": {
+      "locked": {
+        "lastModified": 1786207804,
+        "narHash": "sha256-atiEdr1Kxu/l90WbOU/Jh1Ov22UqBMShZ3EzWNKIyJ4=",
+        "owner": "finix-community",
+        "repo": "finix",
+        "rev": "ca52b0d781d345d848b3b2b32ffa3460ae959991",
+        "type": "github"
+      },
+      "original": {
+        "owner": "finix-community",
+        "repo": "finix",
+        "type": "github"
+      }
+    },
     "microvm": {
       "inputs": {
         "nixpkgs": [
@@ -39,6 +54,7 @@
     },
     "root": {
       "inputs": {
+        "finix": "finix",
         "microvm": "microvm",
         "nixpkgs": "nixpkgs"
       }

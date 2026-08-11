@@ -61,6 +61,7 @@ in
     specialArgs.pkgs = import inputs.nixpkgs { system = "x86_64-linux"; };
     modules = [
       inputs.finix.nixosModules.getty
+      config.flake.nixosModules.finix-compose
       config.flake.nixosModules.finix-base
       config.flake.nixosModules.finix-agent
       config.flake.nixosModules.finix-network

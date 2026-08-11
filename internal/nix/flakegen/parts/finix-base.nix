@@ -24,39 +24,17 @@
 # keeps the live-share design, so it always needs virtiofsd for the store,
 # even with zero user-declared share volumes (see internal/cmd/lifecycle.go's
 # hasVirtiofsShare, made OS-aware for exactly this).
+#
+# Service-specific values (svcName, vcpu, mem, cid, userShares) are consumed
+# from config.microbe.finix.* options rather than imported directly from
+# microbe.nix/generated.json. In generated service stacks, finix-compose.nix
+# populates those options by reading the compose/generated files. In the main
+# flake's standalone test VM (nix run .#microvm-finix), nix/finix-test-config.nix
+# sets them directly with hardcoded values, requiring no compose/generated files.
 {
   flake.nixosModules.finix-base = { config, lib, pkgs, ... }:
     let
-      compose = import ../microbe.nix;
-      generated = builtins.fromJSON (builtins.readFile ../generated.json);
-
-      svcName = config.microCompose.serviceName;
-      svc = compose.services.${svcName}
-        or (throw "microbe: no service '${svcName}' in compose file");
-      gen = generated.services.${svcName}
-        or (throw "microbe: no generated data for service '${svcName}'");
-
-      vcpu = svc.vcpu or 1;
-      mem = svc.mem or 512;
-
-      # "share" is the default volume type when omitted (see config.load's
-      # applyDefaults) -- mirrored here since this module imports the user's
-      # raw microbe.nix directly and doesn't go through Go's defaulting.
-      volumeType = v: v.type or "share";
-
-      # User-declared share volumes -- disk-type volumes aren't wired for
-      # finix yet (cloud-hypervisor `--disk` + guest-side mount is a
-      # separate, unimplemented piece; only share/virtiofs is in scope
-      # here). Owner-uid translation (renderer.nix's `--translate-uid`) is
-      # also not yet ported -- shares mount with virtiofsd's own uid, no
-      # guest-user remapping.
-      userShares = lib.optionals (svc ? volumes) (map (v: {
-        tag = v.name;
-        source = gen.volumes.${v.name}.host
-          or (throw "microbe: service '${svcName}': share '${v.name}' needs a host path");
-        mountPoint = v.target;
-        readOnly = (v.mode or "rw") == "ro";
-      }) (builtins.filter (v: volumeType v == "share") svc.volumes or [ ]));
+      inherit (config.microbe.finix) svcName vcpu mem cid userShares;
 
       # /nix/store is always shared, mandatory, read-only -- see module
       # comment above for why finix diverges from nixos's default here.
@@ -145,13 +123,46 @@
         "--memory" "size=${toString mem}M,shared=on"
         "--console" "null"
         "--serial" "tty"
-        "--vsock" "cid=${toString gen.cid},socket=${vsockPath}"
+        "--vsock" "cid=${toString cid},socket=${vsockPath}"
         "--api-socket" "${svcName}.sock"
       ]
       ++ lib.concatMap (s: [ "--fs" "tag=${s.tag},socket=${virtiofsSocket s.tag}" ]) allShares
       ++ lib.concatMap (n: [ "--net" n ]) netArgs;
     in
     {
+      options.microbe.finix = {
+        svcName = lib.mkOption {
+          type = lib.types.str;
+          description = "Service name, used for runner/socket naming conventions.";
+        };
+        vcpu = lib.mkOption {
+          type = lib.types.int;
+          default = 1;
+          description = "Number of vCPUs to give the guest.";
+        };
+        mem = lib.mkOption {
+          type = lib.types.int;
+          default = 512;
+          description = "Memory in MiB to give the guest.";
+        };
+        cid = lib.mkOption {
+          type = lib.types.int;
+          description = "AF_VSOCK context ID for this guest (must be unique per host).";
+        };
+        userShares = lib.mkOption {
+          type = lib.types.listOf (lib.types.submodule {
+            options = {
+              tag = lib.mkOption { type = lib.types.str; description = "virtiofs tag (socket name suffix)."; };
+              source = lib.mkOption { type = lib.types.str; description = "Host-side directory to share."; };
+              mountPoint = lib.mkOption { type = lib.types.str; description = "Guest-side mount point."; };
+              readOnly = lib.mkOption { type = lib.types.bool; default = false; };
+            };
+          });
+          default = [ ];
+          description = "User-declared share volumes (populated by finix-compose.nix in service stacks).";
+        };
+      };
+
       options.microbe.qemuRunner = lib.mkOption {
         type = lib.types.package;
         description = "A script that execs the cloud-hypervisor invocation for this finix guest.";

@@ -22,7 +22,7 @@
 {
   flake.nixosModules.finix-virtiofsd-run = { config, lib, pkgs, ... }:
     let
-      svcName = config.microCompose.serviceName;
+      svcName = config.microbe.finix.svcName;
       shares = config.microbe.virtiofsShares;
 
       # <rundir>/<svcName>-virtiofs-<tag>.sock -- must match finix-base.nix's
