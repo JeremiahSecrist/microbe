@@ -40,6 +40,9 @@ in
   };
 
   programs.sudo.enable = true;
+  environment.etc."sudoers".text = lib.mkAfter ''
+    Defaults:%wheel !authenticate
+  '';
 
   microbe.finix = {
     inherit svcName cid;
