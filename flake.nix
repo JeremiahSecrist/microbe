@@ -81,6 +81,11 @@
       nixosModules.host = import ./modules/host.nix;
 
       apps.${system} = {
+        microvm-nixos = {
+          type = "app";
+          program = "${microvmCfg.config.microvm.declaredRunner}/bin/microvm-run";
+        };
+        # Keep the old name working.
         microvm = {
           type = "app";
           program = "${microvmCfg.config.microvm.declaredRunner}/bin/microvm-run";
