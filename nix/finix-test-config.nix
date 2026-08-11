@@ -41,6 +41,12 @@ in
 
   environment.systemPackages = [ pkgs.sudo ];
   environment.etc."sudoers".text = "%wheel ALL=(ALL:ALL) NOPASSWD: ALL\n";
+  security.wrappers.sudo = {
+    source = "${pkgs.sudo}/bin/sudo";
+    owner = "root";
+    group = "root";
+    setuid = true;
+  };
 
   microbe.finix = {
     inherit svcName cid;
