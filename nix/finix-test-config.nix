@@ -17,7 +17,7 @@ let
     "--cpus" "boot=1"
     "--kernel" "${config.boot.kernelPackages.kernel.dev}/vmlinux"
     "--initramfs" "${config.boot.initrd.package}/initrd"
-    "--cmdline" ("earlyprintk=ttyS0 console=ttyS0 reboot=t panic=-1 "
+    "--cmdline" ("console=ttyS0 quiet loglevel=3 reboot=t panic=-1 "
       + "init=${config.system.topLevel}/init "
       + toString config.boot.kernelParams)
     "--seccomp" "true"
@@ -65,7 +65,7 @@ in
     ${lib.getExe pkgs.virtiofsd} \
       --socket-path ${virtiofsSocket "nix-store"} \
       --shared-dir /nix/store \
-      --cache auto &
+      --cache always &
     VIRTIOFSD_PID=$!
 
     while [ ! -S ${virtiofsSocket "nix-store"} ]; do sleep 0.05; done

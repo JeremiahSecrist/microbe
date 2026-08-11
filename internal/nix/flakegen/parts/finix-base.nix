@@ -103,7 +103,7 @@
       # disabled, rebooting in 10s" failure path -- verified live: boot
       # reaches switch-root and reboots in a loop with this omitted, and
       # proceeds past it once init= is added back.
-      kernelCmdLine = "earlyprintk=ttyS0 console=ttyS0 reboot=t panic=-1 init=${config.system.topLevel}/init "
+      kernelCmdLine = "console=ttyS0 quiet loglevel=3 reboot=t panic=-1 init=${config.system.topLevel}/init "
         + toString config.boot.kernelParams;
 
       netArgs = map (n: "tap=${n.id},mac=${n.mac}") config.microbe.netInterfaces;

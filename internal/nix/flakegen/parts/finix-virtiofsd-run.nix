@@ -42,7 +42,7 @@
                 --socket-path=${lib.escapeShellArg (socketFor s.tag)} \
                 --shared-dir=${lib.escapeShellArg s.source} \
                 --thread-pool-size "$(nproc)" \
-                --cache=auto \
+                --cache=${if s.readOnly then "always" else "auto"} \
                 ${lib.optionalString s.readOnly "--readonly"}
             '';
           };

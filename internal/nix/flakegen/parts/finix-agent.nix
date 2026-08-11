@@ -39,7 +39,9 @@
         # module -- PF_VSOCK registered from the always-built core but the
         # transport driver never loaded and microbe-agent's listen silently
         # never came up until this was added).
-        boot.kernelModules = [ "vmw_vsock_virtio_transport" ];
+        # vmw_vsock_virtio_transport is built-in (=y) via
+        # CONFIG_VIRTIO_VSOCKETS_COMMON=y in microbe-kernel-6.12.config,
+        # so no explicit modprobe is needed.
 
         # finit's analogue of agent.nix's systemd unit: respawn = true is
         # Restart=always; restart_sec is RestartSec. finit has no
