@@ -18,9 +18,13 @@
   networking.networkmanager.enable = true;
 
   # --- Demo content -----------------------------------------------------------
-  # Bakes microbe-demo/ into /etc/skel so it lands in the auto-login user's
-  # home directory the moment that home is created on first boot.
-  environment.etc."skel/microbe-demo".source = ./microbe-demo;
+  # NixOS's declarative `createHome` just makes an empty directory -- unlike
+  # a traditional distro it does not copy /etc/skel into new homes. Copy
+  # microbe-demo/ into place ourselves via tmpfiles, which runs after the
+  # admin home directory has been created by system activation.
+  systemd.tmpfiles.rules = [
+    "C /home/admin/microbe-demo - admin users - ${./microbe-demo}"
+  ];
 
   microbe.demoDesktop = {
     enable = true;
