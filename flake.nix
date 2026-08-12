@@ -14,6 +14,11 @@
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
+      lib = nixpkgs.lib;
+
+      # Shared with the Go docs build (nix/docs.nix) so it doesn't re-fetch
+      # or re-pin the same module deps under a different hash.
+      microbeVendorHash = "sha256-ip4BmPWbK58kyKxIBejB3kRMjRvntXVWxHz4+SejoHg=";
 
       microbeKernelPackages = import ./nix/microbe-kernel.nix {
         inherit pkgs;
@@ -38,10 +43,18 @@
           src = ./.;
           filter = path: _type: !pkgs.lib.hasPrefix (toString ./microbe-demo) path;
         };
-        vendorHash = "sha256-ip4BmPWbK58kyKxIBejB3kRMjRvntXVWxHz4+SejoHg=";
+        vendorHash = microbeVendorHash;
         # go test needs network (vsock/pasta) for some tests; sandbox has no
         # network access, so tests hang until sandbox setup times out. Skip.
         doCheck = false;
+      };
+
+      # Static docs site: hand-written mdBook narrative + generated Go
+      # package docs + generated NixOS module option reference.
+      docs = import ./nix/docs.nix {
+        inherit pkgs lib nixpkgs system;
+        goSrc = microbePkg.src;
+        vendorHash = microbeVendorHash;
       };
 
       # The ISO image is built from this configuration. It is the intended
@@ -113,7 +126,12 @@
         microvm = microvmCfg.config.microvm.declaredRunner;
         microvm-kernel = microbeKernelPackages.kernel;
         microvm-finix = finixTestCfg.config.microbe.qemuRunner;
+        docs = docs;
         default = iso.config.system.build.isoImage;
+      };
+
+      devShells.${system}.default = pkgs.mkShell {
+        packages = [ pkgs.mdbook ];
       };
 
       # NixOS module configuring a host to run microbe VMs.
@@ -146,6 +164,7 @@
         # Verifies the MicroVM runner graph builds.
         microvm = microvmCfg.config.microvm.declaredRunner;
         microvm-finix = finixTestCfg.config.microbe.qemuRunner;
+        docs = docs;
       };
 
       nixosConfigurations = {

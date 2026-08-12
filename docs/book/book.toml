@@ -1,0 +1,8 @@
+[book]
+title = "microbe"
+description = "Docker-compose-style orchestration for microvm.nix"
+src = "src"
+language = "en"
+
+[output.html]
+git-repository-url = "https://github.com/JeremiahSecrist/microbe"
