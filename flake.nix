@@ -58,6 +58,21 @@
         ];
       };
 
+      # The demo ISO: KDE desktop, auto-login, terminal opened in the baked-in
+      # microbe-demo/ sample stack. Same host module/microbe install as the
+      # plain ISO above.
+      demoIso = nixpkgs.lib.nixosSystem {
+        inherit system;
+        modules = [
+          ./demo-iso-config.nix
+          ./modules/host.nix
+          {
+            virtualisation.microbe.enable = true;
+            virtualisation.microbe.package = microbePkg;
+          }
+        ];
+      };
+
       # The MicroVM is built from the same shared SSH/admin config
       # (./base-config.nix) so both targets expose identical logins.
       microvmCfg = nixpkgs.lib.nixosSystem {
@@ -94,6 +109,7 @@
       packages.${system} = {
         microbe = microbePkg;
         iso = iso.config.system.build.isoImage;
+        demo-iso = demoIso.config.system.build.isoImage;
         microvm = microvmCfg.config.microvm.declaredRunner;
         microvm-kernel = microbeKernelPackages.kernel;
         microvm-finix = finixTestCfg.config.microbe.qemuRunner;
@@ -126,6 +142,7 @@
         # Faster sanity check: verifies the whole NixOS system graph builds
         # without producing the ISO filesystem image.
         toplevel = iso.config.system.build.toplevel;
+        demo-iso = demoIso.config.system.build.isoImage;
         # Verifies the MicroVM runner graph builds.
         microvm = microvmCfg.config.microvm.declaredRunner;
         microvm-finix = finixTestCfg.config.microbe.qemuRunner;
@@ -133,6 +150,7 @@
 
       nixosConfigurations = {
         iso = iso;
+        demo-iso = demoIso;
         microvm = microvmCfg;
       };
     };
