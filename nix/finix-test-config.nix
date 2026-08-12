@@ -18,6 +18,8 @@ let
     "--kernel" "${config.boot.kernelPackages.kernel.dev}/vmlinux"
     "--initramfs" "${config.boot.initrd.package}/initrd"
     "--cmdline" ("console=ttyS0 quiet loglevel=3 reboot=t panic=-1 "
+      + "8250.nr_uarts=1 cryptomgr.notests=1 no_timer_check mitigations=off "
+      + "random.trust_cpu=on "
       + "init=${config.system.topLevel}/init "
       + toString config.boot.kernelParams)
     "--seccomp" "true"
@@ -38,6 +40,9 @@ in
     extraGroups = [ "wheel" ];
     password = "";
   };
+
+  # No physical keyboard in a microVM.
+  hardware.console.enable = false;
 
   programs.sudo.enable = true;
   environment.etc."sudoers".text = lib.mkAfter ''

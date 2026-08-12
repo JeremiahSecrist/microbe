@@ -103,7 +103,10 @@
       # disabled, rebooting in 10s" failure path -- verified live: boot
       # reaches switch-root and reboots in a loop with this omitted, and
       # proceeds past it once init= is added back.
-      kernelCmdLine = "console=ttyS0 quiet loglevel=3 reboot=t panic=-1 init=${config.system.topLevel}/init "
+      kernelCmdLine = "console=ttyS0 quiet loglevel=3 reboot=t panic=-1 "
+        + "8250.nr_uarts=1 cryptomgr.notests=1 no_timer_check mitigations=off "
+        + "random.trust_cpu=on "
+        + "init=${config.system.topLevel}/init "
         + toString config.boot.kernelParams;
 
       netArgs = map (n: "tap=${n.id},mac=${n.mac}") config.microbe.netInterfaces;
@@ -308,12 +311,9 @@
         # see allShares/argv above) -- confirmed live via /proc/modules on
         # a booted guest that it was the only reason virtio_blk ever
         # loaded (nothing else requests it). Dropped.
-        boot.initrd.kernelModules = [
-          "virtio_pci" # TODO: platforms without PCI.
-          "virtio_console"
-          "virtio_net"
-          "virtiofs"
-        ];
+        # All virtio drivers are built-in (=y) in the microbe kernel config --
+        # listing them here generates unnecessary modprobe calls in stage-1.
+        boot.initrd.kernelModules = lib.mkForce [];
 
         # finix's default availableKernelModules includes physical-hardware
         # drivers (uhci_hcd, ata_piix, sd_mod, etc.) that don't exist in the
