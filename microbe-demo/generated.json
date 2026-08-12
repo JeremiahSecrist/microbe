@@ -1,6 +1,7 @@
 {
   "services": {
     "db": {
+      "buildTarget": ".#nixosConfigurations.db.config.microvm.declaredRunner",
       "cid": 3,
       "gateway": {
         "backend": "192.168.51.1"
@@ -74,12 +75,14 @@
       },
       "volumes": {
         "db-data": {
+          "host": "/home/sky/Documents/code/microbe/microbe-demo/pgdata",
           "hostGid": 100,
           "hostUid": 1000
         }
       }
     },
     "jump": {
+      "buildTarget": ".#nixosConfigurations.jump.config.microvm.declaredRunner",
       "cid": 4,
       "gateway": {
         "backend": "192.168.51.1",
@@ -172,9 +175,15 @@
       "taps": {
         "backend": "mvc-16cc6d57ae0",
         "frontend": "mvc-4ee3cc8069e"
+      },
+      "volumes": {
+        "notes": {
+          "host": "/home/sky/Documents/code/microbe/microbe-demo/shared"
+        }
       }
     },
     "web": {
+      "buildTarget": ".#nixosConfigurations.web.config.microvm.declaredRunner",
       "cid": 5,
       "gateway": {
         "backend": "192.168.51.1",

@@ -11,6 +11,7 @@ in
       config.flake.nixosModules.guest-base
       config.flake.nixosModules.virtiofsd-run
       config.flake.nixosModules.agent
+      config.flake.nixosModules.microbe-kernel
       { microCompose.serviceName = "jump"; }
       (compose.services.jump.config or ({ ... }: { }))
     ];

@@ -30,7 +30,7 @@
       # translates guest uid 71 (postgres) <-> whatever uid owns `host` on
       # this machine.
       volumes = [
-        { name = "db-data"; host = "/home/sky/Documents/code/nix/iso/microbe-demo/pgdata"; target = "/var/lib/postgresql"; owner = "postgres"; }
+        { name = "db-data"; host = "./pgdata"; target = "/var/lib/postgresql"; owner = "postgres"; }
       ];
 
       networks = [
@@ -69,7 +69,7 @@
       # is omitted — see internal/config/load.go's applyDefaults. Runs
       # unprivileged (internal/nix/flakegen/parts/virtiofsd-run.nix).
       volumes = [
-        { name = "notes"; host = "/home/sky/Documents/code/nix/iso/microbe-demo/shared"; target = "/shared"; }
+        { name = "notes"; host = "./shared"; target = "/shared"; }
       ];
 
       networks = [
