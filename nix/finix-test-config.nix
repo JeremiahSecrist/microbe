@@ -75,9 +75,20 @@ in
       };
     in {
       command = "${agentPkg}/bin/microbe-agent";
+      runlevels = "1234";
       respawn = true;
       restart_sec = 1;
     };
+
+  # Dummy user service at the default runlevel [234] -- starts AFTER the
+  # snapshot point (runlevel 1) so it never pollutes the snapshot state.
+  finit.services.test-user-svc = {
+    command = pkgs.writeShellScript "test-user-svc" ''
+      echo "test-user-svc started at $(date)" >> /tmp/test-user-svc.log
+      exec sleep infinity
+    '';
+    respawn = true;
+  };
 
   # Override the runner produced by finix-base.nix (mkForce beats normal priority).
   microbe.qemuRunner = lib.mkForce (pkgs.writeShellScriptBin "microvm-run" ''
@@ -101,7 +112,7 @@ in
     }
 
     # Remove stale sockets and virtiofsd pid lock from a prior run.
-    rm -f "$VIRTIOFS_SOCK" "$VIRTIOFS_SOCK.pid" "$API_SOCK" "$VSOCK_PATH"
+    rm -f "$VIRTIOFS_SOCK" "$VIRTIOFS_SOCK.pid" "$API_SOCK" "$API_SOCK.lock" "$VSOCK_PATH"
 
     ${lib.escapeShellArg virtiofsdBin} \
       --socket-path "$VIRTIOFS_SOCK" \
@@ -154,7 +165,9 @@ in
       # Wait for cloud-hypervisor API socket to appear.
       while [ ! -S "$API_SOCK" ]; do sleep 0.05; done
 
-      # Wait for finit to finish booting (agent ready on vsock 6969).
+      # Wait for microbe-agent on vsock 6969.  Agent runs at finit runlevel 1,
+      # before user services at runlevel 2 -- snapshot here captures a clean
+      # pre-user-service state so every restore starts user services fresh.
       until probe_agent; do sleep 0.1; done
 
       # Pause → snapshot → resume.  .tmp dir avoids leaving a partial snapshot
@@ -164,6 +177,9 @@ in
       ${lib.escapeShellArg chRemote} --api-socket "$API_SOCK" \
         snapshot "file://$SNAP_DIR.tmp"
       mv "$SNAP_DIR.tmp" "$SNAP_DIR"
+      # Prune snapshots from old system configs.
+      find "$HOME/.cache/microbe/finix-test-snapshots" -maxdepth 1 -mindepth 1 -type d \
+        ! -name '${snapKey}' -exec rm -rf {} + 2>/dev/null || true
       ${lib.escapeShellArg chRemote} --api-socket "$API_SOCK" resume
 
       # Snapshot done; keep kill-on-exit but drop the rm-on-exit part.

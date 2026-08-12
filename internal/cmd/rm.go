@@ -92,6 +92,7 @@ func rmRun(args []string, opts rmOptions) error {
 				return err
 			}
 		}
+		_ = removeSnapshots(filepath.Join(base, "runs", name))
 		delete(store.Services, name)
 		for _, net := range store.Networks {
 			delete(net.Allocated, name)

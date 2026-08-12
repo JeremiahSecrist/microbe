@@ -121,7 +121,7 @@ func downRun(args []string, opts downOptions) error {
 		store.Services[name] = svc
 
 		if !opts.dryRun {
-			if err := os.RemoveAll(filepath.Join(dataDir, "runs", name)); err != nil {
+			if err := cleanRunDir(filepath.Join(dataDir, "runs", name)); err != nil {
 				return err
 			}
 		}
@@ -192,6 +192,11 @@ func downRun(args []string, opts downOptions) error {
 					if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 						return err
 					}
+				}
+			}
+			if !opts.dryRun {
+				if err := removeSnapshots(filepath.Join(dataDir, "runs", name)); err != nil {
+					return err
 				}
 			}
 			delete(store.Services, name)

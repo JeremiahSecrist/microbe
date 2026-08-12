@@ -525,6 +525,35 @@ func startOrder(cfg *config.Compose, selected []string) ([]string, error) {
 	return order, nil
 }
 
+// cleanRunDir removes the ephemeral working files from a service's run
+// directory — sockets, lock files, virtiofsd pid files — while leaving the
+// snapshots/ subdirectory intact so the next `microbe up` can restore from
+// the snapshot instead of doing a full boot. Use removeSnapshots(runDir) when
+// a full wipe is needed (--remove-volumes, purge volumes, rm).
+func cleanRunDir(runDir string) error {
+	entries, err := os.ReadDir(runDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.Name() == "snapshots" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(runDir, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeSnapshots deletes the snapshots/ subdirectory of a service's run dir.
+func removeSnapshots(runDir string) error {
+	return os.RemoveAll(filepath.Join(runDir, "snapshots"))
+}
+
 // Volume type and service status sentinels shared across the lifecycle
 // commands (up/down/ps state rendering).
 const (

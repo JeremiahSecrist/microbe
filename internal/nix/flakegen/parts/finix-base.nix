@@ -453,7 +453,10 @@
                   # Wait for cloud-hypervisor API socket to appear.
                   while [ ! -S ${lib.escapeShellArg "${svcName}.sock"} ]; do sleep 0.05; done
 
-                  # Wait for finit to finish booting (agent ready on vsock 6969).
+                  # Wait for microbe-agent on vsock 6969.  Agent runs at finit
+                  # runlevel 1 (see finix-agent.nix), before user services at
+                  # runlevel 2 -- snapshot here captures a clean pre-user-service
+                  # state so every restore starts user services fresh.
                   until probe_agent; do sleep 0.1; done
 
                   # Pause → snapshot → resume.  Write to a .tmp dir first so a
@@ -465,6 +468,11 @@
                     --api-socket ${lib.escapeShellArg "${svcName}.sock"} \
                     snapshot "file://$(pwd)/$SNAP_DIR.tmp"
                   mv "$SNAP_DIR.tmp" "$SNAP_DIR"
+                  # Prune snapshots from old system configs -- only the current
+                  # snapKey is valid; anything else just wastes disk.
+                  find snapshots -maxdepth 1 -mindepth 1 -type d \
+                    ! -name ${lib.escapeShellArg snapKey} \
+                    -exec rm -rf {} + 2>/dev/null || true
                   ${lib.escapeShellArg chRemote} \
                     --api-socket ${lib.escapeShellArg "${svcName}.sock"} resume
 

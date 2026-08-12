@@ -336,7 +336,7 @@ func stopStackVMs(store *state.Store, base string, opts purgeOptions) error {
 			}
 		}
 		if stopped && !opts.dryRun {
-			_ = os.RemoveAll(filepath.Join(base, "runs", name))
+			_ = cleanRunDir(filepath.Join(base, "runs", name))
 			svc.PID = 0
 			svc.VirtiofsdPID = 0
 			svc.Status = serviceStatusStopped
@@ -444,6 +444,9 @@ func removeVolumesForStore(store *state.Store, base string, opts purgeOptions) e
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return err
 			}
+		}
+		if !opts.dryRun {
+			_ = removeSnapshots(filepath.Join(base, "runs", name))
 		}
 		delete(store.Services, name)
 		for _, net := range store.Networks {
