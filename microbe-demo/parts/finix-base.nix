@@ -103,7 +103,10 @@
       # disabled, rebooting in 10s" failure path -- verified live: boot
       # reaches switch-root and reboots in a loop with this omitted, and
       # proceeds past it once init= is added back.
-      kernelCmdLine = "console=ttyS0 quiet loglevel=3 reboot=t panic=-1 init=${config.system.topLevel}/init "
+      kernelCmdLine = "console=ttyS0 quiet loglevel=3 reboot=t panic=-1 "
+        + "8250.nr_uarts=1 cryptomgr.notests=1 no_timer_check mitigations=off "
+        + "random.trust_cpu=on "
+        + "init=${config.system.topLevel}/init "
         + toString config.boot.kernelParams;
 
       netArgs = map (n: "tap=${n.id},mac=${n.mac}") config.microbe.netInterfaces;
@@ -308,12 +311,9 @@
         # see allShares/argv above) -- confirmed live via /proc/modules on
         # a booted guest that it was the only reason virtio_blk ever
         # loaded (nothing else requests it). Dropped.
-        boot.initrd.kernelModules = [
-          "virtio_pci" # TODO: platforms without PCI.
-          "virtio_console"
-          "virtio_net"
-          "virtiofs"
-        ];
+        # All virtio drivers are built-in (=y) in the microbe kernel config --
+        # listing them here generates unnecessary modprobe calls in stage-1.
+        boot.initrd.kernelModules = lib.mkForce [];
 
         # finix's default availableKernelModules includes physical-hardware
         # drivers (uhci_hcd, ata_piix, sd_mod, etc.) that don't exist in the
@@ -397,14 +397,92 @@
         # directory as bin/microvm-run -- runtime.StartService/
         # StartVirtiofsd both resolve their binName relative to whatever
         # single store path microbe.qemuRunner's build target points at.
-        microbe.qemuRunner = pkgs.symlinkJoin {
-          name = "${svcName}-runner";
-          paths = [
-            (pkgs.writeShellScriptBin "microvm-run" ''
-              exec ${lib.concatMapStringsSep " " lib.escapeShellArg argv} "$@"
-            '')
-          ] ++ config.microbe.extraRunnerBins;
-        };
+        microbe.qemuRunner =
+          let
+            # Snapshot is keyed to the guest system derivation so it
+            # auto-invalidates whenever the NixOS config changes.
+            snapKey = builtins.substring 11 32 config.system.topLevel;
+            chRemote = "${pkgs.cloud-hypervisor}/bin/ch-remote";
+            chBin    = "${pkgs.cloud-hypervisor}/bin/cloud-hypervisor";
+          in
+          pkgs.symlinkJoin {
+            name = "${svcName}-runner";
+            paths = [
+              (pkgs.writeShellScriptBin "microvm-run" ''
+                # Probe microbe-agent on hybrid-vsock port 6969.  Succeeds once
+                # finit has fully booted and the agent is accepting connections.
+                probe_agent() {
+                  printf 'CONNECT 6969\n' \
+                    | ${lib.escapeShellArg "${pkgs.socat}/bin/socat"} \
+                        -t1 UNIX-CONNECT:${lib.escapeShellArg vsockPath},connect-timeout=1 - \
+                        2>/dev/null \
+                    | grep -q "^OK"
+                }
+
+                # Snapshot lives alongside the run dir (CWD = stable runDir set
+                # by microbe's runtime.StartService).  Keyed to the system
+                # derivation hash so it auto-invalidates on config changes.
+                SNAP_DIR="snapshots/${snapKey}"
+
+                if [ -d "$SNAP_DIR" ]; then
+                  # ── RESTORE PATH (subsequent boots) ─────────────────────────
+                  # virtiofsd-run is already up; cloud-hypervisor reads device
+                  # config (memory, CPUs, --fs sockets, --net taps) from the
+                  # snapshot and reconnects to virtiofsd at the stored path.
+                  # --serial/--console/--kernel must NOT be passed with --restore:
+                  # CH v53 hangs when --kernel is combined with --restore, and
+                  # --serial/--console alone require --kernel. VM runs headlessly;
+                  # access via `microbe exec` (vsock) rather than serial console.
+                  exec ${lib.escapeShellArg chBin} \
+                    --api-socket ${lib.escapeShellArg "${svcName}.sock"} \
+                    --restore "source_url=file://$(pwd)/$SNAP_DIR,resume=true" \
+                    "$@"
+                else
+                  # ── FIRST-BOOT PATH ──────────────────────────────────────────
+                  # Boot normally, wait for agent-ready, then snapshot so the
+                  # next start can restore in <100 ms instead of booting fresh.
+                  ${lib.concatMapStringsSep " \\\n  " lib.escapeShellArg argv} "$@" &
+                  CH_PID=$!
+                  cleanup() {
+                    kill "$CH_PID" 2>/dev/null
+                    wait "$CH_PID" 2>/dev/null
+                    rm -rf "$SNAP_DIR.tmp"
+                  }
+                  trap cleanup EXIT INT TERM
+
+                  # Wait for cloud-hypervisor API socket to appear.
+                  while [ ! -S ${lib.escapeShellArg "${svcName}.sock"} ]; do sleep 0.05; done
+
+                  # Wait for microbe-agent on vsock 6969.  Agent runs at finit
+                  # runlevel 1 (see finix-agent.nix), before user services at
+                  # runlevel 2 -- snapshot here captures a clean pre-user-service
+                  # state so every restore starts user services fresh.
+                  until probe_agent; do sleep 0.1; done
+
+                  # Pause → snapshot → resume.  Write to a .tmp dir first so a
+                  # failed snapshot never leaves a partial result to restore from.
+                  mkdir -p "$SNAP_DIR.tmp"
+                  ${lib.escapeShellArg chRemote} \
+                    --api-socket ${lib.escapeShellArg "${svcName}.sock"} pause
+                  ${lib.escapeShellArg chRemote} \
+                    --api-socket ${lib.escapeShellArg "${svcName}.sock"} \
+                    snapshot "file://$(pwd)/$SNAP_DIR.tmp"
+                  mv "$SNAP_DIR.tmp" "$SNAP_DIR"
+                  # Prune snapshots from old system configs -- only the current
+                  # snapKey is valid; anything else just wastes disk.
+                  find snapshots -maxdepth 1 -mindepth 1 -type d \
+                    ! -name ${lib.escapeShellArg snapKey} \
+                    -exec rm -rf {} + 2>/dev/null || true
+                  ${lib.escapeShellArg chRemote} \
+                    --api-socket ${lib.escapeShellArg "${svcName}.sock"} resume
+
+                  # Disarm the rm-on-exit cleanup; keep the kill-on-exit part.
+                  trap 'kill "$CH_PID" 2>/dev/null; wait "$CH_PID" 2>/dev/null' EXIT INT TERM
+                  wait "$CH_PID"
+                fi
+              '')
+            ] ++ config.microbe.extraRunnerBins;
+          };
       };
     };
 }

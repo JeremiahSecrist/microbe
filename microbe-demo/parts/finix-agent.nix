@@ -44,11 +44,18 @@
         # so no explicit modprobe is needed.
 
         # finit's analogue of agent.nix's systemd unit: respawn = true is
-        # Restart=always; restart_sec is RestartSec. finit has no
-        # unit-dependency graph (no after = network.target equivalent) --
-        # runlevels alone (default "234") is enough ordering here.
+        # Restart=always; restart_sec is RestartSec.
+        #
+        # runlevels = "1234": start at runlevel 1, before any user services
+        # (which are "234"). The host runner probes microbe-agent on vsock
+        # 6969 to determine when to snapshot -- setting this to "1234" means
+        # the snapshot is taken before user services start, so every restore
+        # lands in a clean pre-user-service state. If left at the default
+        # "234", the snapshot would include whatever state user services were
+        # in when first booted, which could be buggy.
         finit.services.microbe-agent = {
           command = "${agentPkg}/bin/microbe-agent";
+          runlevels = "1234";
           respawn = true;
           restart_sec = 1;
         };

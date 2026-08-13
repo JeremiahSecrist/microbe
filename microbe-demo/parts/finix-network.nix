@@ -43,12 +43,17 @@
         # /sys/class/net/*/address is lowercase hex; gen.networkd's
         # MACAddress comes from the same Go-generated string as gen.macs
         # (stack.go), already lowercase -- no case-fold needed.
+        #
+        # Tight iteration loop (no sleep): virtio-net is built-in so the
+        # interface appears within milliseconds of kernel boot -- the loop
+        # exits on the first or second iteration in practice. 1000 iterations
+        # bounds the wait without adding fixed latency the way sleep 0.2 did
+        # (each sleep was a guaranteed 200ms penalty per retry).
         ''
           mac="${link.matchConfig.MACAddress}"
           iface=""
-          tries=50
           i=0
-          while [ "$i" -lt "$tries" ]; do
+          while [ "$i" -lt 1000 ]; do
             for p in /sys/class/net/*/address; do
               if [ "$(cat "$p")" = "$mac" ]; then
                 iface=$(basename "$(dirname "$p")")
@@ -56,10 +61,9 @@
               fi
             done
             i=$((i + 1))
-            sleep 0.2
           done
           if [ -z "$iface" ]; then
-            printf 'finix-network: no interface with mac %s\n' "$mac" >&2
+            printf 'finix-network: no interface with mac %s found after 1000 tries\n' "$mac" >&2
             exit 1
           fi
           ${pkgs.iproute2}/bin/ip link set "$iface" up
