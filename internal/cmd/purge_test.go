@@ -32,6 +32,7 @@ func mkPurgeOpts(t *testing.T, stdin string, out *bytes.Buffer) (purgeOptions, *
 	t.Cleanup(func() { sweepOrphanLinks = origSweep })
 	return purgeOptions{
 		file: writeConfig(t),
+		ops:  &fakeOps{},
 		stopFn: func(ctx context.Context, pid int, grace time.Duration) error {
 			stopped = append(stopped, pid)
 			return nil
@@ -50,15 +51,11 @@ func TestPurgeNetworksRemovesOrphans(t *testing.T) {
 	// legacyBridge and the two phantoms are leftovers to sweep.
 	legacy := hostnet.BridgeName("test-net", "legacy-net")
 	store := &state.Store{
-		Stack: "test-net",
-		Networks: map[string]state.NetworkState{
-			"backend":    {CIDR: "192.168.51.0/24"},
-			"frontend":   {CIDR: "192.168.50.0/24"},
-			"legacy-net": {CIDR: "192.168.99.0/24"},
-		},
+		Stack:    "test-net",
+		Networks: []string{"backend", "frontend", "legacy-net"},
 		Services: map[string]state.ServiceState{
-			"db":  {IP: map[string]string{"backend": "192.168.51.2"}},
-			"web": {IP: map[string]string{"backend": "192.168.51.3", "frontend": "192.168.50.3"}},
+			"db":  {Addr: "fd00:1234:5678::2", Networks: []string{"backend"}},
+			"web": {Addr: "fd00:1234:5678::3", Networks: []string{"backend", "frontend"}},
 		},
 		Provisioned: []string{"br-ancient", legacy, "mvc-dead"},
 	}
@@ -94,7 +91,7 @@ func TestPurgeNetworksHostWide(t *testing.T) {
 		t.Helper()
 		s := &state.Store{
 			Stack:       name,
-			Networks:    map[string]state.NetworkState{"old-net": {CIDR: "10.0.0.0/24"}},
+			Networks:    []string{"old-net"},
 			Provisioned: provisioned,
 		}
 		if err := s.Save(filepath.Join(base, name, "state.json")); err != nil {
@@ -130,8 +127,8 @@ func TestPurgeNetworksKeepsLiveVMDevices(t *testing.T) {
 	// that bridge+tap must survive even though no compose file names it.
 	store := &state.Store{
 		Stack:    "test-net",
-		Networks: map[string]state.NetworkState{"wanted": {CIDR: "10.9.0.0/24"}},
-		Services: map[string]state.ServiceState{"db": {PID: 9001, IP: map[string]string{"wanted": "10.9.0.2"}}},
+		Networks: []string{"wanted"},
+		Services: map[string]state.ServiceState{"db": {PID: 9001, Addr: "fd00:1234:5678::9", Networks: []string{"wanted"}}},
 		Provisioned: []string{
 			hostnet.BridgeName("test-net", "wanted"),
 			"mvc-dead",
@@ -233,13 +230,11 @@ func TestPurgeVolumesRemovesDisks(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 
 	store := &state.Store{
-		Stack: "test-net",
-		Networks: map[string]state.NetworkState{
-			"backend": {Allocated: map[string]string{"db": "192.168.51.2", "web": "192.168.51.3"}},
-		},
+		Stack:    "test-net",
+		Networks: []string{"backend"},
 		Services: map[string]state.ServiceState{
-			"db":  {Volumes: []string{"db-data"}, IP: map[string]string{"backend": "192.168.51.2"}},
-			"web": {IP: map[string]string{"backend": "192.168.51.3", "frontend": "192.168.50.3"}},
+			"db":  {Volumes: []string{"db-data"}, Addr: "fd00:1234:5678::2", Networks: []string{"backend"}},
+			"web": {Addr: "fd00:1234:5678::3", Networks: []string{"backend", "frontend"}},
 		},
 	}
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {

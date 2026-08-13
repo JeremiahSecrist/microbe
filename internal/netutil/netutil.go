@@ -37,3 +37,13 @@ func Broadcast(prefix netip.Prefix) netip.Addr {
 	binary.BigEndian.PutUint32(octets[:], network|hostMask)
 	return netip.AddrFrom4(octets)
 }
+
+// V6Gateway returns the conventional gateway address for the host's flat
+// IPv6 prefix: the network address with the last byte set to 1. Unlike
+// Gateway (one per IPv4 subnet), there is exactly one of these per host --
+// every stack's bridge uses it as the guest default route.
+func V6Gateway(prefix netip.Prefix) netip.Addr {
+	octets := prefix.Masked().Addr().As16()
+	octets[15] = 1
+	return netip.AddrFrom16(octets)
+}

@@ -46,10 +46,18 @@ type Service struct {
 	OS       string   // "nixos" or "finix" (config.Service.OS, copied verbatim)
 	Networks []string // declared order (first is primary default route)
 	MACs     map[string]string
-	IPs      map[string]string
-	Gateway  map[string]string
-	Prefix   map[string]int
-	Taps     map[string]string // net -> host tap id (see maxTapNameLen)
+
+	// Addr is this service's one IPv6 address, shared across every network
+	// it attaches to (see internal/hostnet.Plan / internal/lockfile).
+	Addr string
+	// Gateway is the host's flat-network gateway address (one per host,
+	// see internal/netutil.V6Gateway), the same for every service in every
+	// stack.
+	Gateway string
+	// Prefix is the gateway/address prefix length -- always 64, the host's
+	// persisted ULA prefix.
+	Prefix int
+	Taps   map[string]string // net -> host tap id (see maxTapNameLen)
 
 	// BuildTarget is the nix attrpath ServicePart's rendered flake.nix
 	// exposes for this service's bootable runner derivation, computed from
@@ -93,8 +101,17 @@ type Host struct {
 }
 
 // FromConfig builds a Stack from a validated compose file and its network
-// plan. CIDs are assigned starting at firstGuestCID in service-name order.
-func FromConfig(cfg *config.Compose, plan *hostnet.NetworkPlan) (*Stack, error) {
+// plan. prefix is the host's persisted flat IPv6 ULA (see
+// internal/lockfile.Lock.Prefix / internal/state.HostState) -- every
+// service's Gateway/Prefix is derived from it, the same for the whole
+// stack. CIDs are assigned starting at firstGuestCID in service-name order.
+func FromConfig(cfg *config.Compose, plan *hostnet.NetworkPlan, prefix string) (*Stack, error) {
+	p, err := netip.ParsePrefix(prefix)
+	if err != nil {
+		return nil, fmt.Errorf("host prefix %q: %w", prefix, err)
+	}
+	gateway := netutil.V6Gateway(p).String()
+
 	st := &Stack{Name: cfg.Name, Services: map[string]Service{}, Internal: map[string]bool{}}
 	for netName, net := range cfg.Networks {
 		st.Internal[netName] = net.Internal
@@ -112,18 +129,12 @@ func FromConfig(cfg *config.Compose, plan *hostnet.NetworkPlan) (*Stack, error) 
 			BuildTarget: buildTarget(name, svcCfg.OS),
 			Networks:    declaredNets(svcCfg),
 			MACs:        plan.MACs[name],
-			IPs:         plan.IPs[name],
-			Gateway:     map[string]string{},
-			Prefix:      map[string]int{},
+			Addr:        plan.Addrs[name],
+			Gateway:     gateway,
+			Prefix:      p.Bits(),
 			Taps:        map[string]string{},
 		}
 		for _, netName := range s.Networks {
-			p, err := netip.ParsePrefix(cfg.Networks[netName].Subnet)
-			if err != nil {
-				return nil, fmt.Errorf("service %q network %q: %w", name, netName, err)
-			}
-			s.Gateway[netName] = netutil.Gateway(p).String()
-			s.Prefix[netName] = p.Bits()
 			s.Taps[netName] = TapID(cfg.Name, name, netName)
 		}
 		st.Services[name] = s
@@ -168,8 +179,9 @@ func (st *Stack) Names() []string {
 	return sortedServiceNames(st)
 }
 
-// Hosts returns the /etc/hosts entries shared by every guest, ordered by
-// service then network.
+// Hosts returns the /etc/hosts entries shared by every guest, one per
+// service: every attachment shares the same Addr, so there's nothing a
+// second, `.net`-suffixed entry would add.
 func (st *Stack) Hosts() []Host {
 	svcs := make([]string, 0, len(st.Services))
 	for name := range st.Services {
@@ -178,15 +190,7 @@ func (st *Stack) Hosts() []Host {
 	sort.Strings(svcs)
 	var out []Host
 	for _, name := range svcs {
-		s := st.Services[name]
-		nets := append([]string(nil), s.Networks...)
-		sort.Strings(nets)
-		for _, net := range nets {
-			out = append(out, Host{
-				IP:    s.IPs[net],
-				Names: []string{name, name + "." + net},
-			})
-		}
+		out = append(out, Host{IP: st.Services[name].Addr, Names: []string{name}})
 	}
 	return out
 }

@@ -6,28 +6,38 @@ import (
 
 	"microbe/internal/config"
 	"microbe/internal/hostnet"
+	"microbe/internal/lockfile"
 )
+
+const testPrefix = "fd00:1234:5678::/64"
+
+func newTestLock() *lockfile.Lock {
+	return &lockfile.Lock{Prefix: testPrefix, Services: map[string]string{}}
+}
 
 func fixtureConfig() *config.Compose {
 	return &config.Compose{
 		SchemaVersion: 1,
 		Name:          "test-net",
 		Networks: map[string]config.Network{
-			"frontend": {Subnet: "192.168.50.0/24"},
-			"backend":  {Subnet: "192.168.51.0/24"},
+			"frontend": {},
+			"backend":  {},
 		},
 		Services: map[string]config.Service{
 			"db": {
-				Networks: []config.Attach{{Name: "backend", IP: "192.168.51.2"}},
+				Networks: []config.Attach{{Name: "backend", Addr: "fd00:1234:5678::2"}},
 			},
 			"web": {
 				Networks: []config.Attach{
-					{Name: "backend", IP: "192.168.51.3"},
-					{Name: "frontend", IP: "192.168.50.3"},
+					{Name: "backend", Addr: "fd00:1234:5678::3"},
+					{Name: "frontend", Addr: "fd00:1234:5678::3"},
 				},
 			},
 			"jump": {
-				Networks: []config.Attach{{Name: "frontend"}, {Name: "backend"}},
+				Networks: []config.Attach{
+					{Name: "frontend", Addr: "fd00:1234:5678::4"},
+					{Name: "backend", Addr: "fd00:1234:5678::4"},
+				},
 			},
 		},
 	}
@@ -38,18 +48,18 @@ func TestFromConfigStackInternal(t *testing.T) {
 		SchemaVersion: 1,
 		Name:          "airgap-test",
 		Networks: map[string]config.Network{
-			"public": {Subnet: "192.168.60.0/24"},
-			"secure": {Subnet: "192.168.61.0/24", Internal: true},
+			"public": {},
+			"secure": {Internal: true},
 		},
 		Services: map[string]config.Service{
 			"db": {Networks: []config.Attach{{Name: "secure"}}},
 		},
 	}
-	plan, err := hostnet.Plan(cfg)
+	plan, err := hostnet.Plan(cfg, newTestLock())
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := FromConfig(cfg, plan)
+	st, err := FromConfig(cfg, plan, testPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,11 +73,11 @@ func TestFromConfigStackInternal(t *testing.T) {
 
 func TestFromConfigStack(t *testing.T) {
 	cfg := fixtureConfig()
-	plan, err := hostnet.Plan(cfg)
+	plan, err := hostnet.Plan(cfg, newTestLock())
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := FromConfig(cfg, plan)
+	st, err := FromConfig(cfg, plan, testPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,11 +93,14 @@ func TestFromConfigStack(t *testing.T) {
 	if !reflect.DeepEqual(db.Networks, []string{"backend"}) {
 		t.Errorf("db.Networks = %v, want [backend]", db.Networks)
 	}
-	if db.Prefix["backend"] != 24 {
-		t.Errorf("db.Prefix[backend] = %d, want 24", db.Prefix["backend"])
+	if db.Prefix != 64 {
+		t.Errorf("db.Prefix = %d, want 64", db.Prefix)
 	}
-	if db.Gateway["backend"] != "192.168.51.1" {
-		t.Errorf("db.Gateway[backend] = %q, want 192.168.51.1", db.Gateway["backend"])
+	if db.Gateway != "fd00:1234:5678::1" {
+		t.Errorf("db.Gateway = %q, want fd00:1234:5678::1", db.Gateway)
+	}
+	if db.Addr != "fd00:1234:5678::2" {
+		t.Errorf("db.Addr = %q, want fd00:1234:5678::2", db.Addr)
 	}
 	if db.MACs["backend"] != "02:00:00:00:00:01" {
 		t.Errorf("db.MACs[backend] = %q, want 02:00:00:00:00:01", db.MACs["backend"])
@@ -105,17 +118,17 @@ func TestFromConfigBuildTarget(t *testing.T) {
 	cfg := &config.Compose{
 		SchemaVersion: 1,
 		Name:          "os-test",
-		Networks:      map[string]config.Network{"n": {Subnet: "192.168.70.0/24"}},
+		Networks:      map[string]config.Network{"n": {}},
 		Services: map[string]config.Service{
 			"a": {OS: "nixos", Networks: []config.Attach{{Name: "n"}}},
 			"b": {OS: "finix", Networks: []config.Attach{{Name: "n"}}},
 		},
 	}
-	plan, err := hostnet.Plan(cfg)
+	plan, err := hostnet.Plan(cfg, newTestLock())
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := FromConfig(cfg, plan)
+	st, err := FromConfig(cfg, plan, testPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,22 +148,20 @@ func TestFromConfigBuildTarget(t *testing.T) {
 
 func TestStackHosts(t *testing.T) {
 	cfg := fixtureConfig()
-	plan, err := hostnet.Plan(cfg)
+	plan, err := hostnet.Plan(cfg, newTestLock())
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := FromConfig(cfg, plan)
+	st, err := FromConfig(cfg, plan, testPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	got := st.Hosts()
 	want := []Host{
-		{IP: "192.168.51.2", Names: []string{"db", "db.backend"}},
-		{IP: "192.168.51.4", Names: []string{"jump", "jump.backend"}},
-		{IP: "192.168.50.2", Names: []string{"jump", "jump.frontend"}},
-		{IP: "192.168.51.3", Names: []string{"web", "web.backend"}},
-		{IP: "192.168.50.3", Names: []string{"web", "web.frontend"}},
+		{IP: "fd00:1234:5678::2", Names: []string{"db"}},
+		{IP: "fd00:1234:5678::4", Names: []string{"jump"}},
+		{IP: "fd00:1234:5678::3", Names: []string{"web"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Hosts() =\n  %v\nwant:\n  %v", got, want)

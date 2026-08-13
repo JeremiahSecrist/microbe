@@ -14,7 +14,6 @@ func writeStateForPs(t *testing.T, dataDir string, services map[string]state.Ser
 	t.Helper()
 	store := &state.Store{
 		Stack:    "test-net",
-		Networks: map[string]state.NetworkState{},
 		Services: services,
 		Ports:    map[string]state.PortState{},
 	}

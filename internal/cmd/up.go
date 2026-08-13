@@ -17,7 +17,6 @@ import (
 	"microbe/internal/cmdrun"
 	"microbe/internal/config"
 	"microbe/internal/datadir"
-	"microbe/internal/hostnet"
 	"microbe/internal/nix/flakegen"
 	"microbe/internal/provisiond"
 	"microbe/internal/runtime"
@@ -54,7 +53,10 @@ no service names given, every service in the stack is started.`,
 			var ops provisiond.Ops
 			if dryRun {
 				ops = printOps{out: os.Stdout}
-			} else if !noProvision {
+			} else {
+				// Dialed even under --no-provision: resolving the host's
+				// ULA prefix (EnsurePrefix) is needed for addressing
+				// regardless of whether bridges/taps/ports get touched.
 				conn, err := provisiond.Dial(provisiond.SocketPath)
 				if err != nil {
 					return err
@@ -237,11 +239,11 @@ func upRun(args []string, opts upOptions) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	plan, err := hostnet.Plan(cfg)
+	plan, prefix, err := resolvePlan(cfg, opts.file, opts.ops)
 	if err != nil {
 		return err
 	}
-	st, err := flakegen.FromConfig(cfg, plan)
+	st, err := flakegen.FromConfig(cfg, plan, prefix)
 	if err != nil {
 		return err
 	}
@@ -397,7 +399,7 @@ func upRun(args []string, opts upOptions) error {
 		p.Step("started %s (pid %d)", svc, pid)
 
 		if hc := cfg.Services[svc].Healthcheck; hc != nil {
-			ip := st.Services[svc].IPs[primaryNetwork(st.Services[svc])]
+			ip := st.Services[svc].Addr
 			healthy, err := probeHealth(*hc, ip)
 			if err != nil {
 				return err

@@ -11,9 +11,9 @@ import (
 func testStore() *state.Store {
 	return &state.Store{
 		Services: map[string]state.ServiceState{
-			"db":       {Status: serviceStatusRunning, PID: 111, IP: map[string]string{"backend": "192.168.51.2"}},
-			"jump":     {Status: serviceStatusDegraded, PID: 222, IP: map[string]string{"backend": "192.168.51.4"}},
-			"unstable": {Status: serviceStatusStopped, PID: 0, IP: map[string]string{}},
+			"db":       {Status: serviceStatusRunning, PID: 111, Addr: "fd00:1234:5678::2"},
+			"jump":     {Status: serviceStatusDegraded, PID: 222, Addr: "fd00:1234:5678::4"},
+			"unstable": {Status: serviceStatusStopped, PID: 0},
 		},
 	}
 }

@@ -121,11 +121,11 @@ func TestRenderGeneratedIncludesBuildTarget(t *testing.T) {
 
 func mustStack(t *testing.T, cfg *config.Compose) *Stack {
 	t.Helper()
-	plan, err := hostnet.Plan(cfg)
+	plan, err := hostnet.Plan(cfg, newTestLock())
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := FromConfig(cfg, plan)
+	st, err := FromConfig(cfg, plan, testPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}

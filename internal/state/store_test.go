@@ -13,22 +13,18 @@ func TestRoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "state.json")
 
 	s := &Store{
-		Stack: "test-net",
-		Networks: map[string]NetworkState{
-			"backend": {
-				CIDR:      "192.168.51.0/24",
-				Allocated: map[string]string{"db": "192.168.51.2", "web": "192.168.51.3"},
-			},
-		},
+		Stack:    "test-net",
+		Networks: []string{"backend"},
 		Services: map[string]ServiceState{
 			"db": {
-				IP:      map[string]string{"backend": "192.168.51.2"},
-				CID:     3,
-				MACs:    map[string]string{"backend": "02:00:00:00:00:01"},
-				Volumes: []string{"db-data"},
-				Status:  "running",
-				PID:     4242,
-				Runner:  ".microbe/runners/db",
+				Addr:     "fd00:1234:5678::2",
+				Networks: []string{"backend"},
+				CID:      3,
+				MACs:     map[string]string{"backend": "02:00:00:00:00:01"},
+				Volumes:  []string{"db-data"},
+				Status:   "running",
+				PID:      4242,
+				Runner:   ".microbe/runners/db",
 			},
 		},
 		Ports: map[string]PortState{

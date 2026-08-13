@@ -103,9 +103,6 @@ func rmRun(args []string, opts rmOptions) error {
 		}
 		_ = removeSnapshots(filepath.Join(base, "runs", name))
 		delete(store.Services, name)
-		for _, net := range store.Networks {
-			delete(net.Allocated, name)
-		}
 	}
 
 	return store.Save(filepath.Join(base, "state.json"))

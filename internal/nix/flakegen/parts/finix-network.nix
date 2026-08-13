@@ -36,8 +36,8 @@
 
       routeCmd = iface: r:
         if r ? Destination
-        then "${pkgs.iproute2}/bin/ip route add ${r.Destination} via ${r.Gateway} dev \"${iface}\""
-        else "${pkgs.iproute2}/bin/ip route add default via ${r.Gateway} dev \"${iface}\"";
+        then "${pkgs.iproute2}/bin/ip -6 route add ${r.Destination} via ${r.Gateway} dev \"${iface}\""
+        else "${pkgs.iproute2}/bin/ip -6 route add default via ${r.Gateway} dev \"${iface}\"";
 
       linkScript = link:
         # /sys/class/net/*/address is lowercase hex; gen.networkd's
@@ -67,7 +67,7 @@
             exit 1
           fi
           ${pkgs.iproute2}/bin/ip link set "$iface" up
-          ${pkgs.iproute2}/bin/ip addr add ${lib.head link.address} dev "$iface"
+          ${pkgs.iproute2}/bin/ip -6 addr add ${lib.head link.address} dev "$iface"
         '' + lib.concatMapStringsSep "\n" (routeCmd "$iface") link.routes;
 
       netScript = pkgs.writeShellScript "finix-network-setup"

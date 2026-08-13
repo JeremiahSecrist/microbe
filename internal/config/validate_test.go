@@ -372,4 +372,3 @@ func TestValidateUnknownOS(t *testing.T) {
 		t.Errorf("want unknown-os error, got %v", err)
 	}
 }
-

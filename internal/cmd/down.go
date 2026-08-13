@@ -152,11 +152,11 @@ func downRun(args []string, opts downOptions) error {
 		store.Services[name] = svc
 	}
 
-	plan, err := hostnet.Plan(cfg)
+	plan, prefix, err := resolvePlan(cfg, opts.file, opts.ops)
 	if err != nil {
 		return err
 	}
-	st, err := flakegen.FromConfig(cfg, plan)
+	st, err := flakegen.FromConfig(cfg, plan, prefix)
 	if err != nil {
 		return err
 	}
@@ -225,9 +225,6 @@ func downRun(args []string, opts downOptions) error {
 				}
 			}
 			delete(store.Services, name)
-			for _, net := range store.Networks {
-				delete(net.Allocated, name)
-			}
 		}
 	}
 
@@ -242,9 +239,6 @@ func downRun(args []string, opts downOptions) error {
 			continue
 		}
 		delete(store.Services, name)
-		for _, net := range store.Networks {
-			delete(net.Allocated, name)
-		}
 	}
 
 	if !opts.dryRun {

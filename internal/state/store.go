@@ -7,26 +7,28 @@ import (
 	"path/filepath"
 )
 
-// NetworkState records one provisioned network's subnet and its IP allocations.
-type NetworkState struct {
-	CIDR      string            `json:"cidr"`
-	Allocated map[string]string `json:"allocated"`
-}
-
 // ServiceState records what a started service looks like on this host.
 type ServiceState struct {
 	// ID is a stable identity assigned the first time this service name is
 	// started, and carried forward on every later rebuild of the store
 	// (including across Stale transitions) so a VM can be tracked by
 	// identity even as its PID changes on restart.
-	ID      string            `json:"id,omitempty"`
-	IP      map[string]string `json:"ip"`
-	CID     int               `json:"cid"`
-	MACs    map[string]string `json:"macs"`
-	Volumes []string          `json:"volumes"`
-	Status  string            `json:"status"`
-	PID     int               `json:"pid"`
-	Runner  string            `json:"runner"`
+	ID string `json:"id,omitempty"`
+
+	// Addr is this service's one IPv6 address (see internal/lockfile),
+	// shared across every network below.
+	Addr string `json:"addr"`
+	// Networks is the set of network names this service is attached to --
+	// needed to reconstruct its bridges/taps (see hostnet.BridgeName /
+	// flakegen.TapID) without a config, since Addr no longer varies per
+	// network the way it did under the old per-network IPv4 model.
+	Networks []string          `json:"networks,omitempty"`
+	CID      int               `json:"cid"`
+	MACs     map[string]string `json:"macs"`
+	Volumes  []string          `json:"volumes"`
+	Status   string            `json:"status"`
+	PID      int               `json:"pid"`
+	Runner   string            `json:"runner"`
 
 	// VirtiofsdPID is the companion virtiofsd process's pid, or 0 if the
 	// service has no virtiofs shares (see internal/runtime.StartVirtiofsd).
@@ -46,8 +48,12 @@ type PortState struct {
 
 // Store is the on-disk CLI state (spec §9.4).
 type Store struct {
-	Stack    string                  `json:"stack"`
-	Networks map[string]NetworkState `json:"networks"`
+	Stack string `json:"stack"`
+
+	// Networks is every network name this stack has provisioned, so device
+	// names (hostnet.BridgeName) can be reconstructed without a config
+	// (e.g. host-wide purge of a stack microbe isn't currently pointed at).
+	Networks []string                `json:"networks,omitempty"`
 	Services map[string]ServiceState `json:"services"`
 	Ports    map[string]PortState    `json:"ports"`
 

@@ -124,7 +124,10 @@
       config = {
         networking.hostName = svcName;
         networking.useDHCP = lib.mkDefault false;
-        networking.nameservers = lib.mkDefault [ "1.1.1.1" ];
+        # gen.gateway is the host's dns64 resolver address (see the NAT64/DNS64
+        # host module) -- guests are IPv6-only, so an IPv4 literal like
+        # 1.1.1.1 is unreachable and would silently break all DNS.
+        networking.nameservers = lib.mkDefault [ gen.gateway ];
 
         microvm = {
           hypervisor = lib.mkDefault (svc.hypervisor or "cloud-hypervisor");

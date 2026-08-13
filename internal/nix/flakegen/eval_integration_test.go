@@ -74,11 +74,11 @@ func TestFinixStackEvaluates(t *testing.T) {
 	dir := t.TempDir()
 	userNix := `{
   name = "finix-test";
-  networks = { backend = { subnet = "192.168.90.0/24"; }; };
+  networks = { backend = { }; };
   services = {
     a = {
       os = "finix";
-      networks = [ { name = "backend"; ip = "192.168.90.2"; } ];
+      networks = [ { name = "backend"; } ];
     };
   };
 }
@@ -90,9 +90,9 @@ func TestFinixStackEvaluates(t *testing.T) {
 	cfg := &config.Compose{
 		SchemaVersion: 1,
 		Name:          "finix-test",
-		Networks:      map[string]config.Network{"backend": {Subnet: "192.168.90.0/24"}},
+		Networks:      map[string]config.Network{"backend": {}},
 		Services: map[string]config.Service{
-			"a": {OS: "finix", Networks: []config.Attach{{Name: "backend", IP: "192.168.90.2"}}},
+			"a": {OS: "finix", Networks: []config.Attach{{Name: "backend"}}},
 		},
 	}
 	st := mustStack(t, cfg)
@@ -157,15 +157,15 @@ func TestMultipleFinixServicesEvaluate(t *testing.T) {
 	dir := t.TempDir()
 	userNix := `{
   name = "finix-multi-test";
-  networks = { backend = { subnet = "192.168.93.0/24"; }; };
+  networks = { backend = { }; };
   services = {
     a = {
       os = "finix";
-      networks = [ { name = "backend"; ip = "192.168.93.2"; } ];
+      networks = [ { name = "backend"; } ];
     };
     b = {
       os = "finix";
-      networks = [ { name = "backend"; ip = "192.168.93.3"; } ];
+      networks = [ { name = "backend"; } ];
     };
   };
 }
@@ -177,10 +177,10 @@ func TestMultipleFinixServicesEvaluate(t *testing.T) {
 	cfg := &config.Compose{
 		SchemaVersion: 1,
 		Name:          "finix-multi-test",
-		Networks:      map[string]config.Network{"backend": {Subnet: "192.168.93.0/24"}},
+		Networks:      map[string]config.Network{"backend": {}},
 		Services: map[string]config.Service{
-			"a": {OS: "finix", Networks: []config.Attach{{Name: "backend", IP: "192.168.93.2"}}},
-			"b": {OS: "finix", Networks: []config.Attach{{Name: "backend", IP: "192.168.93.3"}}},
+			"a": {OS: "finix", Networks: []config.Attach{{Name: "backend"}}},
+			"b": {OS: "finix", Networks: []config.Attach{{Name: "backend"}}},
 		},
 	}
 	st := mustStack(t, cfg)
@@ -222,11 +222,11 @@ func TestFinixStoreMountCreatesMountpoint(t *testing.T) {
 	dir := t.TempDir()
 	userNix := `{
   name = "finix-bindmount-test";
-  networks = { backend = { subnet = "192.168.91.0/24"; }; };
+  networks = { backend = { }; };
   services = {
     a = {
       os = "finix";
-      networks = [ { name = "backend"; ip = "192.168.91.2"; } ];
+      networks = [ { name = "backend"; } ];
     };
   };
 }
@@ -238,9 +238,9 @@ func TestFinixStoreMountCreatesMountpoint(t *testing.T) {
 	cfg := &config.Compose{
 		SchemaVersion: 1,
 		Name:          "finix-bindmount-test",
-		Networks:      map[string]config.Network{"backend": {Subnet: "192.168.91.0/24"}},
+		Networks:      map[string]config.Network{"backend": {}},
 		Services: map[string]config.Service{
-			"a": {OS: "finix", Networks: []config.Attach{{Name: "backend", IP: "192.168.91.2"}}},
+			"a": {OS: "finix", Networks: []config.Attach{{Name: "backend"}}},
 		},
 	}
 	st := mustStack(t, cfg)
@@ -288,11 +288,11 @@ func TestFinixRunnerSetsInitKernelParam(t *testing.T) {
 	dir := t.TempDir()
 	userNix := `{
   name = "finix-init-param-test";
-  networks = { backend = { subnet = "192.168.92.0/24"; }; };
+  networks = { backend = { }; };
   services = {
     a = {
       os = "finix";
-      networks = [ { name = "backend"; ip = "192.168.92.2"; } ];
+      networks = [ { name = "backend"; } ];
     };
   };
 }
@@ -304,9 +304,9 @@ func TestFinixRunnerSetsInitKernelParam(t *testing.T) {
 	cfg := &config.Compose{
 		SchemaVersion: 1,
 		Name:          "finix-init-param-test",
-		Networks:      map[string]config.Network{"backend": {Subnet: "192.168.92.0/24"}},
+		Networks:      map[string]config.Network{"backend": {}},
 		Services: map[string]config.Service{
-			"a": {OS: "finix", Networks: []config.Attach{{Name: "backend", IP: "192.168.92.2"}}},
+			"a": {OS: "finix", Networks: []config.Attach{{Name: "backend"}}},
 		},
 	}
 	st := mustStack(t, cfg)
@@ -367,11 +367,11 @@ func TestFinixShareVolumeGetsMountTask(t *testing.T) {
 	shareHost := t.TempDir()
 	userNix := `{
   name = "finix-share-mount-test";
-  networks = { backend = { subnet = "192.168.94.0/24"; }; };
+  networks = { backend = { }; };
   services = {
     a = {
       os = "finix";
-      networks = [ { name = "backend"; ip = "192.168.94.2"; } ];
+      networks = [ { name = "backend"; } ];
       volumes = [
         { name = "shared"; host = "` + shareHost + `"; target = "/mnt/shared"; }
       ];
@@ -386,11 +386,11 @@ func TestFinixShareVolumeGetsMountTask(t *testing.T) {
 	cfg := &config.Compose{
 		SchemaVersion: 1,
 		Name:          "finix-share-mount-test",
-		Networks:      map[string]config.Network{"backend": {Subnet: "192.168.94.0/24"}},
+		Networks:      map[string]config.Network{"backend": {}},
 		Services: map[string]config.Service{
 			"a": {
 				OS:       "finix",
-				Networks: []config.Attach{{Name: "backend", IP: "192.168.94.2"}},
+				Networks: []config.Attach{{Name: "backend"}},
 				Volumes:  []config.Volume{{Name: "shared", Type: "share", Protocol: "virtiofs", Host: shareHost, Target: "/mnt/shared"}},
 			},
 		},
@@ -452,14 +452,14 @@ func TestShareOwnerTranslatesUidGid(t *testing.T) {
 	shareHost := t.TempDir()
 	userNix := `{
   name = "share-owner-test";
-  networks = { backend = { subnet = "192.168.80.0/24"; }; };
+  networks = { backend = { }; };
   services = {
     db = {
       config = { ... }: { services.postgresql.enable = true; };
       volumes = [
         { type = "share"; name = "data"; host = "` + shareHost + `"; target = "/var/lib/postgresql"; owner = "postgres"; }
       ];
-      networks = [ { name = "backend"; ip = "192.168.80.2"; } ];
+      networks = [ { name = "backend"; } ];
     };
   };
 }
@@ -471,9 +471,9 @@ func TestShareOwnerTranslatesUidGid(t *testing.T) {
 	cfg := &config.Compose{
 		SchemaVersion: 1,
 		Name:          "share-owner-test",
-		Networks:      map[string]config.Network{"backend": {Subnet: "192.168.80.0/24"}},
+		Networks:      map[string]config.Network{"backend": {}},
 		Services: map[string]config.Service{
-			"db": {Networks: []config.Attach{{Name: "backend", IP: "192.168.80.2"}}},
+			"db": {Networks: []config.Attach{{Name: "backend"}}},
 		},
 	}
 	st := mustStack(t, cfg)

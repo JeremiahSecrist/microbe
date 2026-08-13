@@ -17,10 +17,13 @@ import (
 	"microbe/internal/config"
 	"microbe/internal/datadir"
 	"microbe/internal/hostnet"
+	"microbe/internal/lockfile"
 	"microbe/internal/nix/flakegen"
 	"microbe/internal/provisiond"
 	"microbe/internal/state"
 )
+
+const testPrefix = "fd00:1234:5678::/64"
 
 type cmdRecorder struct {
 	calls [][]string
@@ -40,11 +43,11 @@ const testConfigJSON = `{
   },
   "services": {
     "db": {
-      "networks": [ { "name": "backend", "ip": "192.168.51.2" } ],
+      "networks": [ { "name": "backend", "addr": "fd00:1234:5678::2" } ],
       "volumes": [ { "type": "disk", "name": "db-data", "target": "/var/lib/db", "size": "2G" } ]
     },
     "web": {
-      "networks": [ { "name": "backend", "ip": "192.168.51.3" }, { "name": "frontend", "ip": "192.168.50.3" } ],
+      "networks": [ { "name": "backend", "addr": "fd00:1234:5678::3" }, { "name": "frontend", "addr": "fd00:1234:5678::3" } ],
       "ports": [ "8080:80" ]
     }
   }
@@ -69,11 +72,12 @@ func loadStack(t *testing.T, cfgPath string) (*config.Compose, *flakegen.Stack) 
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := hostnet.Plan(cfg)
+	lock := &lockfile.Lock{Prefix: testPrefix, Services: map[string]string{}}
+	plan, err := hostnet.Plan(cfg, lock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := flakegen.FromConfig(cfg, plan)
+	st, err := flakegen.FromConfig(cfg, plan, testPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,8 +165,8 @@ func TestHostSpecSlices(t *testing.T) {
 
 	nets := netSpecs(st)
 	wantNets := []hostnet.NetSpec{
-		{Name: "backend", Gateway: "192.168.51.1", Prefix: 24},
-		{Name: "frontend", Gateway: "192.168.50.1", Prefix: 24},
+		{Name: "backend", Gateway: "fd00:1234:5678::1", Prefix: 64},
+		{Name: "frontend", Gateway: "fd00:1234:5678::1", Prefix: 64},
 	}
 	if !reflect.DeepEqual(nets, wantNets) {
 		t.Errorf("netSpecs = %v, want %v", nets, wantNets)
@@ -196,7 +200,7 @@ func TestHostSpecSlices(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantPorts := []hostnet.PortSpec{
-		{HostPort: 8080, GuestIP: "192.168.51.3", GuestPort: 80},
+		{HostPort: 8080, GuestIP: "fd00:1234:5678::3", GuestPort: 80},
 	}
 	if !reflect.DeepEqual(ports, wantPorts) {
 		t.Errorf("portSpecs = %v, want %v", ports, wantPorts)
@@ -215,7 +219,7 @@ func TestHostSpecSlices(t *testing.T) {
 	// A bridge still used by a non-selected (still-running) service must
 	// survive teardown: web alone must not take backend down under db.
 	webOnlyNets := netSpecsForTeardown(st, []string{"web"})
-	if !reflect.DeepEqual(webOnlyNets, []hostnet.NetSpec{{Name: "frontend", Gateway: "192.168.50.1", Prefix: 24}}) {
+	if !reflect.DeepEqual(webOnlyNets, []hostnet.NetSpec{{Name: "frontend", Gateway: "fd00:1234:5678::1", Prefix: 64}}) {
 		t.Errorf("netSpecsForTeardown(web only) = %v, want only frontend (backend still used by db)", webOnlyNets)
 	}
 	allNets := netSpecsForTeardown(st, []string{"db", "web"})
@@ -254,6 +258,7 @@ type fakeOps struct {
 	ensureTaps     int
 	applyPorts     int
 	stack          string
+	prefix         string
 }
 
 func (f *fakeOps) EnsureNetworks(stack string, nets []hostnet.NetSpec) error {
@@ -276,6 +281,13 @@ func (f *fakeOps) TeardownNetworks(stack string, nets []hostnet.NetSpec) error {
 func (f *fakeOps) TeardownTaps(taps []hostnet.TapSpec) error                   { return nil }
 func (f *fakeOps) TeardownPorts(ports []hostnet.PortSpec) error                { return nil }
 func (f *fakeOps) TeardownLinks(links []string) error                          { return nil }
+
+func (f *fakeOps) EnsurePrefix() (string, error) {
+	if f.prefix == "" {
+		return testPrefix, nil
+	}
+	return f.prefix, nil
+}
 
 func recordHost(hr *hostRecorder, events *[]string, tag string) func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
 	return func(_ provisiond.Ops, stack string, nets []hostnet.NetSpec, taps []hostnet.TapSpec, ports []hostnet.PortSpec) error {
@@ -311,7 +323,7 @@ func TestUpRunProvision(t *testing.T) {
 
 	rec := &cmdRecorder{}
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{
+	if err := upRun(nil, upOptions{ops: &fakeOps{},
 		file: cfgPath, runner: rec.run, out: &buf,
 	}); err != nil {
 		t.Fatal(err)
@@ -326,7 +338,7 @@ func TestUpRunProvision(t *testing.T) {
 	if !reflect.DeepEqual(hr.taps, tapSpecs(cfg, st, st.Names())) {
 		t.Errorf("provision taps = %v, want %v", hr.taps, tapSpecs(cfg, st, st.Names()))
 	}
-	if !reflect.DeepEqual(hr.ports, []hostnet.PortSpec{{HostPort: 8080, GuestIP: "192.168.51.3", GuestPort: 80}}) {
+	if !reflect.DeepEqual(hr.ports, []hostnet.PortSpec{{HostPort: 8080, GuestIP: "fd00:1234:5678::3", GuestPort: 80}}) {
 		t.Errorf("provision ports = %v", hr.ports)
 	}
 
@@ -362,14 +374,14 @@ func TestUpRunProvision(t *testing.T) {
 	if db.Runner != filepath.Join(dataDir, "runners", "db") {
 		t.Errorf("db runner = %q", db.Runner)
 	}
-	if db.CID != 3 || db.MACs["backend"] != "02:00:00:00:00:01" || db.IP["backend"] != "192.168.51.2" {
+	if db.CID != 3 || db.MACs["backend"] != "02:00:00:00:00:01" || db.Addr != "fd00:1234:5678::2" {
 		t.Errorf("db state detail = %+v", db)
 	}
 	if !reflect.DeepEqual(db.Volumes, []string{"db-data"}) {
 		t.Errorf("db volumes = %v", db.Volumes)
 	}
-	if store.Networks["backend"].CIDR != "192.168.51.0/24" || store.Networks["backend"].Allocated["web"] != "192.168.51.3" {
-		t.Errorf("backend network state = %+v", store.Networks["backend"])
+	if !slices.Contains(store.Networks, "backend") || store.Services["web"].Addr != "fd00:1234:5678::3" {
+		t.Errorf("backend network state = %+v", store.Networks)
 	}
 	if got := store.Ports["8080"]; got != (state.PortState{Service: "web", Guest: 80}) {
 		t.Errorf("port state = %+v", got)
@@ -396,7 +408,7 @@ func TestUpRunWarnsWhenKVMUnavailable(t *testing.T) {
 
 	rec := &cmdRecorder{}
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{
+	if err := upRun(nil, upOptions{ops: &fakeOps{},
 		file: cfgPath, runner: rec.run, out: &buf,
 	}); err != nil {
 		t.Fatal(err)
@@ -413,7 +425,7 @@ const shareConfigJSON = `{
   "networks": { "backend": { "subnet": "192.168.55.0/24" } },
   "services": {
     "db": {
-      "networks": [ { "name": "backend", "ip": "192.168.55.2" } ],
+      "networks": [ { "name": "backend", "addr": "fd00:1234:5678::2" } ],
       "volumes": [ { "name": "data", "host": "/srv/data", "target": "/data" } ]
     }
   }
@@ -473,7 +485,7 @@ func TestUpRunStartsVirtiofsdBeforeVM(t *testing.T) {
 
 	rec := &cmdRecorder{}
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{file: cfgPath, runner: rec.run, out: &buf}); err != nil {
+	if err := upRun(nil, upOptions{ops: &fakeOps{}, file: cfgPath, runner: rec.run, out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -534,7 +546,7 @@ func TestUpRunSkipsVirtiofsdWithoutShares(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{file: cfgPath, runner: (&cmdRecorder{}).run, out: &buf}); err != nil {
+	if err := upRun(nil, upOptions{ops: &fakeOps{}, file: cfgPath, runner: (&cmdRecorder{}).run, out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -584,7 +596,7 @@ func TestUpRunBuildsConcurrently(t *testing.T) {
 
 	rec := &cmdRecorder{}
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{
+	if err := upRun(nil, upOptions{ops: &fakeOps{},
 		file: cfgPath, runner: rec.run, out: &buf,
 	}); err != nil {
 		t.Fatal(err)
@@ -601,11 +613,11 @@ const healthcheckConfigJSON = `{
   "networks": { "backend": { "subnet": "192.168.51.0/24" } },
   "services": {
     "db": {
-      "networks": [ { "name": "backend", "ip": "192.168.51.2" } ],
+      "networks": [ { "name": "backend", "addr": "fd00:1234:5678::2" } ],
       "healthcheck": { "port": 5432 }
     },
     "web": {
-      "networks": [ { "name": "backend", "ip": "192.168.51.3" } ],
+      "networks": [ { "name": "backend", "addr": "fd00:1234:5678::3" } ],
       "dependsOn": [ "db" ]
     }
   }
@@ -637,7 +649,7 @@ func TestUpRunHealthGatingHealthy(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := upRun(nil, upOptions{ops: &fakeOps{}, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatalf("upRun: %v", err)
 	}
 
@@ -672,7 +684,7 @@ func TestUpRunHealthGatingDegraded(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	err := upRun(nil, upOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf})
+	err := upRun(nil, upOptions{ops: &fakeOps{}, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf})
 	if err == nil {
 		t.Fatal("upRun: want error when db never becomes healthy, got nil")
 	}
@@ -717,7 +729,7 @@ func TestUpRunStopsProcessOnHealthcheckFailure(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err == nil {
+	if err := upRun(nil, upOptions{ops: &fakeOps{}, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err == nil {
 		t.Fatal("upRun: want error when db never becomes healthy, got nil")
 	}
 
@@ -896,7 +908,7 @@ func TestUpRunGeneratedNixHasAbsoluteVolumeImage(t *testing.T) {
 
 	rec := &cmdRecorder{}
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{
+	if err := upRun(nil, upOptions{ops: &fakeOps{},
 		file: cfgPath, runner: rec.run, out: &buf,
 	}); err != nil {
 		t.Fatal(err)
@@ -1012,7 +1024,7 @@ func TestUpRunNoProvision(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{file: cfgPath, noProvision: true, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := upRun(nil, upOptions{ops: &fakeOps{}, file: cfgPath, noProvision: true, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 	if hr.calls != 0 {
@@ -1046,7 +1058,7 @@ const testConfigDBOnlyJSON = `{
   },
   "services": {
     "db": {
-      "networks": [ { "name": "backend", "ip": "192.168.51.2" } ],
+      "networks": [ { "name": "backend", "addr": "fd00:1234:5678::2" } ],
       "volumes": [ { "type": "disk", "name": "db-data", "target": "/var/lib/db", "size": "2G" } ]
     }
   }
@@ -1132,7 +1144,7 @@ func TestDownRunOrderingAndState(t *testing.T) {
 	defer func() { teardownHost, stopService = origTeardown, origStop }()
 
 	var buf bytes.Buffer
-	if err := downRun(nil, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := downRun(nil, downOptions{ops: &fakeOps{}, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1189,7 +1201,7 @@ func TestDownRunStopsVirtiofsd(t *testing.T) {
 	defer func() { teardownHost, stopService = origTeardown, origStop }()
 
 	var buf bytes.Buffer
-	if err := downRun(nil, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := downRun(nil, downOptions{ops: &fakeOps{}, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1232,7 +1244,7 @@ func TestDownRunRemoveVolumes(t *testing.T) {
 	defer func() { teardownHost, stopService = origTeardown, origStop }()
 
 	var buf bytes.Buffer
-	if err := downRun(nil, downOptions{file: cfgPath, removeVolumes: true, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := downRun(nil, downOptions{ops: &fakeOps{}, file: cfgPath, removeVolumes: true, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1286,7 +1298,7 @@ func TestDownRunRemoveVolumesClearsStaleServiceVolumes(t *testing.T) {
 	defer func() { teardownHost, stopService = origTeardown, origStop }()
 
 	var buf bytes.Buffer
-	if err := downRun(nil, downOptions{file: cfgPath, removeVolumes: true, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := downRun(nil, downOptions{ops: &fakeOps{}, file: cfgPath, removeVolumes: true, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1317,7 +1329,6 @@ func TestDownRunStopsAndClearsStaleService(t *testing.T) {
 	webState := store.Services["web"]
 	webState.Stale = true
 	store.Services["web"] = webState
-	store.Networks["backend"].Allocated["web"] = "192.168.51.3"
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1334,7 +1345,7 @@ func TestDownRunStopsAndClearsStaleService(t *testing.T) {
 	defer func() { teardownHost, stopService = origTeardown, origStop }()
 
 	var buf bytes.Buffer
-	if err := downRun(nil, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := downRun(nil, downOptions{ops: &fakeOps{}, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1351,9 +1362,6 @@ func TestDownRunStopsAndClearsStaleService(t *testing.T) {
 	}
 	if _, ok := got.Services["web"]; ok {
 		t.Error("web still present in state after down; stale entries should be cleared once stopped")
-	}
-	if _, ok := got.Networks["backend"].Allocated["web"]; ok {
-		t.Error("web's IP allocation still present after down cleared its stale state")
 	}
 }
 
@@ -1391,7 +1399,7 @@ func TestDownRunCleansRunDir(t *testing.T) {
 	defer func() { teardownHost, stopService = origTeardown, origStop }()
 
 	var buf bytes.Buffer
-	if err := downRun(nil, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := downRun(nil, downOptions{ops: &fakeOps{}, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1431,7 +1439,7 @@ func TestDownRunWarnsOnUntrackedLiveVM(t *testing.T) {
 	defer func() { teardownHost, stopService, vmState = origTeardown, origStop, origVMState }()
 
 	var buf bytes.Buffer
-	if err := downRun(nil, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := downRun(nil, downOptions{ops: &fakeOps{}, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "db") || !strings.Contains(buf.String(), "untracked") {
@@ -1460,15 +1468,11 @@ func TestDownRunSweepsOrphanedLinks(t *testing.T) {
 
 	legacyBridge := hostnet.BridgeName("test-net", "legacy-net")
 	store := &state.Store{
-		Stack: "test-net",
-		Networks: map[string]state.NetworkState{
-			"backend":    {CIDR: "192.168.51.0/24"},
-			"frontend":   {CIDR: "192.168.50.0/24"},
-			"legacy-net": {CIDR: "192.168.99.0/24"},
-		},
+		Stack:    "test-net",
+		Networks: []string{"backend", "frontend", "legacy-net"},
 		Services: map[string]state.ServiceState{
-			"db":  {Status: "running", PID: 1000},
-			"web": {Status: "running", PID: 2000},
+			"db":  {Status: "running", PID: 1000, Networks: []string{"backend"}},
+			"web": {Status: "running", PID: 2000, Networks: []string{"backend", "frontend"}},
 		},
 		// Recorded from an even older config than the one in the store above.
 		Provisioned: []string{"br-ancient", legacyBridge, "mvc-dead"},
@@ -1492,7 +1496,7 @@ func TestDownRunSweepsOrphanedLinks(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := downRun(nil, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := downRun(nil, downOptions{ops: &fakeOps{}, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1523,14 +1527,11 @@ func TestDownRunKeepsLinksForStayingServices(t *testing.T) {
 	back := hostnet.BridgeName("test-net", "backend")
 	front := hostnet.BridgeName("test-net", "frontend")
 	store := &state.Store{
-		Stack: "test-net",
-		Networks: map[string]state.NetworkState{
-			"backend":  {CIDR: "192.168.51.0/24"},
-			"frontend": {CIDR: "192.168.50.0/24"},
-		},
+		Stack:    "test-net",
+		Networks: []string{"backend", "frontend"},
 		Services: map[string]state.ServiceState{
-			"db":  {IP: map[string]string{"backend": "192.168.51.2"}, Status: "running", PID: 1000},
-			"web": {IP: map[string]string{"backend": "192.168.51.3", "frontend": "192.168.50.3"}, Status: "running", PID: 2000},
+			"db":  {Addr: "fd00:1234:5678::2", Networks: []string{"backend"}, Status: "running", PID: 1000},
+			"web": {Addr: "fd00:1234:5678::3", Networks: []string{"backend", "frontend"}, Status: "running", PID: 2000},
 		},
 		Provisioned: dedupeNames(append([]string{back, front},
 			tapNames(cfg, st, st.Names())...)),
@@ -1553,7 +1554,7 @@ func TestDownRunKeepsLinksForStayingServices(t *testing.T) {
 	var buf bytes.Buffer
 	// Bring only web down: db stays up, so db's backend bridge and tap must
 	// survive the orphan sweep.
-	if err := downRun([]string{"web"}, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := downRun([]string{"web"}, downOptions{ops: &fakeOps{}, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1589,7 +1590,7 @@ func TestUpRunRecordsProvisioned(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	if err := upRun(nil, upOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+	if err := upRun(nil, upOptions{ops: &fakeOps{}, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1687,7 +1688,7 @@ func TestPsRunPrintsTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	for _, want := range []string{"service", "db", "web", "running", "1000", "192.168.51.2", "8080->80"} {
+	for _, want := range []string{"service", "db", "web", "running", "1000", "fd00:1234:5678::2", "8080->80"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("ps output missing %q:\n%s", want, out)
 		}

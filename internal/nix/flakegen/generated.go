@@ -3,17 +3,18 @@ package flakegen
 import (
 	"encoding/json"
 	"fmt"
-	"net/netip"
 	"sort"
 	"strconv"
 )
 
 // RenderGenerated emits the generated.json bridge file (spec §9.2): per-service
-// cid/macs/ips/gateway/prefix/hosts plus the systemd-networkd units (spec
-// §8.3). The first declared network gets a bare gateway default route; later
-// networks get explicit subnet routes only. Plain JSON, not Nix: the .json
-// extension signals at a glance that it's CLI-emitted data, not something to
-// hand-edit, and it's read back with builtins.fromJSON (see modules/renderer.nix).
+// cid/macs/addr/gateway/prefix/hosts plus the systemd-networkd units (spec
+// §8.3). Every attachment shares the service's one address; only the first
+// declared network gets a default route, since the whole /64 is reachable
+// via the shared host gateway regardless of which tap traffic entered on.
+// Plain JSON, not Nix: the .json extension signals at a glance that it's
+// CLI-emitted data, not something to hand-edit, and it's read back with
+// builtins.fromJSON (see modules/renderer.nix).
 func (st *Stack) RenderGenerated() (string, error) {
 	hosts := st.Hosts()
 	hostsVal := make([]any, 0, len(hosts))
@@ -27,10 +28,6 @@ func (st *Stack) RenderGenerated() (string, error) {
 	services := map[string]any{}
 	for _, name := range sortedServiceNames(st) {
 		s := st.Services[name]
-		networkd, err := renderNetworkd(name, s)
-		if err != nil {
-			return "", err
-		}
 		taps := map[string]string{}
 		for _, net := range s.Networks {
 			taps[net] = s.Taps[net]
@@ -38,11 +35,11 @@ func (st *Stack) RenderGenerated() (string, error) {
 		svc := map[string]any{
 			"cid":         s.CID,
 			"macs":        s.MACs,
-			"ips":         s.IPs,
+			"addr":        s.Addr,
 			"gateway":     s.Gateway,
 			"prefix":      s.Prefix,
 			"hosts":       hostsVal,
-			"networkd":    networkd,
+			"networkd":    renderNetworkd(name, s),
 			"taps":        taps,
 			"buildTarget": s.BuildTarget,
 		}
@@ -63,14 +60,18 @@ func (st *Stack) RenderGenerated() (string, error) {
 	return string(out) + "\n", nil
 }
 
-
-func renderNetworkd(svcName string, s Service) (map[string]any, error) {
+func renderNetworkd(svcName string, s Service) map[string]any {
+	addr := s.Addr + "/" + strconv.Itoa(s.Prefix)
 	out := map[string]any{}
 	for i, netName := range s.Networks {
-		addr := s.IPs[netName] + "/" + strconv.Itoa(s.Prefix[netName])
-		routes, err := routesFor(i, netName, s)
-		if err != nil {
-			return nil, err
+		// systemd-networkd's routes option rejects null (only [] or a list
+		// of route attrsets), so a secondary attachment -- which gets no
+		// route of its own, since the whole /64 is reachable via whichever
+		// tap the primary's default route already uses -- must marshal to
+		// an empty JSON array, not Go's nil-slice-as-null.
+		routes := []any{}
+		if i == 0 {
+			routes = []any{map[string]string{"Gateway": s.Gateway}}
 		}
 		out["mvc-"+svcName+"-"+netName] = map[string]any{
 			"matchConfig": map[string]string{"MACAddress": s.MACs[netName]},
@@ -79,28 +80,7 @@ func renderNetworkd(svcName string, s Service) (map[string]any, error) {
 			"routes":      routes,
 		}
 	}
-	return out, nil
-}
-
-func routesFor(idx int, netName string, s Service) ([]any, error) {
-	gateway := s.Gateway[netName]
-	if idx == 0 {
-		return []any{map[string]string{"Gateway": gateway}}, nil
-	}
-	subnet, err := subnetOf(s.IPs[netName], s.Prefix[netName])
-	if err != nil {
-		return nil, fmt.Errorf("network %q: %w", netName, err)
-	}
-	route := map[string]string{"Destination": subnet, "Gateway": gateway}
-	return []any{route}, nil
-}
-
-func subnetOf(ip string, bits int) (string, error) {
-	a, err := netip.ParseAddr(ip)
-	if err != nil {
-		return "", err
-	}
-	return netip.PrefixFrom(a, bits).Masked().String(), nil
+	return out
 }
 
 func sortedServiceNames(st *Stack) []string {

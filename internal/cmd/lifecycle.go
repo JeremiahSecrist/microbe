@@ -14,6 +14,7 @@ import (
 	"microbe/internal/chapi"
 	"microbe/internal/config"
 	"microbe/internal/hostnet"
+	"microbe/internal/lockfile"
 	"microbe/internal/nix"
 	"microbe/internal/nix/flakegen"
 	"microbe/internal/provisiond"
@@ -192,6 +193,51 @@ func (p printOps) TeardownLinks(links []string) error {
 	return nil
 }
 
+// EnsurePrefix delegates to the real daemon-side implementation rather than
+// printing a placeholder: unlike bridges/taps/ports (destructive host
+// mutations --dry-run must not perform), the host's persisted ULA prefix is
+// foundational identity, not per-run provisioning -- a --dry-run preview
+// needs the real prefix to compute the same addresses a real `up` would.
+func (p printOps) EnsurePrefix() (string, error) {
+	return (provisiond.NetOps{}).EnsurePrefix()
+}
+
+// lockPath returns the committed address lockfile's path for a stack whose
+// compose file lives at composeFile (e.g. "microbe.yml" -> sibling
+// "microbe.lock.json").
+func lockPath(composeFile string) string {
+	return filepath.Join(filepath.Dir(composeFile), "microbe.lock.json")
+}
+
+// resolvePlan loads a stack's committed lockfile, resolves the host's ULA
+// prefix via ops (generating one on first use), computes the network plan,
+// and persists any newly-allocated addresses back to the lockfile -- the
+// common sequence every command needing addressing runs before
+// flakegen.FromConfig. The returned prefix is what FromConfig needs to
+// derive the shared gateway.
+func resolvePlan(cfg *config.Compose, composeFile string, ops provisiond.Ops) (*hostnet.NetworkPlan, string, error) {
+	path := lockPath(composeFile)
+	lock, err := lockfile.Load(path)
+	if err != nil {
+		return nil, "", fmt.Errorf("load %s: %w", path, err)
+	}
+	if lock.Prefix == "" {
+		prefix, err := ops.EnsurePrefix()
+		if err != nil {
+			return nil, "", err
+		}
+		lock.Prefix = prefix
+	}
+	plan, err := hostnet.Plan(cfg, lock)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := lock.Save(path); err != nil {
+		return nil, "", fmt.Errorf("save %s: %w", path, err)
+	}
+	return plan, lock.Prefix, nil
+}
+
 // parsePort parses a "host:guest" port mapping.
 func parsePort(portMapping string) (host, guest int, err error) {
 	parts := strings.Split(portMapping, ":")
@@ -209,11 +255,23 @@ func parsePort(portMapping string) (host, guest int, err error) {
 	return host, guest, nil
 }
 
-// netSpecs derives one NetSpec per network, sorted by network name. Gateways
-// are identical across services on the same network.
+// netSpecs derives one NetSpec per network, sorted by network name. Every
+// service shares one Gateway/Prefix now (the host's single flat /64, see
+// flakegen.FromConfig), so every network gets the same one.
+//
+// KNOWN GAP (tracked for the provisiond bridge-collapse stage): until
+// networks collapse to one shared bridge per stack, a stack with more than
+// one declared network ends up asking provisiond to assign the *same*
+// gateway address to *multiple* separate bridges, which is not a coherent
+// host routing state. Single-network stacks (the common case) are
+// unaffected; this is resolved by collapsing to one bridge per stack, not
+// by this function.
 func netSpecs(st *flakegen.Stack) []hostnet.NetSpec {
 	netNameSet := map[string]bool{}
+	var gateway string
+	var prefix int
 	for _, svc := range st.Services {
+		gateway, prefix = svc.Gateway, svc.Prefix
 		for _, netName := range svc.Networks {
 			netNameSet[netName] = true
 		}
@@ -225,17 +283,12 @@ func netSpecs(st *flakegen.Stack) []hostnet.NetSpec {
 	sort.Strings(names)
 	var specs []hostnet.NetSpec
 	for _, netName := range names {
-		for _, svc := range st.Services {
-			if gateway, ok := svc.Gateway[netName]; ok {
-				specs = append(specs, hostnet.NetSpec{
-					Name:     netName,
-					Gateway:  gateway,
-					Prefix:   svc.Prefix[netName],
-					Internal: st.Internal[netName],
-				})
-				break
-			}
-		}
+		specs = append(specs, hostnet.NetSpec{
+			Name:     netName,
+			Gateway:  gateway,
+			Prefix:   prefix,
+			Internal: st.Internal[netName],
+		})
 	}
 	return specs
 }
@@ -330,7 +383,7 @@ func aliveDeviceNames(store *state.Store, stack, base string) []string {
 		if !alive {
 			continue
 		}
-		for net := range svc.IP {
+		for _, net := range svc.Networks {
 			names = append(names, hostnet.BridgeName(stack, net))
 			names = append(names, flakegen.TapID(stack, name, net))
 		}
@@ -356,15 +409,15 @@ func stackDeviceNames(cfg *config.Compose, st *flakegen.Stack, store *state.Stor
 
 // storeDeviceNames reconstructs device names from state alone, without a
 // config: every network in store.Networks as a bridge, plus each service's
-// tap per network from its IP keys. Used by host-wide purge for stacks whose
-// compose file microbe isn't currently pointed at.
+// tap per network it was attached to. Used by host-wide purge for stacks
+// whose compose file microbe isn't currently pointed at.
 func storeDeviceNames(store *state.Store, stack string) []string {
 	var names []string
-	for net := range store.Networks {
+	for _, net := range store.Networks {
 		names = append(names, hostnet.BridgeName(stack, net))
 	}
 	for name, svc := range store.Services {
-		for net := range svc.IP {
+		for _, net := range svc.Networks {
 			names = append(names, flakegen.TapID(stack, name, net))
 		}
 	}
@@ -394,7 +447,7 @@ func retainedDeviceNames(cfg *config.Compose, st *flakegen.Stack, store *state.S
 		if isSelected[name] {
 			continue
 		}
-		for net := range svc.IP {
+		for _, net := range svc.Networks {
 			names = append(names, hostnet.BridgeName(st.Name, net))
 			names = append(names, flakegen.TapID(st.Name, name, net))
 		}
@@ -450,22 +503,11 @@ func tapSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) []host
 	return specs
 }
 
-// primaryNetwork returns a service's first declared network: the one that
-// gets the default route (see Stack.Networks) and is used as the address
-// for DNAT targets and healthchecks. "" if the service has no networks.
-func primaryNetwork(svc flakegen.Service) string {
-	if len(svc.Networks) == 0 {
-		return ""
-	}
-	return svc.Networks[0]
-}
-
 // portSpecs derives one PortSpec per published port belonging to a service
-// in selected, in sorted service order. The DNAT target is the service's
-// primary network IP. Callers tearing down ports must scope selected to the
-// services actually being brought down: TeardownPorts deletes by exact
-// match, so an unscoped call would delete a still-running service's DNAT
-// rule too.
+// in selected, in sorted service order. The DNAT target is the service's one
+// address. Callers tearing down ports must scope selected to the services
+// actually being brought down: TeardownPorts deletes by exact match, so an
+// unscoped call would delete a still-running service's DNAT rule too.
 func portSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) ([]hostnet.PortSpec, error) {
 	isSelected := map[string]bool{}
 	for _, name := range selected {
@@ -477,7 +519,6 @@ func portSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) ([]ho
 			continue
 		}
 		svc := st.Services[name]
-		primary := primaryNetwork(svc)
 		for _, portMapping := range cfg.Services[name].Ports {
 			host, guest, err := parsePort(portMapping)
 			if err != nil {
@@ -485,7 +526,7 @@ func portSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) ([]ho
 			}
 			specs = append(specs, hostnet.PortSpec{
 				HostPort:  host,
-				GuestIP:   svc.IPs[primary],
+				GuestIP:   svc.Addr,
 				GuestPort: guest,
 			})
 		}
@@ -586,20 +627,16 @@ const (
 // marked Stale, instead of dropped, so down can still find and stop it by
 // PID even after the config changed out from under it.
 func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map[string]int, statuses map[string]string, runnerDir string, prev *state.Store) *state.Store {
+	netNames := make([]string, 0, len(cfg.Networks))
+	for netName := range cfg.Networks {
+		netNames = append(netNames, netName)
+	}
+	sort.Strings(netNames)
 	store := &state.Store{
 		Stack:    cfg.Name,
-		Networks: map[string]state.NetworkState{},
+		Networks: netNames,
 		Services: map[string]state.ServiceState{},
 		Ports:    map[string]state.PortState{},
-	}
-	for netName, net := range cfg.Networks {
-		alloc := map[string]string{}
-		for name, svc := range st.Services {
-			if ip, ok := svc.IPs[netName]; ok {
-				alloc[name] = ip
-			}
-		}
-		store.Networks[netName] = state.NetworkState{CIDR: net.Subnet, Allocated: alloc}
 	}
 	for _, name := range st.Names() {
 		svc := st.Services[name]
@@ -628,7 +665,8 @@ func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map
 		}
 		store.Services[name] = state.ServiceState{
 			ID:           id,
-			IP:           svc.IPs,
+			Addr:         svc.Addr,
+			Networks:     svc.Networks,
 			CID:          svc.CID,
 			MACs:         svc.MACs,
 			Volumes:      vols,
@@ -688,15 +726,6 @@ func printStore(out io.Writer, store *state.Store, interactive bool) {
 	sort.Strings(names)
 	for _, name := range names {
 		svc := store.Services[name]
-		var netNames []string
-		for netName := range svc.IP {
-			netNames = append(netNames, netName)
-		}
-		sort.Strings(netNames)
-		ips := make([]string, 0, len(netNames))
-		for _, netName := range netNames {
-			ips = append(ips, svc.IP[netName])
-		}
 		var ports []string
 		for hostPort, portState := range store.Ports {
 			if portState.Service == name {
@@ -712,6 +741,6 @@ func printStore(out io.Writer, store *state.Store, interactive bool) {
 		if pad < 0 {
 			pad = 0
 		}
-		fmt.Fprintf(out, "%-12s %s%*s %-7d %-24s %s\n", name, status, pad, "", svc.PID, strings.Join(ips, " "), strings.Join(ports, " "))
+		fmt.Fprintf(out, "%-12s %s%*s %-7d %-24s %s\n", name, status, pad, "", svc.PID, svc.Addr, strings.Join(ports, " "))
 	}
 }

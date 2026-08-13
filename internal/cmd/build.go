@@ -8,9 +8,9 @@ import (
 
 	"microbe/internal/config"
 	"microbe/internal/datadir"
-	"microbe/internal/hostnet"
 	"microbe/internal/nix"
 	"microbe/internal/nix/flakegen"
+	"microbe/internal/provisiond"
 )
 
 func newBuildCmd() *cobra.Command {
@@ -38,11 +38,16 @@ evaluates before running up.`,
 			if err := cfg.Validate(); err != nil {
 				return err
 			}
-			plan, err := hostnet.Plan(cfg)
+			conn, err := provisiond.Dial(provisiond.SocketPath)
 			if err != nil {
 				return err
 			}
-			st, err := flakegen.FromConfig(cfg, plan)
+			defer conn.Close()
+			plan, prefix, err := resolvePlan(cfg, file, conn)
+			if err != nil {
+				return err
+			}
+			st, err := flakegen.FromConfig(cfg, plan, prefix)
 			if err != nil {
 				return err
 			}

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"time"
 
 	"microbe/internal/config"
@@ -41,6 +42,6 @@ func probeHealth(hc config.Healthcheck, ip string) (healthy bool, err error) {
 	if err != nil {
 		return false, fmt.Errorf("healthcheck: invalid startPeriod %q: %w", hc.StartPeriod, err)
 	}
-	addr := fmt.Sprintf("%s:%d", ip, hc.Port)
+	addr := net.JoinHostPort(ip, strconv.Itoa(hc.Port))
 	return waitHealthy(addr, timeout, interval, startPeriod), nil
 }

@@ -17,7 +17,6 @@ import (
 
 	"microbe/internal/config"
 	"microbe/internal/datadir"
-	"microbe/internal/hostnet"
 	"microbe/internal/nix/flakegen"
 	"microbe/internal/provisiond"
 	"microbe/internal/runtime"
@@ -175,7 +174,7 @@ func purgeRun(target string, opts purgeOptions) error {
 }
 
 // loadPurgeStack loads the compose file's config, stack and persisted state.
-func loadPurgeStack(file string) (*config.Compose, *flakegen.Stack, *state.Store, string, error) {
+func loadPurgeStack(file string, ops provisiond.Ops) (*config.Compose, *flakegen.Stack, *state.Store, string, error) {
 	cfg, err := config.Load(file)
 	if err != nil {
 		return nil, nil, nil, "", err
@@ -183,11 +182,11 @@ func loadPurgeStack(file string) (*config.Compose, *flakegen.Stack, *state.Store
 	if err := cfg.Validate(); err != nil {
 		return nil, nil, nil, "", err
 	}
-	plan, err := hostnet.Plan(cfg)
+	plan, prefix, err := resolvePlan(cfg, file, ops)
 	if err != nil {
 		return nil, nil, nil, "", err
 	}
-	st, err := flakegen.FromConfig(cfg, plan)
+	st, err := flakegen.FromConfig(cfg, plan, prefix)
 	if err != nil {
 		return nil, nil, nil, "", err
 	}
@@ -303,7 +302,7 @@ func purgeNetworks(opts purgeOptions) error {
 	if opts.all {
 		return purgeNetworksHostWide(opts)
 	}
-	_, st, store, _, err := loadPurgeStack(opts.file)
+	_, st, store, _, err := loadPurgeStack(opts.file, opts.ops)
 	if err != nil {
 		return err
 	}
@@ -448,7 +447,7 @@ func purgeVolumes(opts purgeOptions) error {
 	if opts.all {
 		return purgeVolumesHostWide(opts)
 	}
-	_, _, store, base, err := loadPurgeStack(opts.file)
+	_, _, store, base, err := loadPurgeStack(opts.file, opts.ops)
 	if err != nil {
 		return err
 	}
@@ -502,9 +501,6 @@ func removeVolumesForStore(store *state.Store, base string, opts purgeOptions) e
 			_ = removeSnapshots(filepath.Join(base, "runs", name))
 		}
 		delete(store.Services, name)
-		for _, net := range store.Networks {
-			delete(net.Allocated, name)
-		}
 	}
 	if !opts.dryRun {
 		store.Provisioned = nil
