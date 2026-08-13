@@ -49,7 +49,7 @@ func TestPurgeNetworksRemovesOrphans(t *testing.T) {
 
 	// backend/frontend bridges + all taps are "known" (config + state);
 	// legacyBridge and the two phantoms are leftovers to sweep.
-	legacy := hostnet.BridgeName("test-net", "legacy-net")
+	legacy := "br-test-net-legacy-net" // pre-bridge-collapse naming, no longer producible
 	store := &state.Store{
 		Stack:    "test-net",
 		Networks: []string{"backend", "frontend", "legacy-net"},
@@ -98,7 +98,7 @@ func TestPurgeNetworksHostWide(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	legacy := hostnet.BridgeName("stack-a", "old-net")
+	legacy := "br-stack-a-old-net" // pre-bridge-collapse naming, no longer producible
 	writeStore("stack-a", []string{legacy, "mvc-ghost"})
 	writeStore("stack-b", nil)
 
@@ -108,7 +108,9 @@ func TestPurgeNetworksHostWide(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Slice(*swept, func(i, j int) bool { return (*swept)[i] < (*swept)[j] })
-	want := []string{legacy, "mvc-ghost", hostnet.BridgeName("stack-b", "old-net")}
+	// Both stacks' real (reconstructed-from-Networks) bridges are orphans
+	// too: neither has any live service keeping it alive.
+	want := []string{legacy, "mvc-ghost", hostnet.BridgeName("stack-a"), hostnet.BridgeName("stack-b")}
 	sort.Strings(want)
 	if !reflect.DeepEqual(*swept, want) {
 		t.Errorf("host-wide swept = %v, want %v", *swept, want)
@@ -130,7 +132,7 @@ func TestPurgeNetworksKeepsLiveVMDevices(t *testing.T) {
 		Networks: []string{"wanted"},
 		Services: map[string]state.ServiceState{"db": {PID: 9001, Addr: "fd00:1234:5678::9", Networks: []string{"wanted"}}},
 		Provisioned: []string{
-			hostnet.BridgeName("test-net", "wanted"),
+			hostnet.BridgeName("test-net"),
 			"mvc-dead",
 		},
 	}

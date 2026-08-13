@@ -6,40 +6,34 @@ import (
 )
 
 // TestBridgeName is the red-green gate for Linux IFNAMSIZ=15: bridge names
-// must stay ≤15 chars regardless of stack/network length, and be
-// deterministic + unique per (stack, net) pair.
+// must stay ≤15 chars regardless of stack length, and be deterministic +
+// unique per stack (one bridge per stack now, not one per network -- see
+// BridgeName's doc comment).
 func TestBridgeName(t *testing.T) {
-	if got := BridgeName("ab", "backend"); got != "br-ab-backend" {
-		t.Errorf("BridgeName(short) = %q, want br-ab-backend", got)
-	}
-	// "br-mystack-backend" is 17, must hash.
-	if got := BridgeName("mystack", "backend"); len(got) > 15 {
-		t.Errorf("BridgeName(mystack, backend) = %q len %d, want ≤15", got, len(got))
+	if got := BridgeName("ab"); got != "br-ab" {
+		t.Errorf("BridgeName(short) = %q, want br-ab", got)
 	}
 
-	// The canonical fixture stack+net: readable form would be
-	// br-test-net-backend (19 chars) — must collapse to a ≤15-char name.
-	long := BridgeName("test-net", "backend")
+	// The canonical fixture stack: readable form would be
+	// br-test-net-of-unusual-length (well over 15 chars) — must collapse to
+	// a ≤15-char name.
+	long := BridgeName("test-net-of-unusual-length")
 	if len(long) > 15 {
-		t.Errorf("BridgeName(test-net, backend) = %q len %d, want ≤15", long, len(long))
+		t.Errorf("BridgeName(long stack) = %q len %d, want ≤15", long, len(long))
 	}
 	if !strings.HasPrefix(long, "br-") {
-		t.Errorf("BridgeName(test-net, backend) = %q, want br- prefix", long)
+		t.Errorf("BridgeName(long stack) = %q, want br- prefix", long)
 	}
 
 	// Deterministic.
-	if again := BridgeName("test-net", "backend"); again != long {
+	if again := BridgeName("test-net-of-unusual-length"); again != long {
 		t.Errorf("BridgeName not deterministic: %q vs %q", again, long)
 	}
 
-	// Unique per (stack, net) pair even when names collide after hashing.
-	a := BridgeName("test-net", "backend")
-	b := BridgeName("test-net", "frontend")
+	// Unique per stack even when names collide after hashing.
+	a := BridgeName("test-net-of-unusual-length")
+	b := BridgeName("other-test-net-of-unusual-length")
 	if a == b {
-		t.Errorf("distinct networks collided: %q", a)
-	}
-	c := BridgeName("other", "backend")
-	if c == a {
 		t.Errorf("distinct stacks collided: %q", a)
 	}
 }

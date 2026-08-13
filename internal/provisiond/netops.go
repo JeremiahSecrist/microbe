@@ -6,6 +6,7 @@ import (
 
 	"microbe/internal/hostnet"
 
+	"github.com/google/nftables"
 	"github.com/vishvananda/netlink"
 )
 
@@ -26,11 +27,15 @@ type NetOps struct{}
 
 var _ Ops = NetOps{}
 
-// EnsureNetworks creates each bridge and assigns its gateway address.
-// Idempotent: an existing bridge/address is left in place.
+// EnsureNetworks creates the stack's one bridge (br-<stack>) and assigns its
+// gateway address -- every stack's bridge carries the same host-wide
+// gateway (see hostnet.NetSpec), since every service shares the one flat
+// /64. Idempotent: an existing bridge/address is left in place. nets is
+// expected to carry zero or one NetSpec (zero only for a stack with no
+// network attachments at all).
 func (NetOps) EnsureNetworks(stack string, nets []hostnet.NetSpec) error {
 	for _, netSpec := range nets {
-		bridgeName := hostnet.BridgeName(stack, netSpec.Name)
+		bridgeName := hostnet.BridgeName(stack)
 		link, err := netlink.LinkByName(bridgeName)
 		if err != nil {
 			if !isLinkNotFound(err) {
@@ -52,10 +57,24 @@ func (NetOps) EnsureNetworks(stack string, nets []hostnet.NetSpec) error {
 			return fmt.Errorf("provisiond: bring up bridge %s: %w", bridgeName, err)
 		}
 	}
-	if err := (NetOps{}).EnsureMasquerade(nets); err != nil {
+	// The forward chain's default-deny policy and its established/related
+	// accept rule are host-wide, structural, and idempotent to (re)ensure on
+	// every `up` -- see nft.go's ensureForwardChain.
+	c, err := nftables.New()
+	if err != nil {
+		return fmt.Errorf("provisiond: nftables: %w", err)
+	}
+	if _, _, err := ensureForwardChain(c); err != nil {
 		return err
 	}
-	return (NetOps{}).EnsureForwardAccept(nets)
+	return nil
+}
+
+// TeardownNetworks deletes the stack's bridge. Best-effort: a missing device
+// is fine.
+func (NetOps) TeardownNetworks(stack string, nets []hostnet.NetSpec) error {
+	_ = delLinkByName(hostnet.BridgeName(stack))
+	return nil
 }
 
 // EnsureTaps creates each tap and enslaves it to its bridge.
@@ -89,20 +108,6 @@ func (NetOps) EnsureTaps(taps []hostnet.TapSpec) error {
 		if err := netlink.LinkSetUp(link); err != nil {
 			return fmt.Errorf("provisiond: bring up tap %s: %w", spec.Name, err)
 		}
-	}
-	return nil
-}
-
-// TeardownNetworks deletes the bridges. Best-effort: missing devices are fine.
-func (NetOps) TeardownNetworks(stack string, nets []hostnet.NetSpec) error {
-	if err := (NetOps{}).TeardownForwardAccept(nets); err != nil {
-		return err
-	}
-	if err := (NetOps{}).TeardownMasquerade(nets); err != nil {
-		return err
-	}
-	for _, n := range nets {
-		_ = delLinkByName(hostnet.BridgeName(stack, n.Name))
 	}
 	return nil
 }

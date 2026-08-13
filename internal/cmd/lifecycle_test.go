@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -127,15 +128,18 @@ func TestParsePort(t *testing.T) {
 	}
 }
 
-func TestNetSpecsCarriesInternal(t *testing.T) {
+// TestNetSpecsSingleBridge proves netSpecs returns exactly one NetSpec for
+// any stack with at least one network attachment -- one bridge per stack
+// now, not one per declared network (see hostnet.BridgeName).
+func TestNetSpecsSingleBridge(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "microbe.json")
 	airgapConfigJSON := `{
 	  "schemaVersion": 1,
 	  "name": "airgap-net",
 	  "networks": {
-	    "public": { "subnet": "192.168.62.0/24" },
-	    "secure": { "subnet": "192.168.63.0/24", "internal": true }
+	    "public": {},
+	    "secure": { "internal": true }
 	  },
 	  "services": {
 	    "db": { "networks": [ { "name": "secure" } ] }
@@ -147,15 +151,8 @@ func TestNetSpecsCarriesInternal(t *testing.T) {
 	_, st := loadStack(t, p)
 
 	specs := netSpecs(st)
-	byName := map[string]hostnet.NetSpec{}
-	for _, s := range specs {
-		byName[s.Name] = s
-	}
-	if !byName["secure"].Internal {
-		t.Errorf("netSpecs()[secure].Internal = false, want true")
-	}
-	if byName["public"].Internal {
-		t.Errorf("netSpecs()[public].Internal = true, want false")
+	if len(specs) != 1 {
+		t.Fatalf("netSpecs() = %d specs, want 1 (one bridge per stack)", len(specs))
 	}
 }
 
@@ -165,20 +162,18 @@ func TestHostSpecSlices(t *testing.T) {
 
 	nets := netSpecs(st)
 	wantNets := []hostnet.NetSpec{
-		{Name: "backend", Gateway: "fd00:1234:5678::1", Prefix: 64},
-		{Name: "frontend", Gateway: "fd00:1234:5678::1", Prefix: 64},
+		{Gateway: "fd00:1234:5678::1", Prefix: 64},
 	}
 	if !reflect.DeepEqual(nets, wantNets) {
 		t.Errorf("netSpecs = %v, want %v", nets, wantNets)
 	}
 
 	taps := tapSpecs(cfg, st, []string{"db", "web"})
-	back := hostnet.BridgeName("test-net", "backend")
-	front := hostnet.BridgeName("test-net", "frontend")
+	bridge := hostnet.BridgeName("test-net")
 	wantTaps := []hostnet.TapSpec{
-		{Name: flakegen.TapID("test-net", "db", "backend"), Bridge: back, Owner: os.Getuid(), Group: os.Getgid()},
-		{Name: flakegen.TapID("test-net", "web", "backend"), Bridge: back, Owner: os.Getuid(), Group: os.Getgid()},
-		{Name: flakegen.TapID("test-net", "web", "frontend"), Bridge: front, Owner: os.Getuid(), Group: os.Getgid()},
+		{Name: flakegen.TapID("test-net", "db", "backend"), Bridge: bridge, Owner: os.Getuid(), Group: os.Getgid()},
+		{Name: flakegen.TapID("test-net", "web", "backend"), Bridge: bridge, Owner: os.Getuid(), Group: os.Getgid()},
+		{Name: flakegen.TapID("test-net", "web", "frontend"), Bridge: bridge, Owner: os.Getuid(), Group: os.Getgid()},
 	}
 	if !reflect.DeepEqual(taps, wantTaps) {
 		t.Errorf("tapSpecs = %v, want %v", taps, wantTaps)
@@ -189,7 +184,7 @@ func TestHostSpecSlices(t *testing.T) {
 	// an already-running VM.
 	dbOnly := tapSpecs(cfg, st, []string{"db"})
 	wantDbOnly := []hostnet.TapSpec{
-		{Name: flakegen.TapID("test-net", "db", "backend"), Bridge: back, Owner: os.Getuid(), Group: os.Getgid()},
+		{Name: flakegen.TapID("test-net", "db", "backend"), Bridge: bridge, Owner: os.Getuid(), Group: os.Getgid()},
 	}
 	if !reflect.DeepEqual(dbOnly, wantDbOnly) {
 		t.Errorf("tapSpecs(db only) = %v, want %v", dbOnly, wantDbOnly)
@@ -216,15 +211,82 @@ func TestHostSpecSlices(t *testing.T) {
 		t.Errorf("portSpecs(db only) = %v, want empty (web's port excluded)", dbOnlyPorts)
 	}
 
-	// A bridge still used by a non-selected (still-running) service must
-	// survive teardown: web alone must not take backend down under db.
+	// The stack's one bridge is still used by a non-selected (still-running)
+	// service: web alone must not take it down while db is still attached.
 	webOnlyNets := netSpecsForTeardown(st, []string{"web"})
-	if !reflect.DeepEqual(webOnlyNets, []hostnet.NetSpec{{Name: "frontend", Gateway: "fd00:1234:5678::1", Prefix: 64}}) {
-		t.Errorf("netSpecsForTeardown(web only) = %v, want only frontend (backend still used by db)", webOnlyNets)
+	if webOnlyNets != nil {
+		t.Errorf("netSpecsForTeardown(web only) = %v, want nil (db still attached)", webOnlyNets)
 	}
 	allNets := netSpecsForTeardown(st, []string{"db", "web"})
 	if !reflect.DeepEqual(allNets, wantNets) {
 		t.Errorf("netSpecsForTeardown(all) = %v, want %v (nothing left using them)", allNets, wantNets)
+	}
+}
+
+const rulesConfigJSON = `{
+  "schemaVersion": 1,
+  "name": "test-net",
+  "networks": { "backend": {} },
+  "services": {
+    "db": { "networks": [ { "name": "backend", "addr": "fd00:1234:5678::2" } ] },
+    "web": { "networks": [ { "name": "backend", "addr": "fd00:1234:5678::3" } ] }
+  },
+  "rules": [ { "from": "web", "to": "db", "ports": [5432] } ]
+}`
+
+func writeRulesConfig(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "microbe.json")
+	if err := os.WriteFile(p, []byte(rulesConfigJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestRuleSpecsResolvesAddresses proves ruleSpecs resolves config.Rule
+// from/to service names into the stack's actual allocated addresses.
+func TestRuleSpecsResolvesAddresses(t *testing.T) {
+	cfgPath := writeRulesConfig(t)
+	cfg, st := loadStack(t, cfgPath)
+
+	specs := ruleSpecs(cfg, st)
+	want := []hostnet.RuleSpec{
+		{From: "fd00:1234:5678::3", To: "fd00:1234:5678::2", Proto: "tcp", Port: 5432},
+	}
+	if !reflect.DeepEqual(specs, want) {
+		t.Errorf("ruleSpecs = %v, want %v", specs, want)
+	}
+}
+
+// TestUpRunAppliesRules proves up wires ruleSpecs() through to
+// ops.ApplyRules, not just nets/taps/ports.
+func TestUpRunAppliesRules(t *testing.T) {
+	cfgPath := writeRulesConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+
+	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
+	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+		return nil
+	}
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
+	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	defer func() {
+		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
+	}()
+
+	ops := &fakeOps{}
+	var buf bytes.Buffer
+	if err := upRun(nil, upOptions{ops: ops, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []hostnet.RuleSpec{
+		{From: "fd00:1234:5678::3", To: "fd00:1234:5678::2", Proto: "tcp", Port: 5432},
+	}
+	if !reflect.DeepEqual(ops.applyRules, want) {
+		t.Errorf("ApplyRules = %v, want %v", ops.applyRules, want)
 	}
 }
 
@@ -259,6 +321,8 @@ type fakeOps struct {
 	applyPorts     int
 	stack          string
 	prefix         string
+	applyRules     []hostnet.RuleSpec
+	teardownRules  []hostnet.RuleSpec
 }
 
 func (f *fakeOps) EnsureNetworks(stack string, nets []hostnet.NetSpec) error {
@@ -287,6 +351,15 @@ func (f *fakeOps) EnsurePrefix() (string, error) {
 		return testPrefix, nil
 	}
 	return f.prefix, nil
+}
+
+func (f *fakeOps) ApplyRules(rules []hostnet.RuleSpec) error {
+	f.applyRules = rules
+	return nil
+}
+func (f *fakeOps) TeardownRules(rules []hostnet.RuleSpec) error {
+	f.teardownRules = rules
+	return nil
 }
 
 func recordHost(hr *hostRecorder, events *[]string, tag string) func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
@@ -1119,6 +1192,41 @@ func TestBuildStorePreservesRemovedServiceAsStale(t *testing.T) {
 	}
 }
 
+// TestDownRunTeardownsRules proves down wires ruleSpecs() through to
+// ops.TeardownRules.
+func TestDownRunTeardownsRules(t *testing.T) {
+	cfgPath := writeRulesConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
+	cfg, st := loadStack(t, cfgPath)
+
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	origTeardown, origStop := teardownHost, stopService
+	teardownHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+		return nil
+	}
+	stopService = func(context.Context, int, time.Duration) error { return nil }
+	defer func() { teardownHost, stopService = origTeardown, origStop }()
+
+	ops := &fakeOps{}
+	var buf bytes.Buffer
+	if err := downRun(nil, downOptions{ops: ops, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []hostnet.RuleSpec{
+		{From: "fd00:1234:5678::3", To: "fd00:1234:5678::2", Proto: "tcp", Port: 5432},
+	}
+	if !reflect.DeepEqual(ops.teardownRules, want) {
+		t.Errorf("TeardownRules = %v, want %v", ops.teardownRules, want)
+	}
+}
+
 func TestDownRunOrderingAndState(t *testing.T) {
 	cfgPath := writeConfig(t)
 	base := t.TempDir()
@@ -1466,7 +1574,10 @@ func TestDownRunSweepsOrphanedLinks(t *testing.T) {
 	datadir.Root = base
 	dataDir := filepath.Join(base, "test-net")
 
-	legacyBridge := hostnet.BridgeName("test-net", "legacy-net")
+	// Pre-bridge-collapse (old per-network) naming format: no longer
+	// producible by hostnet.BridgeName, exactly the kind of leftover an
+	// orphan sweep must still catch.
+	legacyBridge := "br-test-net-legacy-net"
 	store := &state.Store{
 		Stack:    "test-net",
 		Networks: []string{"backend", "frontend", "legacy-net"},
@@ -1504,6 +1615,7 @@ func TestDownRunSweepsOrphanedLinks(t *testing.T) {
 	// recorded devices are orphans. The current config's bridges/taps are
 	// handled by teardownHost and must NOT appear here.
 	want := []string{legacyBridge, "br-ancient", "mvc-dead"}
+	sort.Strings(want)
 	if !reflect.DeepEqual(swept, want) {
 		t.Errorf("swept links = %v, want %v", swept, want)
 	}
@@ -1524,8 +1636,7 @@ func TestDownRunKeepsLinksForStayingServices(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	back := hostnet.BridgeName("test-net", "backend")
-	front := hostnet.BridgeName("test-net", "frontend")
+	bridge := hostnet.BridgeName("test-net")
 	store := &state.Store{
 		Stack:    "test-net",
 		Networks: []string{"backend", "frontend"},
@@ -1533,7 +1644,7 @@ func TestDownRunKeepsLinksForStayingServices(t *testing.T) {
 			"db":  {Addr: "fd00:1234:5678::2", Networks: []string{"backend"}, Status: "running", PID: 1000},
 			"web": {Addr: "fd00:1234:5678::3", Networks: []string{"backend", "frontend"}, Status: "running", PID: 2000},
 		},
-		Provisioned: dedupeNames(append([]string{back, front},
+		Provisioned: dedupeNames(append([]string{bridge},
 			tapNames(cfg, st, st.Names())...)),
 	}
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
@@ -1565,7 +1676,7 @@ func TestDownRunKeepsLinksForStayingServices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := dedupeNames(append([]string{back, flakegen.TapID("test-net", "db", "backend")},
+	want := dedupeNames(append([]string{bridge, flakegen.TapID("test-net", "db", "backend")},
 		tapNames(cfg, st, []string{"db"})...))
 	if !reflect.DeepEqual(got.Provisioned, want) {
 		t.Errorf("Provisioned after partial down = %v, want %v (only db's devices)", got.Provisioned, want)

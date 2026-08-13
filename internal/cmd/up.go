@@ -339,6 +339,9 @@ func upRun(args []string, opts upOptions) error {
 		if err := provisionHost(opts.ops, st.Name, nets, taps, ports); err != nil {
 			return err
 		}
+		if err := opts.ops.ApplyRules(ruleSpecs(cfg, st)); err != nil {
+			return err
+		}
 	}
 
 	order, err := startOrder(cfg, selected)

@@ -96,3 +96,14 @@ func (c *Client) EnsurePrefix() (string, error) {
 	}
 	return resp.Prefix, nil
 }
+
+// ApplyRules asks the daemon to install the forward-chain accept rules.
+func (c *Client) ApplyRules(rules []hostnet.RuleSpec) error {
+	return c.call(Request{Method: MethodApplyRules, Rules: rules})
+}
+
+// TeardownRules asks the daemon to remove the forward-chain accept rules
+// (best-effort).
+func (c *Client) TeardownRules(rules []hostnet.RuleSpec) error {
+	return c.call(Request{Method: MethodTeardownRules, Rules: rules})
+}

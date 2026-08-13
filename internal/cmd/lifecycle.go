@@ -146,7 +146,7 @@ type printOps struct {
 
 func (p printOps) EnsureNetworks(stack string, nets []hostnet.NetSpec) error {
 	for _, netSpec := range nets {
-		fmt.Fprintf(p.out, "ensure bridge %s %s/%d\n", hostnet.BridgeName(stack, netSpec.Name), netSpec.Gateway, netSpec.Prefix)
+		fmt.Fprintf(p.out, "ensure bridge %s %s/%d\n", hostnet.BridgeName(stack), netSpec.Gateway, netSpec.Prefix)
 	}
 	return nil
 }
@@ -166,8 +166,8 @@ func (p printOps) ApplyPorts(ports []hostnet.PortSpec) error {
 }
 
 func (p printOps) TeardownNetworks(stack string, nets []hostnet.NetSpec) error {
-	for _, netSpec := range nets {
-		fmt.Fprintf(p.out, "teardown bridge %s\n", hostnet.BridgeName(stack, netSpec.Name))
+	for range nets {
+		fmt.Fprintf(p.out, "teardown bridge %s\n", hostnet.BridgeName(stack))
 	}
 	return nil
 }
@@ -189,6 +189,24 @@ func (p printOps) TeardownPorts(ports []hostnet.PortSpec) error {
 func (p printOps) TeardownLinks(links []string) error {
 	for _, name := range links {
 		fmt.Fprintf(p.out, "teardown orphaned link %s\n", name)
+	}
+	return nil
+}
+
+func (p printOps) ApplyRules(rules []hostnet.RuleSpec) error {
+	for _, r := range rules {
+		port := "*"
+		if r.Port != 0 {
+			port = strconv.Itoa(r.Port)
+		}
+		fmt.Fprintf(p.out, "allow %s -> %s (%s/%s)\n", r.From, r.To, r.Proto, port)
+	}
+	return nil
+}
+
+func (p printOps) TeardownRules(rules []hostnet.RuleSpec) error {
+	for _, r := range rules {
+		fmt.Fprintf(p.out, "revoke %s -> %s\n", r.From, r.To)
 	}
 	return nil
 }
@@ -255,66 +273,65 @@ func parsePort(portMapping string) (host, guest int, err error) {
 	return host, guest, nil
 }
 
-// netSpecs derives one NetSpec per network, sorted by network name. Every
-// service shares one Gateway/Prefix now (the host's single flat /64, see
-// flakegen.FromConfig), so every network gets the same one.
-//
-// KNOWN GAP (tracked for the provisiond bridge-collapse stage): until
-// networks collapse to one shared bridge per stack, a stack with more than
-// one declared network ends up asking provisiond to assign the *same*
-// gateway address to *multiple* separate bridges, which is not a coherent
-// host routing state. Single-network stacks (the common case) are
-// unaffected; this is resolved by collapsing to one bridge per stack, not
-// by this function.
+// netSpecs derives the stack's one NetSpec (one bridge per stack, see
+// hostnet.BridgeName): empty if the stack has no service attached to any
+// network, else a single-element slice carrying the host's shared flat
+// gateway/prefix (every service agrees on the same one, see
+// flakegen.FromConfig). Kept as a slice, not a single value, so the
+// EnsureNetworks/TeardownNetworks RPC shape didn't need to change when
+// bridges collapsed from one-per-network to one-per-stack.
 func netSpecs(st *flakegen.Stack) []hostnet.NetSpec {
-	netNameSet := map[string]bool{}
-	var gateway string
-	var prefix int
 	for _, svc := range st.Services {
-		gateway, prefix = svc.Gateway, svc.Prefix
-		for _, netName := range svc.Networks {
-			netNameSet[netName] = true
+		if len(svc.Networks) > 0 {
+			return []hostnet.NetSpec{{Gateway: svc.Gateway, Prefix: svc.Prefix}}
 		}
 	}
-	names := make([]string, 0, len(netNameSet))
-	for netName := range netNameSet {
-		names = append(names, netName)
-	}
-	sort.Strings(names)
-	var specs []hostnet.NetSpec
-	for _, netName := range names {
-		specs = append(specs, hostnet.NetSpec{
-			Name:     netName,
-			Gateway:  gateway,
-			Prefix:   prefix,
-			Internal: st.Internal[netName],
-		})
-	}
-	return specs
+	return nil
 }
 
-// netSpecsForTeardown returns the subset of netSpecs(st) safe to actually
-// tear down: a network still used by a service outside selected (i.e.
-// staying up) must survive, or TeardownNetworks would delete a bridge a
-// still-running service depends on out from under it.
+// netSpecsForTeardown returns netSpecs(st) if no service outside selected
+// (i.e. staying up) is still attached to any network, else nil: the stack's
+// one bridge must survive as long as anything still uses it, or
+// TeardownNetworks would yank it out from under a still-running service.
 func netSpecsForTeardown(st *flakegen.Stack, selected []string) []hostnet.NetSpec {
 	isSelected := map[string]bool{}
 	for _, name := range selected {
 		isSelected[name] = true
 	}
-	inUseByOthers := map[string]bool{}
 	for name, svc := range st.Services {
 		if isSelected[name] {
 			continue
 		}
-		for _, netName := range svc.Networks {
-			inUseByOthers[netName] = true
+		if len(svc.Networks) > 0 {
+			return nil
 		}
 	}
-	var specs []hostnet.NetSpec
-	for _, spec := range netSpecs(st) {
-		if !inUseByOthers[spec.Name] {
-			specs = append(specs, spec)
+	return netSpecs(st)
+}
+
+// ruleSpecs resolves cfg.Rules into hostnet.RuleSpecs: each Rule.From/To
+// service name becomes its allocated IPv6 address (st.Services[x].Addr), and
+// an empty Rule.Ports becomes one RuleSpec with Port 0 (every port for that
+// proto) -- otherwise one RuleSpec per declared port, matching
+// config.Validate's own (from,to,proto,port) dedup granularity.
+func ruleSpecs(cfg *config.Compose, st *flakegen.Stack) []hostnet.RuleSpec {
+	var specs []hostnet.RuleSpec
+	for _, r := range cfg.Rules {
+		proto := r.Proto
+		if proto == "" {
+			proto = "tcp"
+		}
+		ports := r.Ports
+		if len(ports) == 0 {
+			ports = []int{0}
+		}
+		for _, port := range ports {
+			specs = append(specs, hostnet.RuleSpec{
+				From:  st.Services[r.From].Addr,
+				To:    st.Services[r.To].Addr,
+				Proto: proto,
+				Port:  port,
+			})
 		}
 	}
 	return specs
@@ -340,8 +357,8 @@ func dedupeNames(names []string) []string {
 // the taps for exactly the selected services.
 func provisionedDeviceNames(cfg *config.Compose, st *flakegen.Stack, selected []string) []string {
 	var names []string
-	for _, net := range netSpecs(st) {
-		names = append(names, hostnet.BridgeName(st.Name, net.Name))
+	if len(netSpecs(st)) > 0 {
+		names = append(names, hostnet.BridgeName(st.Name))
 	}
 	for _, tap := range tapSpecs(cfg, st, selected) {
 		names = append(names, tap.Name)
@@ -358,8 +375,8 @@ func currentConfigDeviceNames(cfg *config.Compose, st *flakegen.Stack) []string 
 		return nil
 	}
 	var names []string
-	for _, net := range netSpecs(st) {
-		names = append(names, hostnet.BridgeName(st.Name, net.Name))
+	if len(netSpecs(st)) > 0 {
+		names = append(names, hostnet.BridgeName(st.Name))
 	}
 	for _, tap := range tapSpecs(cfg, st, st.Names()) {
 		names = append(names, tap.Name)
@@ -383,8 +400,10 @@ func aliveDeviceNames(store *state.Store, stack, base string) []string {
 		if !alive {
 			continue
 		}
+		if len(svc.Networks) > 0 {
+			names = append(names, hostnet.BridgeName(stack))
+		}
 		for _, net := range svc.Networks {
-			names = append(names, hostnet.BridgeName(stack, net))
 			names = append(names, flakegen.TapID(stack, name, net))
 		}
 	}
@@ -398,8 +417,8 @@ func aliveDeviceNames(store *state.Store, stack, base string) []string {
 // device: state.json's Networks keys and per-service IP keys still name them.
 func stackDeviceNames(cfg *config.Compose, st *flakegen.Stack, store *state.Store) []string {
 	var names []string
-	for _, net := range netSpecs(st) {
-		names = append(names, hostnet.BridgeName(st.Name, net.Name))
+	if len(netSpecs(st)) > 0 {
+		names = append(names, hostnet.BridgeName(st.Name))
 	}
 	for _, tap := range tapSpecs(cfg, st, st.Names()) {
 		names = append(names, tap.Name)
@@ -408,13 +427,13 @@ func stackDeviceNames(cfg *config.Compose, st *flakegen.Stack, store *state.Stor
 }
 
 // storeDeviceNames reconstructs device names from state alone, without a
-// config: every network in store.Networks as a bridge, plus each service's
-// tap per network it was attached to. Used by host-wide purge for stacks
-// whose compose file microbe isn't currently pointed at.
+// config: the stack's one bridge if store.Networks names any, plus each
+// service's tap per network it was attached to. Used by host-wide purge for
+// stacks whose compose file microbe isn't currently pointed at.
 func storeDeviceNames(store *state.Store, stack string) []string {
 	var names []string
-	for _, net := range store.Networks {
-		names = append(names, hostnet.BridgeName(stack, net))
+	if len(store.Networks) > 0 {
+		names = append(names, hostnet.BridgeName(stack))
 	}
 	for name, svc := range store.Services {
 		for _, net := range svc.Networks {
@@ -438,8 +457,10 @@ func retainedDeviceNames(cfg *config.Compose, st *flakegen.Stack, store *state.S
 		if isSelected[name] {
 			continue
 		}
+		if len(svc.Networks) > 0 {
+			names = append(names, hostnet.BridgeName(st.Name))
+		}
 		for _, net := range svc.Networks {
-			names = append(names, hostnet.BridgeName(st.Name, net))
 			names = append(names, flakegen.TapID(st.Name, name, net))
 		}
 	}
@@ -447,8 +468,10 @@ func retainedDeviceNames(cfg *config.Compose, st *flakegen.Stack, store *state.S
 		if isSelected[name] {
 			continue
 		}
+		if len(svc.Networks) > 0 {
+			names = append(names, hostnet.BridgeName(st.Name))
+		}
 		for _, net := range svc.Networks {
-			names = append(names, hostnet.BridgeName(st.Name, net))
 			names = append(names, flakegen.TapID(st.Name, name, net))
 		}
 	}
@@ -494,7 +517,7 @@ func tapSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) []host
 	for _, pair := range pairs {
 		specs = append(specs, hostnet.TapSpec{
 			Name:       st.Services[pair.service].Taps[pair.network],
-			Bridge:     hostnet.BridgeName(st.Name, pair.network),
+			Bridge:     hostnet.BridgeName(st.Name),
 			Owner:      os.Getuid(),
 			Group:      os.Getgid(),
 			MultiQueue: cfg != nil && cfg.Services[pair.service].VCPUs > 1,

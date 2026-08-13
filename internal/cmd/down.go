@@ -169,6 +169,9 @@ func downRun(args []string, opts downOptions) error {
 	if err := teardownHost(opts.ops, st.Name, nets, taps, ports); err != nil {
 		return err
 	}
+	if err := opts.ops.TeardownRules(ruleSpecs(cfg, st)); err != nil {
+		return err
+	}
 
 	// Sweep orphaned devices: any interface this stack may have provisioned
 	// (recorded in state, or reconstructible from config+state names) that
@@ -176,8 +179,8 @@ func downRun(args []string, opts downOptions) error {
 	// still needs. Exact-name deletion only — hashed br-*/mvc-* names can't
 	// be attributed by prefix, so nothing here is ever guessed from the host.
 	planned := map[string]bool{}
-	for _, net := range nets {
-		planned[hostnet.BridgeName(st.Name, net.Name)] = true
+	for range nets {
+		planned[hostnet.BridgeName(st.Name)] = true
 	}
 	for _, tap := range taps {
 		planned[tap.Name] = true

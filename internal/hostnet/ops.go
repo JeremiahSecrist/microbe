@@ -25,23 +25,20 @@ const hashedNameLen = maxIfNameLen - len(bridgePrefix)
 // and field names in this file. Do not rename them without updating those
 // callers.
 
-// NetSpec is one network to provision on the host: a bridge br-<stack>-<net>
-// carrying the gateway address.
+// NetSpec is the one bridge a stack provisions: br-<stack>, carrying the
+// host's flat-network gateway address. Every service in every stack shares
+// the same Gateway/Prefix (the host's persisted ULA /64, see
+// internal/netutil.V6Gateway) -- unlike the old per-network-subnet model,
+// there is exactly one NetSpec per stack, not one per declared network.
 type NetSpec struct {
-	Name    string // network name, e.g. "backend"
-	Gateway string // bridge address, e.g. "192.168.51.1"
-	Prefix  int    // gateway prefix length, e.g. 24
-
-	// Internal, when true, skips masquerade/outbound-forward provisioning
-	// for this network (see config.Network.Internal) — an airgapped
-	// network. Published-port DNAT is unaffected.
-	Internal bool
+	Gateway string // e.g. "fd7a:3c9e:1122::1"
+	Prefix  int    // e.g. 64
 }
 
-// TapSpec is one tap interface, enslaved to its network's bridge.
+// TapSpec is one tap interface, enslaved to its stack's one bridge.
 type TapSpec struct {
 	Name   string // tap id, e.g. "mvc-...-backend" (≤15 chars)
-	Bridge string // bridge id, e.g. "br-<stack>-backend"
+	Bridge string // bridge id, e.g. "br-<stack>"
 	Owner  int    // uid that may reopen the tap (the VM process), 0 = root
 	Group  int    // gid that may reopen the tap; the kernel checks this
 	// independently of Owner (TUNSETGROUP), so a zero-value Group pins the
@@ -58,18 +55,32 @@ type TapSpec struct {
 	MultiQueue bool
 }
 
-// PortSpec is one published port: DNAT from HostPort to the guest.
+// PortSpec is one published port: DNAT from HostPort to the guest's IPv6
+// address.
 type PortSpec struct {
 	HostPort  int
 	GuestIP   string
 	GuestPort int
 }
 
-// BridgeName returns the host bridge name for a stack+network pair: readable
-// "br-<stack>-<net>" when it fits, else a deterministic 15-char hash-based
-// name (Linux interface names are capped at IFNAMSIZ=15).
-func BridgeName(stack, net string) string {
-	full := bridgePrefix + stack + "-" + net
+// RuleSpec is one resolved entry from config.Compose.Rules: From may reach
+// To on Port (0 = every port) over Proto. Default-deny is enforced by the
+// forward chain's policy (see provisiond's EnsureRules); a RuleSpec is the
+// one exception carved out of that policy.
+type RuleSpec struct {
+	From, To string // resolved IPv6 addresses (internal/lockfile)
+	Proto    string // "tcp" or "udp"
+	Port     int    // 0 = every port for Proto
+}
+
+// BridgeName returns the host bridge name for a stack: readable "br-<stack>"
+// when it fits, else a deterministic 15-char hash-based name (Linux
+// interface names are capped at IFNAMSIZ=15). One bridge serves every
+// network a stack declares -- Network is a pure label in the flat-address
+// model (see config.Network), so there is nothing left to key a bridge on
+// beyond the stack itself.
+func BridgeName(stack string) string {
+	full := bridgePrefix + stack
 	if len(full) <= maxIfNameLen {
 		return full
 	}

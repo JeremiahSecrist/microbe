@@ -31,7 +31,9 @@ const (
 	// MethodEnsurePrefix asks the daemon for the host's persisted ULA /64,
 	// generating one on first call. No request payload; the prefix comes
 	// back in Response.Prefix.
-	MethodEnsurePrefix Method = "ensure_prefix"
+	MethodEnsurePrefix  Method = "ensure_prefix"
+	MethodApplyRules    Method = "apply_rules"
+	MethodTeardownRules Method = "teardown_rules"
 )
 
 // Request is one RPC sent over the socket. Exactly one of the payload fields
@@ -43,6 +45,7 @@ type Request struct {
 	Taps   []hostnet.TapSpec  `json:"taps,omitempty"`
 	Ports  []hostnet.PortSpec `json:"ports,omitempty"`
 	Links  []string           `json:"links,omitempty"`
+	Rules  []hostnet.RuleSpec `json:"rules,omitempty"`
 }
 
 // Response is the daemon's reply. Error is empty on success. Prefix is only
@@ -67,6 +70,13 @@ type Ops interface {
 	// EnsurePrefix returns the host's persisted ULA /64, generating one on
 	// first call (see prefix.go).
 	EnsurePrefix() (string, error)
+	// ApplyRules installs forward-chain accept rules for the given
+	// service-to-service allow list (see nft.go's default-deny forward
+	// chain). Idempotent, mirrors ApplyPorts.
+	ApplyRules(rules []hostnet.RuleSpec) error
+	// TeardownRules removes the forward-chain accept rules for the given
+	// rules. Best-effort, mirrors TeardownPorts.
+	TeardownRules(rules []hostnet.RuleSpec) error
 }
 
 // dispatch runs a request against ops and writes the response to w.
@@ -90,6 +100,10 @@ func dispatch(w io.Writer, ops Ops, req Request) error {
 		err = ops.TeardownLinks(req.Links)
 	case MethodEnsurePrefix:
 		resp.Prefix, err = ops.EnsurePrefix()
+	case MethodApplyRules:
+		err = ops.ApplyRules(req.Rules)
+	case MethodTeardownRules:
+		err = ops.TeardownRules(req.Rules)
 	default:
 		err = fmt.Errorf("provisiond: unknown method %q", req.Method)
 	}

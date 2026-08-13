@@ -20,6 +20,8 @@ type fakeOps struct {
 	teardownLinks []string
 	stack         string
 	prefix        string
+	applyRules    []hostnet.RuleSpec
+	teardownRules []hostnet.RuleSpec
 	err           error
 }
 
@@ -57,6 +59,14 @@ func (f *fakeOps) EnsurePrefix() (string, error) {
 	}
 	return f.prefix, nil
 }
+func (f *fakeOps) ApplyRules(rules []hostnet.RuleSpec) error {
+	f.applyRules = rules
+	return f.err
+}
+func (f *fakeOps) TeardownRules(rules []hostnet.RuleSpec) error {
+	f.teardownRules = rules
+	return f.err
+}
 
 func decodeResp(t *testing.T, buf *bytes.Buffer) Response {
 	t.Helper()
@@ -69,7 +79,7 @@ func decodeResp(t *testing.T, buf *bytes.Buffer) Response {
 
 func TestDispatchEnsureNetworks(t *testing.T) {
 	ops := &fakeOps{}
-	nets := []hostnet.NetSpec{{Name: "backend", Gateway: "192.168.51.1", Prefix: 24}}
+	nets := []hostnet.NetSpec{{Gateway: "fd00:1234:5678::1", Prefix: 64}}
 	req := Request{Method: MethodEnsureNetworks, Stack: "test-net", Nets: nets}
 
 	var buf bytes.Buffer
@@ -103,7 +113,7 @@ func TestDispatchEnsureTaps(t *testing.T) {
 
 func TestDispatchApplyPorts(t *testing.T) {
 	ops := &fakeOps{}
-	ports := []hostnet.PortSpec{{HostPort: 8080, GuestIP: "192.168.51.3", GuestPort: 80}}
+	ports := []hostnet.PortSpec{{HostPort: 8080, GuestIP: "fd00:1234:5678::3", GuestPort: 80}}
 	req := Request{Method: MethodApplyPorts, Ports: ports}
 
 	var buf bytes.Buffer
@@ -120,9 +130,9 @@ func TestDispatchApplyPorts(t *testing.T) {
 
 func TestDispatchTeardown(t *testing.T) {
 	ops := &fakeOps{}
-	nets := []hostnet.NetSpec{{Name: "frontend", Gateway: "192.168.50.1", Prefix: 24}}
+	nets := []hostnet.NetSpec{{Gateway: "fd00:1234:5678::1", Prefix: 64}}
 	taps := []hostnet.TapSpec{{Name: "mvc-web", Bridge: "br-x"}}
-	ports := []hostnet.PortSpec{{HostPort: 8080, GuestIP: "1.2.3.4", GuestPort: 80}}
+	ports := []hostnet.PortSpec{{HostPort: 8080, GuestIP: "fd00:1234:5678::4", GuestPort: 80}}
 
 	cases := []struct {
 		method  Method
@@ -183,6 +193,33 @@ func TestDispatchEnsurePrefix(t *testing.T) {
 	}
 	if resp.Prefix != "fd7a:3c9e:1122::/64" {
 		t.Errorf("Prefix = %q, want fd7a:3c9e:1122::/64", resp.Prefix)
+	}
+}
+
+func TestDispatchApplyAndTeardownRules(t *testing.T) {
+	ops := &fakeOps{}
+	rules := []hostnet.RuleSpec{{From: "fd00::1", To: "fd00::2", Proto: "tcp", Port: 5432}}
+
+	var buf bytes.Buffer
+	if err := dispatch(&buf, ops, Request{Method: MethodApplyRules, Rules: rules}); err != nil {
+		t.Fatal(err)
+	}
+	if resp := decodeResp(t, &buf); resp.Error != "" {
+		t.Fatalf("unexpected error response: %q", resp.Error)
+	}
+	if !reflect.DeepEqual(ops.applyRules, rules) {
+		t.Errorf("ApplyRules = %v, want %v", ops.applyRules, rules)
+	}
+
+	buf.Reset()
+	if err := dispatch(&buf, ops, Request{Method: MethodTeardownRules, Rules: rules}); err != nil {
+		t.Fatal(err)
+	}
+	if resp := decodeResp(t, &buf); resp.Error != "" {
+		t.Fatalf("unexpected error response: %q", resp.Error)
+	}
+	if !reflect.DeepEqual(ops.teardownRules, rules) {
+		t.Errorf("TeardownRules = %v, want %v", ops.teardownRules, rules)
 	}
 }
 

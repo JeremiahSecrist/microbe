@@ -33,9 +33,9 @@ func TestClientRoundTripEnsure(t *testing.T) {
 	}
 	defer c.Close()
 
-	nets := []hostnet.NetSpec{{Name: "backend", Gateway: "192.168.51.1", Prefix: 24}}
+	nets := []hostnet.NetSpec{{Gateway: "fd00:1234:5678::1", Prefix: 64}}
 	taps := []hostnet.TapSpec{{Name: "mvc-web", Bridge: "br-test-net-backend"}}
-	ports := []hostnet.PortSpec{{HostPort: 8080, GuestIP: "192.168.51.3", GuestPort: 80}}
+	ports := []hostnet.PortSpec{{HostPort: 8080, GuestIP: "fd00:1234:5678::3", GuestPort: 80}}
 
 	if err := c.EnsureNetworks("test-net", nets); err != nil {
 		t.Fatal(err)
@@ -66,9 +66,9 @@ func TestClientRoundTripTeardown(t *testing.T) {
 	}
 	defer c.Close()
 
-	nets := []hostnet.NetSpec{{Name: "frontend", Gateway: "192.168.50.1", Prefix: 24}}
+	nets := []hostnet.NetSpec{{Gateway: "fd00:1234:5678::1", Prefix: 64}}
 	taps := []hostnet.TapSpec{{Name: "mvc-web", Bridge: "br-x"}}
-	ports := []hostnet.PortSpec{{HostPort: 8080, GuestIP: "1.2.3.4", GuestPort: 80}}
+	ports := []hostnet.PortSpec{{HostPort: 8080, GuestIP: "fd00:1234:5678::4", GuestPort: 80}}
 	links := []string{"br-stale", "mvc-stale"}
 
 	if err := c.TeardownNetworks("s", nets); err != nil {
@@ -98,6 +98,29 @@ func TestClientRoundTripTeardown(t *testing.T) {
 	}
 }
 
+func TestClientRoundTripRules(t *testing.T) {
+	path, ops := startTestServer(t)
+	c, err := Dial(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	rules := []hostnet.RuleSpec{{From: "fd00::1", To: "fd00::2", Proto: "tcp", Port: 5432}}
+	if err := c.ApplyRules(rules); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.TeardownRules(rules); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ops.applyRules, rules) {
+		t.Errorf("ApplyRules = %v, want %v", ops.applyRules, rules)
+	}
+	if !reflect.DeepEqual(ops.teardownRules, rules) {
+		t.Errorf("TeardownRules = %v, want %v", ops.teardownRules, rules)
+	}
+}
+
 func TestClientPropagatesDaemonError(t *testing.T) {
 	path, ops := startTestServer(t)
 	ops.err = &provisionErr{"operation not permitted"}
@@ -107,7 +130,7 @@ func TestClientPropagatesDaemonError(t *testing.T) {
 	}
 	defer c.Close()
 
-	err = c.ApplyPorts([]hostnet.PortSpec{{HostPort: 8080, GuestIP: "1.2.3.4", GuestPort: 80}})
+	err = c.ApplyPorts([]hostnet.PortSpec{{HostPort: 8080, GuestIP: "fd00:1234:5678::4", GuestPort: 80}})
 	if err == nil {
 		t.Fatal("want error from daemon, got nil")
 	}
