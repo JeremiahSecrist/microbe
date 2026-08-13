@@ -1251,6 +1251,57 @@ func TestDownRunRemoveVolumes(t *testing.T) {
 	}
 }
 
+// TestDownRunRemoveVolumesClearsStaleServiceVolumes proves that --remove-volumes
+// still finds and deletes a Stale service's disk image. buildStore/downRun
+// used to delete Stale entries from store.Services before the
+// --remove-volumes pass looked up their Volumes, so the volume file for a
+// removed-from-config service silently survived down --remove-volumes.
+func TestDownRunRemoveVolumesClearsStaleServiceVolumes(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
+	cfg, st := loadStack(t, cfgPath)
+
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	dbState := store.Services["db"]
+	dbState.Stale = true
+	store.Services["db"] = dbState
+	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
+		t.Fatal(err)
+	}
+	volPath := filepath.Join(dataDir, "volumes", "db-data.qcow2")
+	if err := os.MkdirAll(filepath.Dir(volPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(volPath, []byte("disk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	origTeardown, origStop := teardownHost, stopService
+	teardownHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+		return nil
+	}
+	stopService = func(context.Context, int, time.Duration) error { return nil }
+	defer func() { teardownHost, stopService = origTeardown, origStop }()
+
+	var buf bytes.Buffer
+	if err := downRun(nil, downOptions{file: cfgPath, removeVolumes: true, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(volPath); !os.IsNotExist(err) {
+		t.Error("stale service's volume file not removed by --remove-volumes")
+	}
+	got, err := state.Load(filepath.Join(dataDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Services["db"]; ok {
+		t.Error("stale db still present in state after down --remove-volumes")
+	}
+}
+
 // TestDownRunStopsAndClearsStaleService proves that a service state carried
 // forward as Stale (because it left the config, see
 // TestBuildStorePreservesRemovedServiceAsStale) is actually stopped by down

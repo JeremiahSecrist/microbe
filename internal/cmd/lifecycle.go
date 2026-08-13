@@ -617,11 +617,14 @@ func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map
 		if override, ok := statuses[name]; ok {
 			status = override
 		}
-		id := state.NewID()
+		var id string
 		if prev != nil {
-			if prevSvc, ok := prev.Services[name]; ok && prevSvc.ID != "" {
+			if prevSvc, ok := prev.Services[name]; ok {
 				id = prevSvc.ID
 			}
+		}
+		if id == "" {
+			id = state.NewID()
 		}
 		store.Services[name] = state.ServiceState{
 			ID:           id,

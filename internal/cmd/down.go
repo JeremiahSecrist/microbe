@@ -139,13 +139,11 @@ func downRun(args []string, opts downOptions) error {
 		}
 
 		if svc.Stale {
-			// No config names this service anymore, so there's nothing for a
-			// future up to reuse this entry for; keeping it around would just
-			// accumulate dead weight in state.json.
-			delete(store.Services, name)
-			for _, net := range store.Networks {
-				delete(net.Allocated, name)
-			}
+			// Leave the entry (and its Volumes, needed below if
+			// --remove-volumes was given) in place for now; it's swept from
+			// state once we're done with it below. Deleting it here would
+			// make the --remove-volumes pass below unable to find its
+			// volumes to clean up.
 			continue
 		}
 		svc.Status = serviceStatusStopped
@@ -230,6 +228,22 @@ func downRun(args []string, opts downOptions) error {
 			for _, net := range store.Networks {
 				delete(net.Allocated, name)
 			}
+		}
+	}
+
+	// No config names a Stale entry anymore, so there's nothing for a future
+	// up to reuse it for; keeping it around would just accumulate dead
+	// weight in state.json. This runs last (after any --remove-volumes pass
+	// above, which needed the entry's Volumes still present) so it also
+	// catches Stale entries --remove-volumes didn't already delete.
+	for _, name := range selected {
+		svc, ok := store.Services[name]
+		if !ok || !svc.Stale {
+			continue
+		}
+		delete(store.Services, name)
+		for _, net := range store.Networks {
+			delete(net.Allocated, name)
 		}
 	}
 
