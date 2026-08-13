@@ -82,6 +82,7 @@
           {
             virtualisation.microbe.enable = true;
             virtualisation.microbe.package = microbePkg;
+            virtualisation.microbe.users = [ "admin" ];
           }
         ];
       };
