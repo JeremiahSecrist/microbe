@@ -69,20 +69,100 @@ func TestValidateUnknownNetwork(t *testing.T) {
 	}
 }
 
-func TestValidateDuplicateStaticIP(t *testing.T) {
+func TestValidateDuplicateStaticAddr(t *testing.T) {
 	cfg, err := Parse([]byte(`{
 	  "name": "bad",
-	  "networks": { "n": { "subnet": "10.0.0.0/24" } },
+	  "networks": { "n": {} },
 	  "services": {
-	    "a": { "networks": [{ "name": "n", "ip": "10.0.0.5" }] },
-	    "b": { "networks": [{ "name": "n", "ip": "10.0.0.5" }] }
+	    "a": { "networks": [{ "name": "n", "addr": "fd00::5" }] },
+	    "b": { "networks": [{ "name": "n", "addr": "fd00::5" }] }
 	  }
 	}`))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if err := cfg.Validate(); err == nil {
-		t.Error("want duplicate-IP error")
+		t.Error("want duplicate-addr error")
+	}
+}
+
+func TestValidateConflictingAddrAcrossAttachments(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "bad",
+	  "networks": { "n": {}, "m": {} },
+	  "services": {
+	    "a": { "networks": [{ "name": "n", "addr": "fd00::1" }, { "name": "m", "addr": "fd00::2" }] }
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "conflicting") {
+		t.Errorf("want conflicting-addr error, got %v", err)
+	}
+}
+
+func TestValidateAddrRejectsIPv4(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "bad",
+	  "networks": { "n": {} },
+	  "services": {
+	    "a": { "networks": [{ "name": "n", "addr": "10.0.0.5" }] }
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "IPv6") {
+		t.Errorf("want IPv6-only error, got %v", err)
+	}
+}
+
+func TestValidateRulesReferenceServices(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "bad",
+	  "networks": { "n": {} },
+	  "services": { "a": { "networks": [{ "name": "n" }] } },
+	  "rules": [ { "from": "a", "to": "missing" } ]
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Errorf("want unknown-service rule error, got %v", err)
+	}
+}
+
+func TestValidateRulesRejectSelfLoop(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "bad",
+	  "networks": { "n": {} },
+	  "services": { "a": { "networks": [{ "name": "n" }] } },
+	  "rules": [ { "from": "a", "to": "a" } ]
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("want self-loop rule error")
+	}
+}
+
+func TestValidateRulesAccept(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "ok",
+	  "networks": { "n": {} },
+	  "services": {
+	    "a": { "networks": [{ "name": "n" }] },
+	    "b": { "networks": [{ "name": "n" }] }
+	  },
+	  "rules": [ { "from": "a", "to": "b", "ports": [5432], "proto": "tcp" } ]
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("want no error, got %v", err)
 	}
 }
 
@@ -293,19 +373,3 @@ func TestValidateUnknownOS(t *testing.T) {
 	}
 }
 
-func TestValidateOverlappingSubnets(t *testing.T) {
-	cfg, err := Parse([]byte(`{
-	  "name": "bad",
-	  "networks": {
-	    "a": { "subnet": "10.0.0.0/24" },
-	    "b": { "subnet": "10.0.0.128/25" }
-	  },
-	  "services": {}
-	}`))
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if err := cfg.Validate(); err == nil {
-		t.Error("want overlapping-subnet error")
-	}
-}

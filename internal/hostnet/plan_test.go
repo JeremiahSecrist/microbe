@@ -1,14 +1,17 @@
 package hostnet
 
 import (
+	"net/netip"
 	"os"
 	"strings"
 	"testing"
 
 	"microbe/internal/config"
+	"microbe/internal/lockfile"
 )
 
 const fixture = "../../test/fixtures/networking/projection.json"
+const testPrefix = "fd00:1234:5678::/64"
 
 func loadFixture(t *testing.T) *config.Compose {
 	t.Helper()
@@ -26,44 +29,82 @@ func loadFixture(t *testing.T) *config.Compose {
 	return cfg
 }
 
-func TestFixtureNetworkingTarget(t *testing.T) {
-	cfg := loadFixture(t)
+func newLock() *lockfile.Lock {
+	return &lockfile.Lock{Prefix: testPrefix, Services: map[string]string{}}
+}
 
-	plan, err := Plan(cfg)
+func TestFixtureNetworkingStaticAddrs(t *testing.T) {
+	cfg := loadFixture(t)
+	plan, err := Plan(cfg, newLock())
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 
-	ips := func(svc, net string) string {
-		if m := plan.IPs[svc]; m != nil {
-			return m[net]
-		}
-		return ""
-	}
-
-	cases := []struct {
-		svc, net, want string
-	}{
-		{"db", "backend", "192.168.51.2"},
-		{"web", "backend", "192.168.51.3"},
-		{"web", "frontend", "192.168.50.3"},
-		{"jump", "frontend", "192.168.50.2"},
-		{"jump", "backend", "192.168.51.4"},
+	cases := []struct{ svc, want string }{
+		{"db", "fd00:1234:5678::2"},
+		{"web", "fd00:1234:5678::3"},
 	}
 	for _, c := range cases {
-		if got := ips(c.svc, c.net); got != c.want {
-			t.Errorf("IP %s/%s = %q, want %q", c.svc, c.net, got, c.want)
+		if got := plan.Addrs[c.svc]; got != c.want {
+			t.Errorf("addr %s = %q, want %q", c.svc, got, c.want)
 		}
 	}
+}
 
-	if got := plan.IPs["db"]["frontend"]; got != "" {
-		t.Errorf("db should not be on frontend, got %q", got)
+func TestFixtureNetworkingAutoAddrWithinPrefix(t *testing.T) {
+	cfg := loadFixture(t)
+	plan, err := Plan(cfg, newLock())
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+
+	prefix := netip.MustParsePrefix(testPrefix)
+	addr, err := netip.ParseAddr(plan.Addrs["jump"])
+	if err != nil {
+		t.Fatalf("jump addr %q: %v", plan.Addrs["jump"], err)
+	}
+	if !prefix.Contains(addr) {
+		t.Errorf("jump addr %s not within %s", addr, prefix)
+	}
+	for svc, addrStr := range plan.Addrs {
+		for other, otherStr := range plan.Addrs {
+			if svc != other && addrStr == otherStr {
+				t.Errorf("services %s and %s share addr %s", svc, other, addrStr)
+			}
+		}
+	}
+}
+
+func TestPlanReusesLockedAddrs(t *testing.T) {
+	cfg := loadFixture(t)
+	lock := newLock()
+
+	first, err := Plan(cfg, lock)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	jumpAddr := first.Addrs["jump"]
+	if jumpAddr == "" {
+		t.Fatal("jump got no address on first plan")
+	}
+	if len(lock.Services) != 3 {
+		t.Errorf("lock has %d services after first plan, want 3", len(lock.Services))
+	}
+
+	second, err := Plan(cfg, lock)
+	if err != nil {
+		t.Fatalf("re-plan: %v", err)
+	}
+	for svc, addr := range first.Addrs {
+		if second.Addrs[svc] != addr {
+			t.Errorf("service %s addr changed across plans: %q -> %q", svc, addr, second.Addrs[svc])
+		}
 	}
 }
 
 func TestFixtureNetworkingUniqueMACs(t *testing.T) {
 	cfg := loadFixture(t)
-	plan, err := Plan(cfg)
+	plan, err := Plan(cfg, newLock())
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -90,9 +131,9 @@ func TestFixtureNetworkingUniqueMACs(t *testing.T) {
 	}
 }
 
-func TestFixtureNetworkingDNSOrder(t *testing.T) {
+func TestFixtureNetworkingHosts(t *testing.T) {
 	cfg := loadFixture(t)
-	plan, err := Plan(cfg)
+	plan, err := Plan(cfg, newLock())
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
@@ -100,9 +141,8 @@ func TestFixtureNetworkingDNSOrder(t *testing.T) {
 	hosts := RenderHosts(plan)
 	joined := strings.Join(hosts, "\n")
 	for _, want := range []string{
-		"192.168.51.2 db",
-		"192.168.50.3 web",
-		"192.168.51.4 jump",
+		"fd00:1234:5678::2 db",
+		"fd00:1234:5678::3 web",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("hosts file missing %q\n%s", want, joined)
@@ -110,10 +150,11 @@ func TestFixtureNetworkingDNSOrder(t *testing.T) {
 	}
 }
 
-func TestNextFreeSkipsBroadcast(t *testing.T) {
-	got, err := nextFree("10.0.0.0/30", map[string]bool{"10.0.0.2": true})
+func TestPlanRequiresPrefix(t *testing.T) {
+	cfg := loadFixture(t)
+	_, err := Plan(cfg, &lockfile.Lock{})
 	if err == nil {
-		t.Fatalf("nextFree returned %q for exhausted /30, want error (broadcast 10.0.0.3 must not be handed out)", got)
+		t.Fatal("want error for empty lock prefix")
 	}
 }
 

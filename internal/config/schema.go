@@ -14,18 +14,34 @@ type Compose struct {
 	Name          string             `json:"name"`
 	Networks      map[string]Network `json:"networks"`
 	Services      map[string]Service `json:"services"`
+	Rules         []Rule             `json:"rules,omitempty"`
 }
 
-// Network is a single virtual network a stack's services can attach to.
+// Network is a logical label a stack's services can attach to. It carries no
+// address space of its own -- every service shares the same flat host-wide
+// IPv6 /64 (see internal/hostnet.Plan / internal/lockfile) -- and exists so
+// Service.Networks and Rule.From/To have a grouping/documentation vocabulary,
+// and so Internal has somewhere to be declared.
 type Network struct {
-	Subnet string `json:"subnet"`
-
 	// Internal, when true, airgaps this network from the host's own
-	// internet access: no masquerade, so services on it can't dial out.
-	// Published ports (Service.Ports) still work — that's an explicit,
-	// per-service opt-in to inbound reachability, orthogonal to outbound
-	// egress. Mirrors docker-compose's `internal: true`.
+	// internet access: no NAT64 egress, so services whose *every* network
+	// attachment is internal can't dial out. Published ports (Service.Ports)
+	// still work -- that's an explicit, per-service opt-in to inbound
+	// reachability, orthogonal to outbound egress. Mirrors docker-compose's
+	// `internal: true`.
 	Internal bool `json:"internal,omitempty"`
+}
+
+// Rule grants one-way reachability from the From service to the To service.
+// Services are otherwise mutually unreachable (default-deny): a service can
+// only reach another if an explicit Rule names that pair. Return traffic for
+// an allowed connection is handled by connection tracking, not a mirrored
+// rule.
+type Rule struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Ports []int  `json:"ports,omitempty"` // empty = all ports for Proto
+	Proto string `json:"proto,omitempty"` // "tcp" (default) or "udp"
 }
 
 // Service is one VM's worth of configuration within a stack: sizing,
@@ -64,16 +80,20 @@ type Volume struct {
 	Owner string `json:"owner,omitempty"`
 }
 
-// Attach binds a Service to a Network, optionally pinning it to a static
-// IP. In JSON it accepts either a bare network name string or the full
-// {"name", "ip"} object (see UnmarshalJSON).
+// Attach binds a Service to a Network, optionally pinning the service to a
+// static IPv6 address (must fall inside the host's persisted ULA /64 -- see
+// internal/lockfile). Every attachment of the same service must agree on
+// Addr if more than one sets it; the service's one address is shared across
+// all of its network attachments (see internal/hostnet.Plan). In JSON it
+// accepts either a bare network name string or the full {"name", "addr"}
+// object (see UnmarshalJSON).
 type Attach struct {
 	Name string `json:"name"`
-	IP   string `json:"ip,omitempty"`
+	Addr string `json:"addr,omitempty"`
 }
 
 // UnmarshalJSON accepts either a bare network name string (shorthand for
-// {"name": "..."}), or the full {"name", "ip"} object form.
+// {"name": "..."}), or the full {"name", "addr"} object form.
 func (a *Attach) UnmarshalJSON(b []byte) error {
 	var name string
 	if err := json.Unmarshal(b, &name); err == nil {

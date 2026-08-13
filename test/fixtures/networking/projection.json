@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "name": "test-net",
   "networks": {
-    "frontend": { "subnet": "192.168.50.0/24" },
-    "backend":  { "subnet": "192.168.51.0/24" }
+    "frontend": {},
+    "backend": {}
   },
   "services": {
     "db": {
@@ -11,15 +11,15 @@
       "volumes": [
         { "type": "disk", "name": "db-data", "target": "/var/lib/postgresql", "size": "2G" }
       ],
-      "networks": [ { "name": "backend", "ip": "192.168.51.2" } ],
+      "networks": [ { "name": "backend", "addr": "fd00:1234:5678::2" } ],
       "ports": [ "5432:5432" ]
     },
     "web": {
       "configPresent": true,
       "dependsOn": [ "db" ],
       "networks": [
-        { "name": "backend", "ip": "192.168.51.3" },
-        { "name": "frontend", "ip": "192.168.50.3" }
+        { "name": "backend", "addr": "fd00:1234:5678::3" },
+        { "name": "frontend", "addr": "fd00:1234:5678::3" }
       ],
       "ports": [ "8080:80" ]
     },
@@ -30,5 +30,8 @@
         { "name": "backend" }
       ]
     }
-  }
+  },
+  "rules": [
+    { "from": "web", "to": "db", "ports": [5432] }
+  ]
 }

@@ -1,20 +1,20 @@
 # Canonical networking test fixture for microbe.
 #
 # Target behavior (the spec this test suite is committed to):
-#   - db    on backend  with static IP 192.168.51.2, published port 5432
-#   - web   on backend+frontend with static IPs 192.168.51.3 / 192.168.50.3,
+#   - db    on backend  with static addr fd00:1234:5678::2, published port 5432
+#   - web   on backend+frontend, one shared static addr fd00:1234:5678::3,
 #           starts only after db (dependsOn)
-#   - jump  on frontend+backend with NO static IPs -> auto-allocated
-#           to the next free host: 192.168.50.2 (frontend), 192.168.51.4 (backend)
+#   - jump  on frontend+backend with NO static addr -> auto-allocated a
+#           random /128 within the host's persisted ULA /64
 #   - every service/interface gets a unique locally-administered MAC
-#   - the rendered networkd unit for db matches MAC 02:00:00:00:00:01
-#     with address 192.168.51.2/24 and gateway 192.168.51.1
+#   - rules: web -> db on port 5432 is the only allowed cross-service
+#     reachability; jump -> db must be blocked (default-deny)
 {
   name = "test-net";
 
   networks = {
-    frontend = { subnet = "192.168.50.0/24"; };
-    backend  = { subnet = "192.168.51.0/24"; };
+    frontend = { };
+    backend  = { };
   };
 
   services = {
@@ -27,7 +27,7 @@
           enable = true;
           enableTCPIP = true;
           authentication = ''
-            host all all 192.168.51.0/24 trust
+            host all all ::0/0 trust
           '';
         };
       };
@@ -37,7 +37,7 @@
       ];
 
       networks = [
-        { name = "backend"; ip = "192.168.51.2"; }
+        { name = "backend"; addr = "fd00:1234:5678::2"; }
       ];
 
       ports = [ "5432:5432" ];
@@ -54,8 +54,8 @@
       dependsOn = [ "db" ];
 
       networks = [
-        { name = "backend";  ip = "192.168.51.3"; }
-        { name = "frontend"; ip = "192.168.50.3"; }
+        { name = "backend";  addr = "fd00:1234:5678::3"; }
+        { name = "frontend"; addr = "fd00:1234:5678::3"; }
       ];
 
       ports = [ "8080:80" ];
@@ -72,4 +72,8 @@
       ];
     };
   };
+
+  rules = [
+    { from = "web"; to = "db"; ports = [ 5432 ]; }
+  ];
 }

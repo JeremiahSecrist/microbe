@@ -7,21 +7,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"microbe/internal/netutil"
 )
 
 // maxNameLen is the longest permitted stack, network, or service name
 // (excluding the required first character), matched by nameRe.
 const maxNameLen = 31
-
-// minSubnetBits and maxSubnetBits bound the accepted network prefix length:
-// large enough to always have a usable host range, small enough to keep
-// per-network address space reasonable.
-const (
-	minSubnetBits = 16
-	maxSubnetBits = 30
-)
 
 // minHostPort and maxHostPort are the valid range for a TCP/UDP port number.
 const (
@@ -56,9 +46,6 @@ func (c *Compose) Validate() error {
 		}
 	}
 
-	if err := c.validateSubnets(); err != nil {
-		return err
-	}
 	if err := c.validateAttaches(); err != nil {
 		return err
 	}
@@ -77,6 +64,9 @@ func (c *Compose) Validate() error {
 	if err := c.validateOS(); err != nil {
 		return err
 	}
+	if err := c.validateRules(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -89,64 +79,81 @@ func (c *Compose) validateOS() error {
 	return nil
 }
 
-func (c *Compose) validateSubnets() error {
-	prefixes := make(map[string]netip.Prefix, len(c.Networks))
-	for name, net := range c.Networks {
-		prefix, err := netip.ParsePrefix(net.Subnet)
-		if err != nil {
-			return fmt.Errorf("config: network %q: invalid subnet %q: %w", name, net.Subnet, err)
-		}
-		if !prefix.Addr().Is4() || prefix.Bits() < minSubnetBits || prefix.Bits() > maxSubnetBits {
-			return fmt.Errorf("config: network %q: subnet must be an IPv4 /%d../%d", name, minSubnetBits, maxSubnetBits)
-		}
-		prefixes[name] = prefix
-	}
-	names := make([]string, 0, len(c.Networks))
-	for name := range c.Networks {
-		names = append(names, name)
-	}
-	for i := 0; i < len(names); i++ {
-		for j := i + 1; j < len(names); j++ {
-			if prefixes[names[i]].Overlaps(prefixes[names[j]]) {
-				return fmt.Errorf("config: networks %q and %q overlap", names[i], names[j])
+// validateAttaches checks that every attachment names a declared network,
+// that a service's attachments agree on a single static Addr (a service has
+// exactly one IPv6 address shared across all its network attachments -- see
+// internal/hostnet.Plan), and that static addresses don't collide across
+// services (one flat address space now, not one per network).
+func (c *Compose) validateAttaches() error {
+	staticAddrs := map[string]string{} // addr -> owning service
+	for svcName, svc := range c.Services {
+		var svcAddr string
+		for _, attach := range svc.Networks {
+			if _, ok := c.Networks[attach.Name]; !ok {
+				return fmt.Errorf("config: service %q: unknown network %q", svcName, attach.Name)
 			}
+			if attach.Addr == "" {
+				continue
+			}
+			addr, err := netip.ParseAddr(attach.Addr)
+			if err != nil {
+				return fmt.Errorf("config: service %q: invalid addr %q: %w", svcName, attach.Addr, err)
+			}
+			if !addr.Is6() {
+				return fmt.Errorf("config: service %q: addr %q must be an IPv6 address", svcName, attach.Addr)
+			}
+			if svcAddr != "" && attach.Addr != svcAddr {
+				return fmt.Errorf("config: service %q: conflicting static addrs %q and %q across attachments", svcName, svcAddr, attach.Addr)
+			}
+			svcAddr = attach.Addr
 		}
+		if svcAddr == "" {
+			continue
+		}
+		if prev, dup := staticAddrs[svcAddr]; dup {
+			return fmt.Errorf("config: duplicate static addr %q (%s, %s)", svcAddr, prev, svcName)
+		}
+		staticAddrs[svcAddr] = svcName
 	}
 	return nil
 }
 
-func (c *Compose) validateAttaches() error {
-	staticByNet := map[string]map[string]string{}
-	for netName := range c.Networks {
-		staticByNet[netName] = map[string]string{}
+// validateRules checks that each Rule references declared services, isn't a
+// self-loop, has a recognized Proto, valid Ports, and isn't a duplicate of
+// another rule.
+func (c *Compose) validateRules() error {
+	type key struct {
+		from, to, proto string
+		port            int
 	}
-	for svcName, svc := range c.Services {
-		for _, attach := range svc.Networks {
-			net, ok := c.Networks[attach.Name]
-			if !ok {
-				return fmt.Errorf("config: service %q: unknown network %q", svcName, attach.Name)
+	seen := map[key]bool{}
+	for i, r := range c.Rules {
+		if _, ok := c.Services[r.From]; !ok {
+			return fmt.Errorf("config: rule %d: unknown service %q in from", i, r.From)
+		}
+		if _, ok := c.Services[r.To]; !ok {
+			return fmt.Errorf("config: rule %d: unknown service %q in to", i, r.To)
+		}
+		if r.From == r.To {
+			return fmt.Errorf("config: rule %d: from and to are both %q", i, r.From)
+		}
+		proto := r.Proto
+		if proto != "" && proto != "tcp" && proto != "udp" {
+			return fmt.Errorf("config: rule %d: unknown proto %q (want tcp or udp)", i, r.Proto)
+		}
+		ports := r.Ports
+		if len(ports) == 0 {
+			ports = []int{0} // 0 = all ports, for dedup/range purposes
+		}
+		for _, port := range ports {
+			if port != 0 && (port < minHostPort || port > maxHostPort) {
+				return fmt.Errorf("config: rule %d: port %d out of range", i, port)
 			}
-			if attach.IP == "" {
-				continue
+			k := key{r.From, r.To, proto, port}
+			if seen[k] {
+				return fmt.Errorf("config: rule %d: duplicate rule %s -> %s (%s, port %d)", i, r.From, r.To, proto, port)
 			}
-			ip, err := netip.ParseAddr(attach.IP)
-			if err != nil {
-				return fmt.Errorf("config: service %q: invalid ip %q: %w", svcName, attach.IP, err)
-			}
-			prefix, err := netip.ParsePrefix(net.Subnet)
-			if err != nil {
-				return fmt.Errorf("config: network %q: invalid subnet %q: %w", attach.Name, net.Subnet, err)
-			}
-			if !prefix.Contains(ip) {
-				return fmt.Errorf("config: service %q: ip %q outside %q", svcName, attach.IP, net.Subnet)
-			}
-			if ip == prefix.Masked().Addr() || ip == netutil.Gateway(prefix) || ip == netutil.Broadcast(prefix) {
-				return fmt.Errorf("config: service %q: ip %q is reserved in %q", svcName, attach.IP, net.Subnet)
-			}
-			if prev, dup := staticByNet[attach.Name][attach.IP]; dup {
-				return fmt.Errorf("config: duplicate static ip %q on %q (%s, %s)", attach.IP, attach.Name, prev, svcName)
-			}
-			staticByNet[attach.Name][attach.IP] = svcName
+			seen[k] = true
 		}
 	}
 	return nil
