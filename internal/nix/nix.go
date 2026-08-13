@@ -10,6 +10,17 @@ import (
 	"strings"
 )
 
+// installable converts a ".#attr" target to "path:<dir>#attr" so nix reads
+// files directly from the filesystem rather than via git+file://, which only
+// includes tracked files and would miss parts files written by WriteStack
+// that haven't been staged yet.
+func installable(dir, target string) string {
+	if strings.HasPrefix(target, ".#") {
+		return "path:" + dir + "#" + strings.TrimPrefix(target, ".#")
+	}
+	return target
+}
+
 // BuildRunner realizes target (a nix attrpath, e.g.
 // flakegen.Stack.Services[svc].BuildTarget — nixos and finix guests build
 // different attrpaths, see stack.go's buildTarget) by running `nix build`
@@ -36,7 +47,7 @@ func BuildRunner(dir, target, outLink string, statusFn func(string)) (string, er
 	if dest, err := os.Readlink(absOut); err == nil && strings.HasPrefix(dest, "/nix/store/") {
 		return dest, nil
 	}
-	cmd := exec.Command("nix", "build", "--no-write-lock-file", "--print-out-paths", "--out-link", absOut, target)
+	cmd := exec.Command("nix", "build", "--no-write-lock-file", "--print-out-paths", "--out-link", absOut, installable(dir, target))
 	cmd.Dir = dir
 
 	var stdout bytes.Buffer

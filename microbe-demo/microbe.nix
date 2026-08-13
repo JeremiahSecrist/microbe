@@ -69,6 +69,55 @@
       ports = [ "8080:80" ];
     };
 
+    proxy = {
+      os = "finix";
+      vcpu = 1;
+      mem = 256;
+
+      config = { pkgs, ... }:
+        let
+          nginxConf = pkgs.writeText "nginx.conf" ''
+            user root;
+            worker_processes 1;
+            pid /tmp/nginx.pid;
+            error_log /dev/stderr;
+            events { worker_connections 64; }
+            http {
+              access_log off;
+              client_body_temp_path /tmp;
+              proxy_temp_path /tmp;
+              fastcgi_temp_path /tmp;
+              uwsgi_temp_path /tmp;
+              scgi_temp_path /tmp;
+              server {
+                listen 80;
+                location / {
+                  proxy_pass http://192.168.50.3;
+                  proxy_set_header Host $host;
+                }
+              }
+            }
+          '';
+          nginxRun = pkgs.writeShellScript "nginx-run" ''
+            exec ${pkgs.nginx}/bin/nginx -c ${nginxConf} -g 'daemon off;'
+          '';
+        in {
+          finit.services.nginx = {
+            command = "${nginxRun}";
+            respawn = true;
+            restart_sec = 2;
+          };
+        };
+
+      networks = [
+        { name = "frontend"; ip = "192.168.50.4"; }
+      ];
+
+      ports = [ "8090:80" ];
+
+      dependsOn = [ "web" ];
+    };
+
     jump = {
       config = { ... }: {
         services.openssh.enable = true;

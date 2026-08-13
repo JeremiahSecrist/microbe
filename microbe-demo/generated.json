@@ -116,10 +116,91 @@
         "frontend": "mvc-4ee3cc8069e"
       }
     },
+    "proxy": {
+      "buildTarget": ".#finixConfigurations.proxy.config.microbe.qemuRunner",
+      "cid": 5,
+      "gateway": {
+        "frontend": "192.168.50.1"
+      },
+      "hosts": [
+        {
+          "ip": "192.168.51.2",
+          "names": [
+            "db",
+            "db.backend"
+          ]
+        },
+        {
+          "ip": "192.168.51.4",
+          "names": [
+            "jump",
+            "jump.backend"
+          ]
+        },
+        {
+          "ip": "192.168.50.2",
+          "names": [
+            "jump",
+            "jump.frontend"
+          ]
+        },
+        {
+          "ip": "192.168.50.4",
+          "names": [
+            "proxy",
+            "proxy.frontend"
+          ]
+        },
+        {
+          "ip": "192.168.51.3",
+          "names": [
+            "web",
+            "web.backend"
+          ]
+        },
+        {
+          "ip": "192.168.50.3",
+          "names": [
+            "web",
+            "web.frontend"
+          ]
+        }
+      ],
+      "ips": {
+        "frontend": "192.168.50.4"
+      },
+      "macs": {
+        "frontend": "02:00:00:00:00:04"
+      },
+      "networkd": {
+        "mvc-proxy-frontend": {
+          "address": [
+            "192.168.50.4/24"
+          ],
+          "linkConfig": {
+            "RequiredForOnline": "no"
+          },
+          "matchConfig": {
+            "MACAddress": "02:00:00:00:00:04"
+          },
+          "routes": [
+            {
+              "Gateway": "192.168.50.1"
+            }
+          ]
+        }
+      },
+      "prefix": {
+        "frontend": 24
+      },
+      "taps": {
+        "frontend": "mvc-16105f31aac"
+      }
+    },
     "web": {
       "addr": "fd7a:3c9e:1122:0:c798:8f16:c129:b587",
       "buildTarget": ".#nixosConfigurations.web.config.microvm.declaredRunner",
-      "cid": 5,
+      "cid": 6,
       "gateway": "fd7a:3c9e:1122::1",
       "hosts": [
         {
@@ -142,8 +223,8 @@
         }
       ],
       "macs": {
-        "backend": "02:00:00:00:00:04",
-        "frontend": "02:00:00:00:00:05"
+        "backend": "02:00:00:00:00:05",
+        "frontend": "02:00:00:00:00:06"
       },
       "networkd": {
         "mvc-web-backend": {
@@ -154,7 +235,7 @@
             "RequiredForOnline": "no"
           },
           "matchConfig": {
-            "MACAddress": "02:00:00:00:00:04"
+            "MACAddress": "02:00:00:00:00:05"
           },
           "routes": [
             {
@@ -170,7 +251,7 @@
             "RequiredForOnline": "no"
           },
           "matchConfig": {
-            "MACAddress": "02:00:00:00:00:05"
+            "MACAddress": "02:00:00:00:00:06"
           },
           "routes": []
         }
