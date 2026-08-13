@@ -26,20 +26,6 @@ func TestNewRootCmdExposesSubcommands(t *testing.T) {
 	}
 }
 
-func TestGendocsCommandIsHidden(t *testing.T) {
-	root := NewRootCmd()
-	gendocs, _, err := root.Find([]string{"gendocs", "man"})
-	if err != nil {
-		t.Fatalf("expected a hidden gendocs man subcommand: %v", err)
-	}
-	if !gendocs.Hidden {
-		t.Errorf("gendocs man should be hidden from --help, like provisiond")
-	}
-	if gendocs.Args == nil {
-		t.Errorf("gendocs man should require exactly one dir argument")
-	}
-}
-
 func TestAllVisibleCommandsHaveLongDescription(t *testing.T) {
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {

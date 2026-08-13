@@ -1,9 +1,9 @@
 # Builds docs/book/ into a static site, overlaying three generated sections:
 # Go package docs (gomarkdoc), NixOS module option docs (nixosOptionsDoc, the
 # same mechanism the NixOS manual itself uses), and CLI reference markdown
-# rendered by the already-built microbe binary's hidden `gendocs` command
-# (see internal/cmd/gendocs.go).
-{ pkgs, lib, nixpkgs, system, goSrc, vendorHash, microbePkg }:
+# from cmd/gendocs (cobra/doc's GenMarkdownTree, run the same way flake.nix's
+# microbePkg runs it for man pages -- see cmd/gendocs/main.go).
+{ pkgs, lib, nixpkgs, system, goSrc, vendorHash }:
 
 let
   # Auto-discover modules/*.nix so a new module file is picked up without
@@ -49,6 +49,21 @@ let
       gomarkdoc ./... > $out
     '';
   };
+
+  # CLI reference markdown, one page per command -- same shape as goDocs
+  # above, just `go run ./cmd/gendocs markdown` instead of gomarkdoc.
+  cliDocs = pkgs.buildGoModule {
+    pname = "microbe-clidocs";
+    version = "0.1.0";
+    src = goSrc;
+    inherit vendorHash;
+    dontBuild = true;
+    doCheck = false;
+    installPhase = ''
+      mkdir -p $out
+      go run ./cmd/gendocs markdown $out
+    '';
+  };
 in
 pkgs.stdenvNoCC.mkDerivation {
   pname = "microbe-docs";
@@ -61,7 +76,7 @@ pkgs.stdenvNoCC.mkDerivation {
     cp ${optionsDoc.optionsCommonMark} src/reference/options.md
     cp ${goDocs} src/api/index.md
     mkdir -p src/cli
-    ${microbePkg}/bin/microbe gendocs markdown src/cli
+    cp ${cliDocs}/*.md src/cli/
     mdbook build --dest-dir "$PWD/out"
     runHook postBuild
   '';
