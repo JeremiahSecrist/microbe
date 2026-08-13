@@ -50,8 +50,8 @@ var (
 		return ops.TeardownLinks(links)
 	}
 
-	buildRunner = func(dir, target, outLink string) (string, error) {
-		return nix.BuildRunner(dir, target, outLink)
+	buildRunner = func(dir, target, outLink string, statusFn func(string)) (string, error) {
+		return nix.BuildRunner(dir, target, outLink, statusFn)
 	}
 
 	startService = func(ctx context.Context, runnerPath, runDir, logPath string) (int, error) {
@@ -546,6 +546,9 @@ func cleanRunDir(runDir string) error {
 			return err
 		}
 	}
+	// Remove the directory itself when empty (no snapshots present). Fails
+	// silently when snapshots/ remains — that's intentional.
+	_ = os.Remove(runDir)
 	return nil
 }
 

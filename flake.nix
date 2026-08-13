@@ -8,9 +8,19 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     finix.url = "github:finix-community/finix";
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    import-tree.url = "github:vic/import-tree";
+    microbe-demo = {
+      url = "path:./microbe-demo";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.microvm.follows = "microvm";
+      inputs.finix.follows = "finix";
+      inputs.flake-parts.follows = "flake-parts";
+      inputs.import-tree.follows = "import-tree";
+    };
   };
 
-  outputs = { self, nixpkgs, microvm, finix }:
+  outputs = { self, nixpkgs, microvm, finix, flake-parts, import-tree, microbe-demo }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -76,6 +86,18 @@
       # plain ISO above.
       demoIso = nixpkgs.lib.nixosSystem {
         inherit system;
+        specialArgs = {
+          demoPrebuild = [
+            # Runners: what microbe up actually builds for each service.
+            microbe-demo.nixosConfigurations.db.config.microvm.declaredRunner
+            microbe-demo.nixosConfigurations.web.config.microvm.declaredRunner
+            microbe-demo.nixosConfigurations.jump.config.microvm.declaredRunner
+            # Flake eval inputs: needed to evaluate the microbe-demo flake
+            # offline without fetching from GitHub.
+            flake-parts
+            import-tree
+          ];
+        };
         modules = [
           ./demo-iso-config.nix
           ./modules/host.nix

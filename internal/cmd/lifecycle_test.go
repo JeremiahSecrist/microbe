@@ -299,7 +299,7 @@ func TestUpRunProvision(t *testing.T) {
 	var hr hostRecorder
 	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
 	provisionHost = recordHost(&hr, nil, "provision")
-	buildRunner = func(dir, svc, outLink string) (string, error) {
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) {
 		return filepath.Join(dir, "runners", svc), nil
 	}
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
@@ -414,7 +414,7 @@ func TestUpRunStartsVirtiofsdBeforeVM(t *testing.T) {
 	origProvision, origBuild, origStart, origVirtiofsd, origWait :=
 		provisionHost, buildRunner, startService, startVirtiofsd, waitForSocket
 	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
-	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startVirtiofsd = func(context.Context, string, string, string) (int, error) {
 		seq++
 		virtiofsdSeq = seq
@@ -471,7 +471,7 @@ func TestUpRunSkipsVirtiofsdWithoutShares(t *testing.T) {
 	origProvision, origBuild, origStart, origVirtiofsd :=
 		provisionHost, buildRunner, startService, startVirtiofsd
 	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
-	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
 	startVirtiofsd = func(context.Context, string, string, string) (int, error) {
 		t.Fatal("startVirtiofsd called for a service with no virtiofs share")
@@ -506,7 +506,7 @@ func TestUpRunBuildsConcurrently(t *testing.T) {
 	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
 		return nil
 	}
-	buildRunner = func(dir, svc, outLink string) (string, error) {
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlight {
@@ -578,7 +578,7 @@ func TestUpRunHealthGatingHealthy(t *testing.T) {
 
 	origProvision, origBuild, origStart, origWaitHealthy := provisionHost, buildRunner, startService, waitHealthy
 	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
-	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
 	waitHealthy = func(string, time.Duration, time.Duration, time.Duration) bool { return true }
 	defer func() {
@@ -613,7 +613,7 @@ func TestUpRunHealthGatingDegraded(t *testing.T) {
 
 	origProvision, origBuild, origStart, origWaitHealthy := provisionHost, buildRunner, startService, waitHealthy
 	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
-	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
 	waitHealthy = func(string, time.Duration, time.Duration, time.Duration) bool { return false }
 	defer func() {
@@ -652,7 +652,7 @@ func TestUpRunStopsProcessOnHealthcheckFailure(t *testing.T) {
 	origProvision, origBuild, origStart, origStop, origWaitHealthy :=
 		provisionHost, buildRunner, startService, stopService, waitHealthy
 	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
-	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1234, nil }
 	waitHealthy = func(string, time.Duration, time.Duration, time.Duration) bool { return false }
 	stopService = func(_ context.Context, pid int, _ time.Duration) error {
@@ -835,7 +835,7 @@ func TestUpRunGeneratedNixHasAbsoluteVolumeImage(t *testing.T) {
 
 	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
 	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
-	buildRunner = func(dir, svc, outLink string) (string, error) {
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) {
 		return filepath.Join(dir, "runners", svc), nil
 	}
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
@@ -930,7 +930,7 @@ func TestUpRunProvisionsViaDaemon(t *testing.T) {
 	var hr hostRecorder
 	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
 	provisionHost = recordHost(&hr, nil, "provision")
-	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1, nil }
 	defer func() {
 		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
@@ -954,7 +954,7 @@ func TestUpRunNoProvision(t *testing.T) {
 	var hr hostRecorder
 	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
 	provisionHost = recordHost(&hr, nil, "provision")
-	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1, nil }
 	defer func() {
 		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
@@ -1348,7 +1348,7 @@ func TestUpRunRecordsProvisioned(t *testing.T) {
 
 	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
 	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
-	buildRunner = func(dir, svc, outLink string) (string, error) { return outLink, nil }
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
 	defer func() {
 		provisionHost, buildRunner, startService = origProvision, origBuild, origStart

@@ -54,7 +54,7 @@ func newBuildCmd() *cobra.Command {
 					fmt.Printf("nix build .#nixosConfigurations.%s.config.microvm.declaredRunner -> %s\n", svc, outLink)
 					continue
 				}
-				path, err := nix.BuildRunner(dir, svc, outLink)
+				path, err := nix.BuildRunner(dir, svc, outLink, nil)
 				if err != nil {
 					return err
 				}

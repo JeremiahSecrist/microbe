@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -232,12 +233,31 @@ func upRun(args []string, opts upOptions) error {
 		// Each service's derivation is independent, so build them concurrently
 		// instead of paying N sequential `nix build` round trips; nix's own
 		// daemon serializes/parallelizes the underlying store realizations.
+		//
+		// A single drain goroutine serializes progress writes so concurrent
+		// statusFn calls from different service goroutines don't interleave.
+		type buildMsg struct{ svc, pkg string }
+		statusCh := make(chan buildMsg, 16)
+		var drain sync.WaitGroup
+		drain.Add(1)
+		go func() {
+			defer drain.Done()
+			for msg := range statusCh {
+				p.Step("building %s: %s", msg.svc, msg.pkg)
+			}
+		}()
+
 		paths := make([]string, len(selected))
 		var g errgroup.Group
 		for i, svc := range selected {
 			i, svc := i, svc
 			g.Go(func() error {
-				path, err := buildRunner(projectDir, st.Services[svc].BuildTarget, filepath.Join(dataDir, "runners", svc))
+				path, err := buildRunner(
+					projectDir,
+					st.Services[svc].BuildTarget,
+					filepath.Join(dataDir, "runners", svc),
+					func(pkg string) { statusCh <- buildMsg{svc, pkg} },
+				)
 				if err != nil {
 					return err
 				}
@@ -245,8 +265,12 @@ func upRun(args []string, opts upOptions) error {
 				return nil
 			})
 		}
-		if err := g.Wait(); err != nil {
-			return err
+		buildErr := g.Wait()
+		close(statusCh)
+		drain.Wait()
+		p.Done()
+		if buildErr != nil {
+			return buildErr
 		}
 		for i, svc := range selected {
 			p.Step("%s -> %s", svc, paths[i])
