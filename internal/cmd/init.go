@@ -51,6 +51,8 @@ func newInitCmd() *cobra.Command {
 one service, ready to run "microbe up" immediately. It refuses to overwrite
 an existing file. flake.nix and modules/*.nix are not created here -- up and
 build derive and write them next to microbe.nix from what it declares.`,
+		Example: `  microbe init
+  microbe -f stacks/myapp.nix init`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return initRun(file, os.Stdout)
 		},

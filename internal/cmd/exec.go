@@ -14,6 +14,8 @@ func newExecCmd() *cobra.Command {
 streams its stdout/stderr back, without allocating a pty (a command run
 interactively via exec still gets a plain pipe, not a terminal -- use shell
 for an interactive session).`,
+		Example: `  microbe exec web -- systemctl status httpd
+  microbe exec db -- psql -U postgres -c 'select 1;'`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return execRun(execOptions{

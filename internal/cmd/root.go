@@ -16,6 +16,25 @@ func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "microbe",
 		Short: "Docker-compose-style orchestration for microvm.nix",
+		Long: `Microbe orchestrates a stack of microvm.nix guests the way docker
+compose orchestrates containers: define services, networks and volumes in
+one microbe.nix, then bring the whole stack up, inspect it, and tear it
+down with a handful of commands. Each service is a real VM (its own
+kernel, its own root filesystem) but you drive it like a container.
+
+-f/--file selects which compose file a command operates on (default
+microbe.nix in the current directory); --dry-run prints what a command
+would do without touching the host or any VM.`,
+		Example: `  # scaffold a starter microbe.nix, then bring it up
+  microbe init
+  microbe up
+
+  # see what's running, then open a shell in one service
+  microbe ps
+  microbe shell web
+
+  # tear the stack down again
+  microbe down --remove-volumes`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			if verbose {
 				fmt.Println("verbose mode enabled")

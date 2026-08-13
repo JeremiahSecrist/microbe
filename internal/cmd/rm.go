@@ -27,6 +27,8 @@ func newRmCmd() *cobra.Command {
 selected services (all of them if none are named). Prompts for confirmation
 unless -F/--force is given. It does not stop a running service first -- run
 down before rm on a service that's still up.`,
+		Example: `  microbe rm web
+  microbe rm --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return rmRun(args, rmOptions{
 				file:  file,

@@ -61,6 +61,9 @@ current or recorded service still uses. The subcommands go further:
 
 --all (or -a) widens vm/networks/volumes across every stack under ` + "`" + datadir.Root + "`" + `,
 so it can reach VMs and interfaces that no longer have a compose file behind them.`,
+		Example: `  microbe purge
+  microbe purge vms
+  microbe purge all --all --force`,
 	}
 	cmd.PersistentFlags().BoolVarP(&all, "all", "a", false, "operate on every stack under "+datadir.Root)
 	cmd.PersistentFlags().BoolVarP(&force, "force", "F", false, "do not prompt for confirmation")
@@ -103,13 +106,16 @@ so it can reach VMs and interfaces that no longer have a compose file behind the
 		Use:   "vms",
 		Short: "Stop running VMs",
 		Long:  `Purge vms stops this stack's (or, with --all, every stack's) running VMs, whether or not microbe still has their pid recorded.`,
-		RunE:  mk("vms"),
+		Example: `  microbe purge vms
+  microbe purge vms --all`,
+		RunE: mk("vms"),
 	})
 	cmd.AddCommand(&cobra.Command{
 		Use:     "networks",
 		Aliases: []string{"nets"},
 		Short:   "Remove orphaned bridges/taps",
 		Long:    `Purge networks removes this stack's (or, with --all, every stack's) bridge/tap devices that no current config or live VM still uses.`,
+		Example: `  microbe purge networks`,
 		RunE:    mk("networks"),
 	})
 	cmd.AddCommand(&cobra.Command{
@@ -117,13 +123,15 @@ so it can reach VMs and interfaces that no longer have a compose file behind the
 		Aliases: []string{"vols"},
 		Short:   "Delete disk images",
 		Long:    `Purge volumes deletes this stack's (or, with --all, every stack's) disk images and clears the corresponding service state.`,
+		Example: `  microbe purge volumes`,
 		RunE:    mk("volumes"),
 	})
 	cmd.AddCommand(&cobra.Command{
-		Use:   "all",
-		Short: "Stop VMs, purge networks and volumes host-wide",
-		Long:  `Purge all stops every VM, then purges networks and volumes, host-wide.`,
-		RunE:  mk("all"),
+		Use:     "all",
+		Short:   "Stop VMs, purge networks and volumes host-wide",
+		Long:    `Purge all stops every VM, then purges networks and volumes, host-wide.`,
+		Example: `  microbe purge all`,
+		RunE:    mk("all"),
 	})
 	return cmd
 }

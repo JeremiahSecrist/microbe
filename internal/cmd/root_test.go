@@ -40,3 +40,21 @@ func TestAllVisibleCommandsHaveLongDescription(t *testing.T) {
 		walk(c)
 	}
 }
+
+// TestVisibleCommandsHaveExamples covers cobra/doc's man-page EXAMPLE
+// section (rendered from cmd.Example -- see cobra's doc.genMan), which was
+// empty for every command. Root itself is included since `man microbe` is
+// the first page a new user reads and needs a getting-started workflow, not
+// just a flag dump.
+func TestVisibleCommandsHaveExamples(t *testing.T) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if !c.Hidden && c.Example == "" {
+			t.Errorf("command %q has no Example", c.CommandPath())
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(NewRootCmd())
+}

@@ -10,9 +10,10 @@ var version = "0.0.0"
 
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "version",
-		Short: "Print version",
-		Long:  `Version prints the microbe build version.`,
+		Use:     "version",
+		Short:   "Print version",
+		Long:    `Version prints the microbe build version.`,
+		Example: `  microbe version`,
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Println("microbe", version)
 		},
