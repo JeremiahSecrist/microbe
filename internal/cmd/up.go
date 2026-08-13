@@ -225,6 +225,11 @@ func virtiofsdEnv(svc flakegen.Service) []string {
 const defaultVolumeFsType = "ext4"
 
 func upRun(args []string, opts upOptions) error {
+	if !opts.dryRun {
+		if err := checkKVMAccess(); err != nil {
+			fmt.Fprintf(opts.out, "warning: /dev/kvm unavailable (%v); VMs will fail to boot unless VT-x/AMD-V is enabled in firmware and you're in the kvm group\n", err)
+		}
+	}
 	cfg, err := config.Load(opts.file)
 	if err != nil {
 		return err

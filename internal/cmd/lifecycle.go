@@ -71,6 +71,15 @@ var (
 	}
 
 	vmState = chapi.VMState
+
+	// cloud-hypervisor is KVM-only (no TCG fallback), so a missing /dev/kvm means every VM fails to boot.
+	checkKVMAccess = func() error {
+		f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
+		if err != nil {
+			return err
+		}
+		return f.Close()
+	}
 )
 
 // vmSocketPath is where the cloud-hypervisor --api-socket for svc lives:

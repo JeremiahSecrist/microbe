@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -371,6 +372,35 @@ func TestUpRunProvision(t *testing.T) {
 	}
 	if got := store.Ports["8080"]; got != (state.PortState{Service: "web", Guest: 80}) {
 		t.Errorf("port state = %+v", got)
+	}
+}
+
+// TestUpRunWarnsWhenKVMUnavailable proves a missing /dev/kvm surfaces as a
+// warning instead of `up` silently starting a VM that will never boot.
+func TestUpRunWarnsWhenKVMUnavailable(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+
+	origProvision, origBuild, origStart, origCheckKVM := provisionHost, buildRunner, startService, checkKVMAccess
+	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
+	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	checkKVMAccess = func() error { return errors.New("open /dev/kvm: no such file or directory") }
+	defer func() {
+		provisionHost, buildRunner, startService, checkKVMAccess = origProvision, origBuild, origStart, origCheckKVM
+	}()
+
+	rec := &cmdRecorder{}
+	var buf bytes.Buffer
+	if err := upRun(nil, upOptions{
+		file: cfgPath, runner: rec.run, out: &buf,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(buf.String(), "warning") || !strings.Contains(buf.String(), "/dev/kvm") {
+		t.Errorf("output = %q, want a warning mentioning /dev/kvm", buf.String())
 	}
 }
 
