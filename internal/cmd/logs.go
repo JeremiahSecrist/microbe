@@ -11,7 +11,10 @@ func newLogsCmd() *cobra.Command {
 		Use:   "logs [services...]",
 		Short: "Show guest logs",
 		Long:  `Logs prints guest service logs. Not yet implemented.`,
-		Example: `  microbe logs
+		Example: `  # all services' logs
+  microbe logs
+
+  # just one
   microbe logs web`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println("logs: not implemented yet")

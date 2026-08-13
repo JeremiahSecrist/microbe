@@ -22,8 +22,14 @@ builds each selected service's runner derivation, without provisioning
 networking or starting anything. With no service names given, every service
 in the stack is built. Useful to pre-warm the nix store or check a stack
 evaluates before running up.`,
-		Example: `  microbe build
-  microbe build web`,
+		Example: `  # pre-build every service's runner before bringing the stack up
+  microbe build
+
+  # just rebuild one service
+  microbe build web
+
+  # see what would be built, without touching the nix store
+  microbe --dry-run build`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(file)
 			if err != nil {

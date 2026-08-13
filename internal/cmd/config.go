@@ -19,7 +19,11 @@ func newConfigCmd() *cobra.Command {
 evaluated JSON config followed by the computed network plan: each service's
 per-network IP/MAC assignments and the /etc/hosts-style entries microbe
 would render for the stack.`,
-		Example: `  microbe config`,
+		Example: `  # sanity-check microbe.nix and print the resolved network plan
+  microbe config
+
+  # validate a stack defined somewhere else
+  microbe -f stacks/myapp.nix config`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(file)
 			if err != nil {

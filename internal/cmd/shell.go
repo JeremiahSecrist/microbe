@@ -15,8 +15,9 @@ func newShellCmd() *cobra.Command {
 		Short: "Open an interactive shell in a service",
 		Long: `Shell opens a real interactive login shell in a service's guest over
 vsock, with a pty allocated (equivalent to "exec <service> -- su -l").`,
-		Example: `  microbe shell web`,
-		Args:    cobra.ExactArgs(1),
+		Example: `  # open an interactive login shell in a service
+  microbe shell web`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return shellRun(execOptions{
 				file:    file,

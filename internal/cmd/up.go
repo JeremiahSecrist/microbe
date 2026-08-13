@@ -35,9 +35,16 @@ service's runner derivation (concurrently), provisions host networking
 each service in dependency order. Services with a healthcheck are waited on
 and stopped again if they don't become healthy within its startPeriod. With
 no service names given, every service in the stack is started.`,
-		Example: `  microbe up
+		Example: `  # build, provision and start every service in the stack
+  microbe up
+
+  # just these two
   microbe up web db
+
+  # see what would happen without touching the nix store or the host
   microbe --dry-run up
+
+  # start without touching host networking (bridges/taps/ports)
   microbe up --no-provision`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runner := cmdrun.Shell()
