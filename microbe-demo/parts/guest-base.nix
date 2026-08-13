@@ -14,7 +14,5 @@
       networking.firewall.enable = lib.mkDefault false;
 
       microvm.optimize.enable = lib.mkDefault true;
-
-      system.stateVersion = lib.mkDefault "26.05";
     };
 }

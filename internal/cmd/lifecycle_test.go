@@ -413,7 +413,9 @@ func TestUpRunStartsVirtiofsdBeforeVM(t *testing.T) {
 
 	origProvision, origBuild, origStart, origVirtiofsd, origWait :=
 		provisionHost, buildRunner, startService, startVirtiofsd, waitForSocket
-	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
+	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+		return nil
+	}
 	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	var capturedEnv []string
 	startVirtiofsd = func(_ context.Context, _, _, _ string, env []string) (int, error) {
@@ -484,7 +486,9 @@ func TestUpRunSkipsVirtiofsdWithoutShares(t *testing.T) {
 
 	origProvision, origBuild, origStart, origVirtiofsd :=
 		provisionHost, buildRunner, startService, startVirtiofsd
-	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
+	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+		return nil
+	}
 	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
 	startVirtiofsd = func(context.Context, string, string, string, []string) (int, error) {
@@ -1073,7 +1077,9 @@ func TestDownRunStopsVirtiofsd(t *testing.T) {
 
 	var stopped []int
 	origTeardown, origStop := teardownHost, stopService
-	teardownHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
+	teardownHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+		return nil
+	}
 	stopService = func(_ context.Context, pid int, _ time.Duration) error {
 		stopped = append(stopped, pid)
 		return nil
@@ -1265,7 +1271,9 @@ func TestDownRunSweepsOrphanedLinks(t *testing.T) {
 
 	var swept []string
 	origTeardown, origStop, origSweep := teardownHost, stopService, sweepOrphanLinks
-	teardownHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
+	teardownHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+		return nil
+	}
 	stopService = func(context.Context, int, time.Duration) error { return nil }
 	sweepOrphanLinks = func(_ provisiond.Ops, links []string) error {
 		swept = links
@@ -1325,7 +1333,9 @@ func TestDownRunKeepsLinksForStayingServices(t *testing.T) {
 
 	var swept []string
 	origTeardown, origStop, origSweep := teardownHost, stopService, sweepOrphanLinks
-	teardownHost = func(_ provisiond.Ops, _ string, _ []hostnet.NetSpec, _ []hostnet.TapSpec, _ []hostnet.PortSpec) error { return nil }
+	teardownHost = func(_ provisiond.Ops, _ string, _ []hostnet.NetSpec, _ []hostnet.TapSpec, _ []hostnet.PortSpec) error {
+		return nil
+	}
 	stopService = func(_ context.Context, _ int, _ time.Duration) error { return nil }
 	sweepOrphanLinks = func(_ provisiond.Ops, links []string) error { swept = links; return nil }
 	defer func() {
@@ -1361,7 +1371,9 @@ func TestUpRunRecordsProvisioned(t *testing.T) {
 	cfg, st := loadStack(t, cfgPath)
 
 	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
-	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
+	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+		return nil
+	}
 	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
 	defer func() {

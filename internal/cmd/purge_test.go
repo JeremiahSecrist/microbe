@@ -93,8 +93,8 @@ func TestPurgeNetworksHostWide(t *testing.T) {
 	writeStore := func(name string, provisioned []string) {
 		t.Helper()
 		s := &state.Store{
-			Stack:     name,
-			Networks:  map[string]state.NetworkState{"old-net": {CIDR: "10.0.0.0/24"}},
+			Stack:       name,
+			Networks:    map[string]state.NetworkState{"old-net": {CIDR: "10.0.0.0/24"}},
 			Provisioned: provisioned,
 		}
 		if err := s.Save(filepath.Join(base, name, "state.json")); err != nil {

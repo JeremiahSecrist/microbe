@@ -10,3 +10,6 @@ coverage.out
 # microbe runtime artifacts
 /.microbe/
 /microvm.sock.lock
+/.direnv
+/result-docs
+/result-demo-iso
