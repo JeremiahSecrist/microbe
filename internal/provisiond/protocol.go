@@ -28,6 +28,10 @@ const (
 	MethodTeardownTaps     Method = "teardown_taps"
 	MethodTeardownPorts    Method = "teardown_ports"
 	MethodTeardownLinks    Method = "teardown_links"
+	// MethodEnsurePrefix asks the daemon for the host's persisted ULA /64,
+	// generating one on first call. No request payload; the prefix comes
+	// back in Response.Prefix.
+	MethodEnsurePrefix Method = "ensure_prefix"
 )
 
 // Request is one RPC sent over the socket. Exactly one of the payload fields
@@ -41,9 +45,11 @@ type Request struct {
 	Links  []string           `json:"links,omitempty"`
 }
 
-// Response is the daemon's reply. Error is empty on success.
+// Response is the daemon's reply. Error is empty on success. Prefix is only
+// populated by MethodEnsurePrefix.
 type Response struct {
-	Error string `json:"error,omitempty"`
+	Error  string `json:"error,omitempty"`
+	Prefix string `json:"prefix,omitempty"`
 }
 
 // Ops is the privileged operation set the server performs. The concrete
@@ -58,11 +64,15 @@ type Ops interface {
 	// TeardownLinks deletes links by exact name. Used to sweep orphaned
 	// devices recorded in state.json that no current config still names.
 	TeardownLinks(links []string) error
+	// EnsurePrefix returns the host's persisted ULA /64, generating one on
+	// first call (see prefix.go).
+	EnsurePrefix() (string, error)
 }
 
 // dispatch runs a request against ops and writes the response to w.
 func dispatch(w io.Writer, ops Ops, req Request) error {
 	var err error
+	resp := Response{}
 	switch req.Method {
 	case MethodEnsureNetworks:
 		err = ops.EnsureNetworks(req.Stack, req.Nets)
@@ -78,10 +88,11 @@ func dispatch(w io.Writer, ops Ops, req Request) error {
 		err = ops.TeardownPorts(req.Ports)
 	case MethodTeardownLinks:
 		err = ops.TeardownLinks(req.Links)
+	case MethodEnsurePrefix:
+		resp.Prefix, err = ops.EnsurePrefix()
 	default:
 		err = fmt.Errorf("provisiond: unknown method %q", req.Method)
 	}
-	resp := Response{}
 	if err != nil {
 		resp.Error = err.Error()
 	}

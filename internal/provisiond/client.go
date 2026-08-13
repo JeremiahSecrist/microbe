@@ -33,17 +33,23 @@ func (c *Client) Close() error {
 
 // call sends one request and returns the daemon's error, if any.
 func (c *Client) call(req Request) error {
+	_, err := c.callResp(req)
+	return err
+}
+
+// callResp sends one request and returns the daemon's full response.
+func (c *Client) callResp(req Request) (Response, error) {
 	if err := json.NewEncoder(c.conn).Encode(req); err != nil {
-		return fmt.Errorf("provisiond: send request: %w", err)
+		return Response{}, fmt.Errorf("provisiond: send request: %w", err)
 	}
 	var resp Response
 	if err := json.NewDecoder(c.conn).Decode(&resp); err != nil {
-		return fmt.Errorf("provisiond: read response: %w", err)
+		return Response{}, fmt.Errorf("provisiond: read response: %w", err)
 	}
 	if resp.Error != "" {
-		return fmt.Errorf("provisiond: %s", resp.Error)
+		return Response{}, fmt.Errorf("provisiond: %s", resp.Error)
 	}
-	return nil
+	return resp, nil
 }
 
 // EnsureNetworks asks the daemon to create the bridges and assign gateways.
@@ -79,4 +85,14 @@ func (c *Client) TeardownPorts(ports []hostnet.PortSpec) error {
 // TeardownLinks asks the daemon to delete links by exact name (best-effort).
 func (c *Client) TeardownLinks(links []string) error {
 	return c.call(Request{Method: MethodTeardownLinks, Links: links})
+}
+
+// EnsurePrefix asks the daemon for the host's persisted ULA /64, generating
+// one on first call.
+func (c *Client) EnsurePrefix() (string, error) {
+	resp, err := c.callResp(Request{Method: MethodEnsurePrefix})
+	if err != nil {
+		return "", err
+	}
+	return resp.Prefix, nil
 }

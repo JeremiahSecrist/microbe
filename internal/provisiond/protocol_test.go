@@ -19,6 +19,7 @@ type fakeOps struct {
 	teardownPts   []hostnet.PortSpec
 	teardownLinks []string
 	stack         string
+	prefix        string
 	err           error
 }
 
@@ -49,6 +50,12 @@ func (f *fakeOps) TeardownPorts(ports []hostnet.PortSpec) error {
 func (f *fakeOps) TeardownLinks(links []string) error {
 	f.teardownLinks = links
 	return f.err
+}
+func (f *fakeOps) EnsurePrefix() (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.prefix, nil
 }
 
 func decodeResp(t *testing.T, buf *bytes.Buffer) Response {
@@ -159,6 +166,23 @@ func TestDispatchErrorPropagates(t *testing.T) {
 	}
 	if resp := decodeResp(t, &buf); resp.Error == "" || !reflect.DeepEqual([]byte(resp.Error), []byte("boom")) {
 		t.Fatalf("error response = %q, want boom", resp.Error)
+	}
+}
+
+func TestDispatchEnsurePrefix(t *testing.T) {
+	ops := &fakeOps{prefix: "fd7a:3c9e:1122::/64"}
+	req := Request{Method: MethodEnsurePrefix}
+
+	var buf bytes.Buffer
+	if err := dispatch(&buf, ops, req); err != nil {
+		t.Fatal(err)
+	}
+	resp := decodeResp(t, &buf)
+	if resp.Error != "" {
+		t.Fatalf("unexpected error response: %q", resp.Error)
+	}
+	if resp.Prefix != "fd7a:3c9e:1122::/64" {
+		t.Errorf("Prefix = %q, want fd7a:3c9e:1122::/64", resp.Prefix)
 	}
 }
 
