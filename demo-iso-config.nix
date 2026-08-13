@@ -13,6 +13,8 @@
   ];
 
   isoImage.volumeID = "MICROBE-DEMO";
+  isoImage.makeEfiBootable = true;
+  isoImage.makeUsbBootable = true;
 
   # --- Networking -----------------------------------------------------------
   networking.networkmanager.enable = true;
