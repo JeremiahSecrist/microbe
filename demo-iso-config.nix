@@ -75,7 +75,10 @@ in
       RemainAfterExit = true;
     };
     script = ''
-      mkdir -p /var/lib/microbe/test-net/runners
+      # Create with mode 2775 (setgid + group-writable) so microbe group
+      # members (admin) can write state.json, logs, and run dirs without sudo.
+      install -d -m 2775 -g microbe /var/lib/microbe/test-net
+      install -d -m 2775 -g microbe /var/lib/microbe/test-net/runners
       ln -sfn ${demoRunners.db}   /var/lib/microbe/test-net/runners/db
       ln -sfn ${demoRunners.web}  /var/lib/microbe/test-net/runners/web
       ln -sfn ${demoRunners.jump} /var/lib/microbe/test-net/runners/jump
