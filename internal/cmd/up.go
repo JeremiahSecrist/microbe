@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -176,6 +178,32 @@ func attachShareHosts(dataDir, projectDir string, cfg *config.Compose, st *flake
 	return nil
 }
 
+// shareEnvKey normalizes a share tag to the env var suffix (e.g. "db-data" → "DB_DATA").
+func shareEnvKey(tag string) string {
+	return strings.ToUpper(strings.ReplaceAll(tag, "-", "_"))
+}
+
+// virtiofsdEnv builds the environment for a virtiofsd child process: the
+// parent's full env plus MICROBE_SHARE_<TAG>, MICROBE_HOST_UID_<TAG>, and
+// MICROBE_HOST_GID_<TAG> for each share/owner, and MICROBE_SHARE_NIX_STORE
+// for finix services. The shell scripts baked into the nix runner reference
+// these at runtime instead of baking host paths into the derivation hash.
+func virtiofsdEnv(svc flakegen.Service) []string {
+	env := os.Environ()
+	for tag, hostPath := range svc.ShareHosts {
+		env = append(env, "MICROBE_SHARE_"+shareEnvKey(tag)+"="+hostPath)
+	}
+	for tag, owner := range svc.ShareOwners {
+		pfx := shareEnvKey(tag)
+		env = append(env, "MICROBE_HOST_UID_"+pfx+"="+strconv.Itoa(owner.HostUID))
+		env = append(env, "MICROBE_HOST_GID_"+pfx+"="+strconv.Itoa(owner.HostGID))
+	}
+	if svc.OS == "finix" {
+		env = append(env, "MICROBE_SHARE_NIX_STORE=/nix/store")
+	}
+	return env
+}
+
 // defaultVolumeFsType is applied to disk volumes that don't specify one.
 const defaultVolumeFsType = "ext4"
 
@@ -323,7 +351,7 @@ func upRun(args []string, opts upOptions) error {
 
 		var virtiofsdPID int
 		if hasVirtiofsShare(cfg.Services[svc]) {
-			virtiofsdPID, err = startVirtiofsd(context.Background(), runnerPath, runDir, filepath.Join(dataDir, "logs", svc+"-virtiofsd.log"))
+			virtiofsdPID, err = startVirtiofsd(context.Background(), runnerPath, runDir, filepath.Join(dataDir, "logs", svc+"-virtiofsd.log"), virtiofsdEnv(st.Services[svc]))
 			if err != nil {
 				return err
 			}

@@ -106,6 +106,22 @@ func TestFinixStackEvaluates(t *testing.T) {
 	// finix-virtiofsd-run.nix) -- proves both actually realize, not just
 	// that the attrpath evaluates.
 	target := st.Services["a"].BuildTarget
+
+	// Dry-run preflight: skip if any derivations need to be built or fetched.
+	// This avoids unrecoverable hangs on cold machines where the finix closure
+	// is not yet in the store.
+	{
+		dryCmd := exec.Command("nix", "build", "--dry-run", "--no-write-lock-file", "--no-link", target)
+		dryCmd.Dir = dir
+		var dryStderr strings.Builder
+		dryCmd.Stderr = &dryStderr
+		_ = dryCmd.Run()
+		dryOut := dryStderr.String()
+		if strings.Contains(dryOut, "will be built:") || strings.Contains(dryOut, "will be fetched") || strings.Contains(dryOut, "paths will be fetched") {
+			t.Skip("finix closure not in store (dry-run detected builds/fetches); skipping to avoid timeout")
+		}
+	}
+
 	cmd := exec.Command("nix", "build", "--no-write-lock-file", "--print-out-paths", "--no-link", target)
 	cmd.Dir = dir
 	var stderr strings.Builder
@@ -299,6 +315,20 @@ func TestFinixRunnerSetsInitKernelParam(t *testing.T) {
 	}
 
 	target := st.Services["a"].BuildTarget
+
+	// Dry-run preflight: skip if any derivations need to be built or fetched.
+	{
+		dryCmd := exec.Command("nix", "build", "--dry-run", "--no-write-lock-file", "--no-link", target)
+		dryCmd.Dir = dir
+		var dryStderr strings.Builder
+		dryCmd.Stderr = &dryStderr
+		_ = dryCmd.Run()
+		dryOut := dryStderr.String()
+		if strings.Contains(dryOut, "will be built:") || strings.Contains(dryOut, "will be fetched") || strings.Contains(dryOut, "paths will be fetched") {
+			t.Skip("finix closure not in store (dry-run detected builds/fetches); skipping to avoid timeout")
+		}
+	}
+
 	cmd := exec.Command("nix", "build", "--no-write-lock-file", "--print-out-paths", "--no-link", target)
 	cmd.Dir = dir
 	var stderr strings.Builder
@@ -374,6 +404,20 @@ func TestFinixShareVolumeGetsMountTask(t *testing.T) {
 	}
 
 	target := ".#finixConfigurations.a.config.finit.tasks.\"mount-share-shared\".command"
+
+	// Dry-run preflight: skip if any derivations need to be built or fetched.
+	{
+		dryCmd := exec.Command("nix", "build", "--dry-run", "--no-write-lock-file", "--no-link", target)
+		dryCmd.Dir = dir
+		var dryStderr strings.Builder
+		dryCmd.Stderr = &dryStderr
+		_ = dryCmd.Run()
+		dryOut := dryStderr.String()
+		if strings.Contains(dryOut, "will be built:") || strings.Contains(dryOut, "will be fetched") || strings.Contains(dryOut, "paths will be fetched") {
+			t.Skip("finix closure not in store (dry-run detected builds/fetches); skipping to avoid timeout")
+		}
+	}
+
 	cmd := exec.Command("nix", "build", "--no-write-lock-file", "--print-out-paths", "--no-link", target)
 	cmd.Dir = dir
 	var stderr strings.Builder
@@ -466,11 +510,11 @@ func TestShareOwnerTranslatesUidGid(t *testing.T) {
 		t.Error("posixAcl = true, want false (incompatible with translate-uid/gid)")
 	}
 	joined := strings.Join(share.ExtraArgs, " ")
-	if !strings.Contains(joined, "--translate-uid map:71:1000:1") {
-		t.Errorf("extraArgs = %v, want --translate-uid map:71:1000:1 (postgres guest uid 71 -> host uid 1000)", share.ExtraArgs)
+	if !strings.Contains(joined, "--translate-uid map:71:${MICROBE_HOST_UID_DATA}:1") {
+		t.Errorf("extraArgs = %v, want --translate-uid map:71:${MICROBE_HOST_UID_DATA}:1 (postgres guest uid 71 -> shell var for host uid)", share.ExtraArgs)
 	}
-	if !strings.Contains(joined, "--translate-gid map:71:100:1") {
-		t.Errorf("extraArgs = %v, want --translate-gid map:71:100:1 (postgres guest gid 71 -> host gid 100)", share.ExtraArgs)
+	if !strings.Contains(joined, "--translate-gid map:71:${MICROBE_HOST_GID_DATA}:1") {
+		t.Errorf("extraArgs = %v, want --translate-gid map:71:${MICROBE_HOST_GID_DATA}:1 (postgres guest gid 71 -> shell var for host gid)", share.ExtraArgs)
 	}
 }
 

@@ -72,13 +72,6 @@
       },
       "taps": {
         "backend": "mvc-40a9dc4d8a4"
-      },
-      "volumes": {
-        "db-data": {
-          "host": "/home/admin/microbe-demo/pgdata",
-          "hostGid": 100,
-          "hostUid": 1000
-        }
       }
     },
     "jump": {
@@ -175,11 +168,6 @@
       "taps": {
         "backend": "mvc-16cc6d57ae0",
         "frontend": "mvc-4ee3cc8069e"
-      },
-      "volumes": {
-        "notes": {
-          "host": "/home/admin/microbe-demo/shared"
-        }
       }
     },
     "web": {

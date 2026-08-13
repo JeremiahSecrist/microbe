@@ -40,7 +40,7 @@
             command = pkgs.writeShellScript "virtiofsd-${s.tag}" ''
               exec ${lib.getExe pkgs.virtiofsd} \
                 --socket-path=${lib.escapeShellArg (socketFor s.tag)} \
-                --shared-dir=${lib.escapeShellArg s.source} \
+                --shared-dir="''${MICROBE_SHARE_${lib.replaceStrings ["-"] ["_"] (lib.toUpper s.tag)}}" \
                 --thread-pool-size "$(nproc)" \
                 --cache=${if s.readOnly then "always" else "auto"} \
                 ${lib.optionalString s.readOnly "--readonly"}

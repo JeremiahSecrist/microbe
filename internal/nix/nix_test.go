@@ -24,7 +24,7 @@ func TestBuildRunnerUsesGivenTarget(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	target := ".#finixConfigurations.a.config.microbe.qemuRunner"
-	if _, err := BuildRunner(dir, target, filepath.Join(dir, "out")); err != nil {
+	if _, err := BuildRunner(dir, target, filepath.Join(dir, "out"), nil); err != nil {
 		t.Fatal(err)
 	}
 

@@ -27,7 +27,7 @@
       microvm.binScripts.virtiofsd-run = lib.mkForce (
         let
           supervisordConfig = { supervisord = { nodaemon = true; }; }
-            // builtins.listToAttrs (map ({ tag, socket, source, readOnly, cache, posixAcl, extraArgs, ... }: {
+            // builtins.listToAttrs (map ({ tag, socket, readOnly, cache, posixAcl, extraArgs, ... }: {
               name = "program:virtiofsd-${tag}";
               value = {
                 stderr_syslog = true;
@@ -37,7 +37,7 @@
                     --socket-path=${lib.escapeShellArg socket} \
                     ${lib.optionalString (config.microvm.virtiofsd.group != null)
                       "--socket-group=${config.microvm.virtiofsd.group}"} \
-                    --shared-dir=${lib.escapeShellArg source} \
+                    --shared-dir="''${MICROBE_SHARE_${lib.replaceStrings ["-"] ["_"] (lib.toUpper tag)}}" \
                     --thread-pool-size ${toString config.microvm.virtiofsd.threadPoolSize} \
                     ${lib.optionalString posixAcl "--posix-acl --xattr"} \
                     --cache=${cache} \

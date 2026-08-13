@@ -60,14 +60,11 @@
       shares = lib.optionals (svc ? volumes) (map (v:
         {
           tag = v.name;
-          # Always read the host path through generated.json rather than
-          # v.host directly: up.go's attachShareHosts resolves it to an
-          # absolute path (defaulting omitted hosts to a CLI-managed
-          # directory, and resolving relative ones against the project
-          # dir), since this module reads the raw compose file and never
-          # sees Go's resolved value.
-          source = gen.volumes.${v.name}.host
-            or (throw "microbe: service '${svcName}': share '${v.name}' needs a host path");
+          # Host path is injected at runtime via $MICROBE_SHARE_<TAG> (set by
+          # microbe up before starting virtiofsd); "placeholder" keeps the typed
+          # microvm.shares option happy while leaving the derivation hash
+          # host-independent.
+          source = "placeholder";
           mountPoint = v.target;
           # cloud-hypervisor only supports virtiofs shares, not 9p (see
           # config.load's applyDefaults comment) -- virtiofs is the default.
@@ -80,24 +77,26 @@
         # that wants a fixed system uid to actually own its data (e.g.
         # postgres's StateDirectory=). See internal/cmd/up.go's
         # attachShareOwners for the host side of the mapping.
-        // lib.optionalAttrs (v ? owner) (
+        //
+        # guestUid/guestGid are baked in (host-independent: from the guest's
+        # own user database). hostUid/hostGid are injected at runtime via
+        # $MICROBE_HOST_UID_<TAG> / $MICROBE_HOST_GID_<TAG>.
+        lib.optionalAttrs (v ? owner) (
           let
+            dollar = "$";
+            tagUpper = lib.replaceStrings ["-"] ["_"] (lib.toUpper v.name);
             guestUser = config.users.users.${v.owner}
               or (throw "microbe: service '${svcName}': share '${v.name}': no such guest user '${v.owner}' (declare it in this service's config, e.g. via the service module that owns it)");
             guestUid = guestUser.uid
               or (throw "microbe: service '${svcName}': share '${v.name}': guest user '${v.owner}' has no static uid (DynamicUser?)");
             guestGid = config.users.groups.${guestUser.group}.gid
               or (throw "microbe: service '${svcName}': share '${v.name}': guest group '${guestUser.group}' has no static gid");
-            hostUid = gen.volumes.${v.name}.hostUid
-              or (throw "microbe: service '${svcName}': no generated host uid for share '${v.name}'");
-            hostGid = gen.volumes.${v.name}.hostGid
-              or (throw "microbe: service '${svcName}': no generated host gid for share '${v.name}'");
           in {
             # --translate-uid/--translate-gid can't be combined with posix ACLs.
             posixAcl = false;
             extraArgs = [
-              "--translate-uid" "map:${toString guestUid}:${toString hostUid}:1"
-              "--translate-gid" "map:${toString guestGid}:${toString hostGid}:1"
+              "--translate-uid" "map:${toString guestUid}:${dollar}{MICROBE_HOST_UID_${tagUpper}}:1"
+              "--translate-gid" "map:${toString guestGid}:${dollar}{MICROBE_HOST_GID_${tagUpper}}:1"
             ];
           }
         )

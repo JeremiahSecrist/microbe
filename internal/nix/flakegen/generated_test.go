@@ -49,7 +49,12 @@ func TestRenderGeneratedIncludesAbsoluteVolumeImage(t *testing.T) {
 	}
 }
 
-func TestRenderGeneratedIncludesShareOwnerHostIDs(t *testing.T) {
+// TestRenderGeneratedOmitsShareOwnerHostIDs proves host-specific uid/gid are
+// NOT written to generated.json. They used to be, but were moved to runtime
+// env vars (MICROBE_HOST_UID_<TAG> / MICROBE_HOST_GID_<TAG>) so the nix
+// derivation hash is host-independent. ShareOwners is still populated by
+// up.go and passed to virtiofsd via virtiofsdEnv, but never touches the file.
+func TestRenderGeneratedOmitsShareOwnerHostIDs(t *testing.T) {
 	cfg := fixtureConfig()
 	st := mustStack(t, cfg)
 
@@ -61,25 +66,22 @@ func TestRenderGeneratedIncludesShareOwnerHostIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, `"volumes": {`) {
-		t.Errorf("RenderGenerated() missing volumes object:\n%s", got)
+	if strings.Contains(got, `"hostUid"`) {
+		t.Errorf("RenderGenerated() must not emit hostUid (host-specific; goes to env var instead):\n%s", got)
 	}
-	if !strings.Contains(got, `"db-data": {`) {
-		t.Errorf("RenderGenerated() missing db-data volume entry:\n%s", got)
+	if strings.Contains(got, `"hostGid"`) {
+		t.Errorf("RenderGenerated() must not emit hostGid (host-specific; goes to env var instead):\n%s", got)
 	}
-	if !strings.Contains(got, `"hostUid": 1000`) {
-		t.Errorf("RenderGenerated() missing hostUid:\n%s", got)
-	}
-	if !strings.Contains(got, `"hostGid": 100`) {
-		t.Errorf("RenderGenerated() missing hostGid:\n%s", got)
+	if strings.Contains(got, `"host"`) {
+		t.Errorf("RenderGenerated() must not emit host path for share volumes (host-specific; goes to env var instead):\n%s", got)
 	}
 }
 
-// TestRenderGeneratedIncludesShareHostAndMergesWithOwner proves ShareHosts
-// renders alongside ShareOwners under the same volume entry instead of one
-// clobbering the other -- a share volume can have both a defaulted host
-// (ShareHosts) and an owner translation (ShareOwners) at once.
-func TestRenderGeneratedIncludesShareHostAndMergesWithOwner(t *testing.T) {
+// TestRenderGeneratedOmitsShareHostPaths proves ShareHosts host paths are not
+// written to generated.json either. Both ShareHosts and ShareOwners data flows
+// to virtiofsd at runtime via MICROBE_SHARE_<TAG> / MICROBE_HOST_UID_<TAG>
+// env vars (see virtiofsdEnv in up.go), never through the generated file.
+func TestRenderGeneratedOmitsShareHostPaths(t *testing.T) {
 	cfg := fixtureConfig()
 	st := mustStack(t, cfg)
 
@@ -92,14 +94,11 @@ func TestRenderGeneratedIncludesShareHostAndMergesWithOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, `"host": "/var/lib/microbe/test-net/volumes/db-data"`) {
-		t.Errorf("RenderGenerated() missing default host:\n%s", got)
+	if strings.Contains(got, `/var/lib/microbe/test-net/volumes/db-data`) {
+		t.Errorf("RenderGenerated() must not emit share host path (host-specific; goes to env var instead):\n%s", got)
 	}
-	if !strings.Contains(got, `"hostUid": 1000`) {
-		t.Errorf("RenderGenerated() lost hostUid when merged with host:\n%s", got)
-	}
-	if !strings.Contains(got, `"hostGid": 100`) {
-		t.Errorf("RenderGenerated() lost hostGid when merged with host:\n%s", got)
+	if strings.Contains(got, `"hostUid"`) || strings.Contains(got, `"hostGid"`) {
+		t.Errorf("RenderGenerated() must not emit hostUid/hostGid:\n%s", got)
 	}
 }
 

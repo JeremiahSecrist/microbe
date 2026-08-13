@@ -415,7 +415,9 @@ func TestUpRunStartsVirtiofsdBeforeVM(t *testing.T) {
 		provisionHost, buildRunner, startService, startVirtiofsd, waitForSocket
 	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
 	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
-	startVirtiofsd = func(context.Context, string, string, string) (int, error) {
+	var capturedEnv []string
+	startVirtiofsd = func(_ context.Context, _, _, _ string, env []string) (int, error) {
+		capturedEnv = env
 		seq++
 		virtiofsdSeq = seq
 		return 2000, nil
@@ -451,6 +453,18 @@ func TestUpRunStartsVirtiofsdBeforeVM(t *testing.T) {
 		t.Errorf("waitForSocket path = %q, want %q", waitedSocket, wantSocket)
 	}
 
+	wantEnvKey := "MICROBE_SHARE_DATA="
+	var foundEnvKey bool
+	for _, kv := range capturedEnv {
+		if strings.HasPrefix(kv, wantEnvKey) {
+			foundEnvKey = true
+			break
+		}
+	}
+	if !foundEnvKey {
+		t.Errorf("virtiofsd env missing %s* entry; got %v", wantEnvKey, capturedEnv)
+	}
+
 	store, err := state.Load(filepath.Join(dataDir, "state.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -473,7 +487,7 @@ func TestUpRunSkipsVirtiofsdWithoutShares(t *testing.T) {
 	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
 	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
-	startVirtiofsd = func(context.Context, string, string, string) (int, error) {
+	startVirtiofsd = func(context.Context, string, string, string, []string) (int, error) {
 		t.Fatal("startVirtiofsd called for a service with no virtiofs share")
 		return 0, nil
 	}

@@ -37,8 +37,7 @@
         # guest-user remapping.
         userShares = lib.optionals (svc ? volumes) (map (v: {
           tag = v.name;
-          source = gen.volumes.${v.name}.host
-            or (throw "microbe: service '${svcName}': share '${v.name}' needs a host path");
+          source = "placeholder";
           mountPoint = v.target;
           readOnly = (v.mode or "rw") == "ro";
         }) (builtins.filter (v: volumeType v == "share") svc.volumes or [ ]));

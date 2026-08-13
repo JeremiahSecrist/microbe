@@ -88,7 +88,7 @@ func EnsureVolume(run cmdrun.Runner, base, name, size, fsType string) (string, e
 // StartService launches the runner's bin/microvm-run as a detached
 // background process. See startBin.
 func StartService(ctx context.Context, runnerPath, runDir, logPath string) (int, error) {
-	return startBin(ctx, runnerPath, "microvm-run", runDir, logPath)
+	return startBin(ctx, runnerPath, "microvm-run", runDir, logPath, nil)
 }
 
 // StartVirtiofsd launches the runner's bin/virtiofsd-run as a detached
@@ -101,16 +101,19 @@ func StartService(ctx context.Context, runnerPath, runDir, logPath string) (int,
 // with no documented retry. Reuses the same runnerPath/runDir as
 // StartService so the shares' relative socket filenames
 // (config.microvm.shares[].socket, CWD-relative) resolve identically for
-// both processes.
-func StartVirtiofsd(ctx context.Context, runnerPath, runDir, logPath string) (int, error) {
-	return startBin(ctx, runnerPath, "virtiofsd-run", runDir, logPath)
+// both processes. env is appended to the inherited environment; nil means
+// inherit only.
+func StartVirtiofsd(ctx context.Context, runnerPath, runDir, logPath string, env []string) (int, error) {
+	return startBin(ctx, runnerPath, "virtiofsd-run", runDir, logPath, env)
 }
 
 // startBin launches runnerPath's bin/<binName> as a detached background
 // process. runnerPath is usually a symlink to the nix store path; it is
 // resolved to the real script. The process runs with CWD runDir and
-// appends stdout/stderr to logPath. Returns the child PID.
-func startBin(ctx context.Context, runnerPath, binName, runDir, logPath string) (int, error) {
+// appends stdout/stderr to logPath. env, when non-nil, is set as the
+// child's environment (use os.Environ() + extra vars to inherit + extend).
+// Returns the child PID.
+func startBin(ctx context.Context, runnerPath, binName, runDir, logPath string, env []string) (int, error) {
 	script := runnerPath
 	if resolved, err := filepath.EvalSymlinks(runnerPath); err == nil {
 		script = resolved
@@ -137,6 +140,9 @@ func startBin(ctx context.Context, runnerPath, binName, runDir, logPath string) 
 	cmd.Stdout = f
 	cmd.Stderr = f
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if len(env) > 0 {
+		cmd.Env = env
+	}
 	if err := cmd.Start(); err != nil {
 		return 0, err
 	}

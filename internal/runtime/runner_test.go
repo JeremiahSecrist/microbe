@@ -191,7 +191,7 @@ func TestStartVirtiofsdResolvesDirLink(t *testing.T) {
 	if err := os.Symlink(storeDir, link); err != nil {
 		t.Fatal(err)
 	}
-	pid, err := StartVirtiofsd(context.Background(), link, filepath.Join(dir, "runs", "svc"), filepath.Join(dir, "logs", "svc-virtiofsd.log"))
+	pid, err := StartVirtiofsd(context.Background(), link, filepath.Join(dir, "runs", "svc"), filepath.Join(dir, "logs", "svc-virtiofsd.log"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

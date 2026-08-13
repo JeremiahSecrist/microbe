@@ -46,26 +46,10 @@ func (st *Stack) RenderGenerated() (string, error) {
 			"taps":        taps,
 			"buildTarget": s.BuildTarget,
 		}
-		if len(s.VolumeImages) > 0 || len(s.ShareOwners) > 0 || len(s.ShareHosts) > 0 {
+		if len(s.VolumeImages) > 0 {
 			volumes := map[string]any{}
-			entry := func(volName string) map[string]any {
-				e, _ := volumes[volName].(map[string]any)
-				if e == nil {
-					e = map[string]any{}
-					volumes[volName] = e
-				}
-				return e
-			}
 			for volName, path := range s.VolumeImages {
-				entry(volName)["image"] = path
-			}
-			for volName, host := range s.ShareHosts {
-				entry(volName)["host"] = host
-			}
-			for volName, owner := range s.ShareOwners {
-				e := entry(volName)
-				e["hostUid"] = owner.HostUID
-				e["hostGid"] = owner.HostGID
+				volumes[volName] = map[string]any{"image": path}
 			}
 			svc["volumes"] = volumes
 		}

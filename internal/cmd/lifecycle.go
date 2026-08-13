@@ -58,8 +58,8 @@ var (
 		return runtime.StartService(ctx, runnerPath, runDir, logPath)
 	}
 
-	startVirtiofsd = func(ctx context.Context, runnerPath, runDir, logPath string) (int, error) {
-		return runtime.StartVirtiofsd(ctx, runnerPath, runDir, logPath)
+	startVirtiofsd = func(ctx context.Context, runnerPath, runDir, logPath string, env []string) (int, error) {
+		return runtime.StartVirtiofsd(ctx, runnerPath, runDir, logPath, env)
 	}
 
 	waitForSocket = func(path string, interval, timeout time.Duration) error {
