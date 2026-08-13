@@ -2,82 +2,12 @@
 
 Docker-compose-style orchestration for [microvm.nix](https://github.com/astro/microvm.nix). Define a stack of VMs in one `microbe.nix`, then `microbe up`.
 
-## Install
+Each service in the stack becomes a real microvm.nix guest — its own kernel, its own root filesystem, real network isolation — but you configure and drive the stack the way you'd drive a docker-compose project: one declarative file, `up`/`down`/`ps`/`logs`/`exec`/`shell` for the day-to-day commands, health-gated startup order, published ports, folder-bind volumes.
 
-Requires [Nix](https://nixos.org/download) with flakes enabled.
+Where to go next:
 
-```sh
-nix build github:JeremiahSecrist/microbe#microbe
-./result/bin/microbe --version
-```
-
-Or add it to a NixOS host module:
-
-```nix
-{
-  inputs.microbe.url = "github:JeremiahSecrist/microbe";
-
-  # in your host config:
-  virtualisation.microbe.enable = true;
-  virtualisation.microbe.package = inputs.microbe.packages.${system}.microbe;
-}
-```
-
-## Usage
-
-Scaffold a starter stack in the current directory:
-
-```sh
-microbe init
-```
-
-This writes a `microbe.nix` like:
-
-```nix
-{
-  name = "myapp";
-
-  networks = {
-    backend = { subnet = "192.168.60.0/24"; };
-  };
-
-  services = {
-    web = {
-      vcpu = 1;
-      mem  = 512;
-
-      config = { pkgs, ... }: {
-        services.httpd.enable = true;
-      };
-
-      networks = [
-        { name = "backend"; ip = "192.168.60.2"; }
-      ];
-
-      ports = [ "8080:80" ];
-    };
-  };
-}
-```
-
-Bring the stack up:
-
-```sh
-microbe up
-```
-
-Other commands:
-
-```sh
-microbe ps                  # list services, status, IPs and ports
-microbe logs [services...]  # show guest logs
-microbe exec <service> [cmd...]  # run a command inside a service
-microbe shell <service>     # interactive shell in a service
-microbe down [services...]  # stop services, tear down host resources
-microbe rm [services...]    # remove disks and state for services
-microbe purge               # remove stale VMs, networks and volumes host-wide
-microbe config               # print the evaluated, validated config
-microbe build [services...]  # render flake and build runner derivations without starting
-```
-
-See [Reference](./reference/options.md) for the `virtualisation.microbe.*`/`microbe.demoDesktop.*` NixOS module options, and [API](./api/index.md) for generated Go package documentation.
+- [Setup](./setup.md) — install the CLI and, optionally, enable it as a NixOS module.
+- [Usage](./usage.md) — write a `microbe.nix`, bring a stack up, and a walkthrough of the more interesting behavior (healthcheck-gated dependencies, published ports).
+- [CLI Reference](./cli/microbe.md) — every command and flag.
+- [Reference](./reference/options.md) — the `virtualisation.microbe.*`/`microbe.demoDesktop.*` NixOS module options.
+- [API](./api/index.md) — generated Go package documentation.

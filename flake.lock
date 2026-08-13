@@ -67,6 +67,8 @@
         ]
       },
       "locked": {
+        "lastModified": 1,
+        "narHash": "sha256-xfA58UZYpciK1KFJ+4taFIbcYEUZT6RO+STiaG0hFdk=",
         "path": "./microbe-demo",
         "type": "path"
       },

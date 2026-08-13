@@ -17,6 +17,11 @@ func newBuildCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "build [services...]",
 		Short: "Render the project's flake and build runner derivations",
+		Long: `Build renders flake.nix/modules/*.nix from microbe.nix (-f/--file) and
+builds each selected service's runner derivation, without provisioning
+networking or starting anything. With no service names given, every service
+in the stack is built. Useful to pre-warm the nix store or check a stack
+evaluates before running up.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(file)
 			if err != nil {

@@ -29,6 +29,12 @@ func newUpCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "up [services...]",
 		Short: "Build, provision and start the stack",
+		Long: `Up renders the stack from microbe.nix (-f/--file), builds each selected
+service's runner derivation (concurrently), provisions host networking
+(bridges, taps, published ports) unless --no-provision is given, then starts
+each service in dependency order. Services with a healthcheck are waited on
+and stopped again if they don't become healthy within its startPeriod. With
+no service names given, every service in the stack is started.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runner := cmdrun.Shell()
 			if dryRun {

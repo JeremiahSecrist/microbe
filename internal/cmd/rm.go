@@ -23,6 +23,10 @@ func newRmCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rm [services...]",
 		Short: "Remove disks and state for services",
+		Long: `Rm deletes the disk images and clears the recorded state for the
+selected services (all of them if none are named). Prompts for confirmation
+unless -F/--force is given. It does not stop a running service first -- run
+down before rm on a service that's still up.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return rmRun(args, rmOptions{
 				file:  file,
@@ -32,7 +36,7 @@ func newRmCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "do not prompt for confirmation")
+	cmd.Flags().BoolVarP(&force, "force", "F", false, "do not prompt for confirmation")
 	return cmd
 }
 

@@ -47,6 +47,10 @@ let
       gomarkdoc ./... > $out
     '';
   };
+
+  # CLI reference markdown, one page per command, rendered from the same
+  # command tree the CLI itself builds -- see internal/gendocs.
+  gendocsPkg = import ./gendocs.nix { inherit pkgs goSrc vendorHash; };
 in
 pkgs.stdenvNoCC.mkDerivation {
   pname = "microbe-docs";
@@ -58,6 +62,8 @@ pkgs.stdenvNoCC.mkDerivation {
     runHook preBuild
     cp ${optionsDoc.optionsCommonMark} src/reference/options.md
     cp ${goDocs} src/api/index.md
+    mkdir -p src/cli
+    ${gendocsPkg}/bin/gendocs markdown src/cli
     mdbook build --dest-dir "$PWD/out"
     runHook postBuild
   '';

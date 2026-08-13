@@ -15,6 +15,10 @@ func newConfigCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "config",
 		Short: "Print the evaluated and validated config",
+		Long: `Config loads and validates microbe.nix (-f/--file), then prints the
+evaluated JSON config followed by the computed network plan: each service's
+per-network IP/MAC assignments and the /etc/hosts-style entries microbe
+would render for the stack.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(file)
 			if err != nil {

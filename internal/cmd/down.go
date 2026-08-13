@@ -27,6 +27,10 @@ func newDownCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "down [services...]",
 		Short: "Stop services and tear down host resources",
+		Long: `Down stops the selected services (all of them if none are named),
+tears down the host networking (bridges/taps/published ports) that up
+provisioned for them, and sweeps any now-orphaned devices. Pass
+--remove-volumes to also delete their disk images and clear their state.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runner := cmdrun.Shell()
 			if dryRun {

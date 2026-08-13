@@ -10,7 +10,11 @@ func newExecCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "exec <service> [cmd...]",
 		Short: "Run a command inside a service over vsock",
-		Args:  cobra.MinimumNArgs(1),
+		Long: `Exec runs a command inside a running service's guest over vsock and
+streams its stdout/stderr back, without allocating a pty (a command run
+interactively via exec still gets a plain pipe, not a terminal -- use shell
+for an interactive session).`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return execRun(execOptions{
 				file:    file,

@@ -28,7 +28,7 @@
 
       # Shared with the Go docs build (nix/docs.nix) so it doesn't re-fetch
       # or re-pin the same module deps under a different hash.
-      microbeVendorHash = "sha256-ip4BmPWbK58kyKxIBejB3kRMjRvntXVWxHz4+SejoHg=";
+      microbeVendorHash = "sha256-4iduBAcMGWacvgz5MMqPT5zu19nYEkieUDLhUrKRZlE=";
 
       microbeKernelPackages = import ./nix/microbe-kernel.nix {
         inherit pkgs;
@@ -63,6 +63,14 @@
       # package docs + generated NixOS module option reference.
       docs = import ./nix/docs.nix {
         inherit pkgs lib nixpkgs system;
+        goSrc = microbePkg.src;
+        vendorHash = microbeVendorHash;
+      };
+
+      # Section-1 man pages for the microbe CLI, a sibling output to docs
+      # sharing the same goSrc/vendorHash (see nix/man.nix).
+      man = import ./nix/man.nix {
+        inherit pkgs;
         goSrc = microbePkg.src;
         vendorHash = microbeVendorHash;
       };
@@ -150,6 +158,7 @@
         microvm-kernel = microbeKernelPackages.kernel;
         microvm-finix = finixTestCfg.config.microbe.qemuRunner;
         docs = docs;
+        microbe-man = man;
         default = iso.config.system.build.isoImage;
       };
 
@@ -188,6 +197,7 @@
         microvm = microvmCfg.config.microvm.declaredRunner;
         microvm-finix = finixTestCfg.config.microbe.qemuRunner;
         docs = docs;
+        microbe-man = man;
       };
 
       nixosConfigurations = {

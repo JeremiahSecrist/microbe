@@ -47,6 +47,10 @@ func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
 		Short: "Scaffold a starter microbe.nix in the current directory",
+		Long: `Init writes a starter microbe.nix (-f/--file to pick the path) defining
+one service, ready to run "microbe up" immediately. It refuses to overwrite
+an existing file. flake.nix and modules/*.nix are not created here -- up and
+build derive and write them next to microbe.nix from what it declares.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return initRun(file, os.Stdout)
 		},

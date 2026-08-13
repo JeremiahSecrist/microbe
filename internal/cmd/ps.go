@@ -17,6 +17,10 @@ func newPsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ps",
 		Short: "List services, status, IPs and ports",
+		Long: `Ps reconciles the stack's recorded state against each running VM's own
+cloud-hypervisor API socket (correcting for VMs that crashed or were killed
+outside microbe), saves the reconciled state, then prints each service's
+status, IPs and published ports.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return psRun(file, os.Stdout)
 		},

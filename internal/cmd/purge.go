@@ -99,10 +99,32 @@ so it can reach VMs and interfaces that no longer have a compose file behind the
 	}
 
 	cmd.RunE = mk("")
-	cmd.AddCommand(&cobra.Command{Use: "vms", Short: "Stop running VMs", RunE: mk("vms")})
-	cmd.AddCommand(&cobra.Command{Use: "networks", Aliases: []string{"nets"}, Short: "Remove orphaned bridges/taps", RunE: mk("networks")})
-	cmd.AddCommand(&cobra.Command{Use: "volumes", Aliases: []string{"vols"}, Short: "Delete disk images", RunE: mk("volumes")})
-	cmd.AddCommand(&cobra.Command{Use: "all", Short: "Stop VMs, purge networks and volumes host-wide", RunE: mk("all")})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "vms",
+		Short: "Stop running VMs",
+		Long:  `Purge vms stops this stack's (or, with --all, every stack's) running VMs, whether or not microbe still has their pid recorded.`,
+		RunE:  mk("vms"),
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:     "networks",
+		Aliases: []string{"nets"},
+		Short:   "Remove orphaned bridges/taps",
+		Long:    `Purge networks removes this stack's (or, with --all, every stack's) bridge/tap devices that no current config or live VM still uses.`,
+		RunE:    mk("networks"),
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:     "volumes",
+		Aliases: []string{"vols"},
+		Short:   "Delete disk images",
+		Long:    `Purge volumes deletes this stack's (or, with --all, every stack's) disk images and clears the corresponding service state.`,
+		RunE:    mk("volumes"),
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "all",
+		Short: "Stop VMs, purge networks and volumes host-wide",
+		Long:  `Purge all stops every VM, then purges networks and volumes, host-wide.`,
+		RunE:  mk("all"),
+	})
 	return cmd
 }
 

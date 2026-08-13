@@ -47,3 +47,9 @@ func newRootCmd() *cobra.Command {
 func Execute() error {
 	return newRootCmd().Execute()
 }
+
+// NewRootCmd builds the microbe command tree for callers outside this
+// package (currently: the doc/man-page generator in internal/gendocs).
+func NewRootCmd() *cobra.Command {
+	return newRootCmd()
+}
