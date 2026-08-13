@@ -15,6 +15,11 @@ type NetworkState struct {
 
 // ServiceState records what a started service looks like on this host.
 type ServiceState struct {
+	// ID is a stable identity assigned the first time this service name is
+	// started, and carried forward on every later rebuild of the store
+	// (including across Stale transitions) so a VM can be tracked by
+	// identity even as its PID changes on restart.
+	ID      string            `json:"id,omitempty"`
 	IP      map[string]string `json:"ip"`
 	CID     int               `json:"cid"`
 	MACs    map[string]string `json:"macs"`
@@ -26,6 +31,11 @@ type ServiceState struct {
 	// VirtiofsdPID is the companion virtiofsd process's pid, or 0 if the
 	// service has no virtiofs shares (see internal/runtime.StartVirtiofsd).
 	VirtiofsdPID int `json:"virtiofsdPid,omitempty"`
+
+	// Stale is true when this entry was carried forward from a prior state
+	// because the service is no longer named in the current config. down
+	// still tears it down by PID; up never resurrects it.
+	Stale bool `json:"stale,omitempty"`
 }
 
 // PortState records the DNAT rule for one published host port.

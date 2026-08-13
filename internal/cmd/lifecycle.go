@@ -581,7 +581,11 @@ const (
 // statuses overrides the default pid-based running/stopped computation for
 // any service present in the map (e.g. healthy/degraded from a
 // healthcheck); a nil map or a missing entry leaves that computation as-is.
-func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map[string]int, statuses map[string]string, runnerDir string) *state.Store {
+// prev is the store from before this run (nil-safe): any service in prev but
+// no longer named by the current config is carried forward unchanged and
+// marked Stale, instead of dropped, so down can still find and stop it by
+// PID even after the config changed out from under it.
+func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map[string]int, statuses map[string]string, runnerDir string, prev *state.Store) *state.Store {
 	store := &state.Store{
 		Stack:    cfg.Name,
 		Networks: map[string]state.NetworkState{},
@@ -613,7 +617,14 @@ func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map
 		if override, ok := statuses[name]; ok {
 			status = override
 		}
+		id := state.NewID()
+		if prev != nil {
+			if prevSvc, ok := prev.Services[name]; ok && prevSvc.ID != "" {
+				id = prevSvc.ID
+			}
+		}
 		store.Services[name] = state.ServiceState{
+			ID:           id,
 			IP:           svc.IPs,
 			CID:          svc.CID,
 			MACs:         svc.MACs,
@@ -631,6 +642,15 @@ func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map
 				continue
 			}
 			store.Ports[strconv.Itoa(host)] = state.PortState{Service: name, Guest: guest}
+		}
+	}
+	if prev != nil {
+		for name, svc := range prev.Services {
+			if _, ok := store.Services[name]; ok {
+				continue
+			}
+			svc.Stale = true
+			store.Services[name] = svc
 		}
 	}
 	return store

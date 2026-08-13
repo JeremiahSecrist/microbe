@@ -106,8 +106,12 @@ func downRun(args []string, opts downOptions) error {
 		if !ok {
 			return fmt.Errorf("no service %q in state", name)
 		}
+		label := name
+		if svc.Stale {
+			label = name + " (removed from config)"
+		}
 		if svc.PID > 0 {
-			fmt.Fprintf(opts.out, "stopping %s (pid %d)\n", name, svc.PID)
+			fmt.Fprintf(opts.out, "stopping %s (pid %d)\n", label, svc.PID)
 			if !opts.dryRun {
 				if err := stopService(context.Background(), svc.PID, runtime.StopGrace); err != nil {
 					return err
@@ -124,19 +128,30 @@ func downRun(args []string, opts downOptions) error {
 			// still actually alive. There's no PID to stop by, but this is
 			// worth surfacing instead of silently claiming a clean stop.
 			if chState, err := vmState(vmSocketPath(dataDir, name)); err == nil && chState != "" {
-				fmt.Fprintf(opts.out, "warning: %s has no tracked pid but its VM is untracked-live (%s); stop it manually\n", name, chState)
+				fmt.Fprintf(opts.out, "warning: %s has no tracked pid but its VM is untracked-live (%s); stop it manually\n", label, chState)
 			}
 		}
-		svc.Status = serviceStatusStopped
-		svc.PID = 0
-		svc.VirtiofsdPID = 0
-		store.Services[name] = svc
 
 		if !opts.dryRun {
 			if err := cleanRunDir(filepath.Join(dataDir, "runs", name)); err != nil {
 				return err
 			}
 		}
+
+		if svc.Stale {
+			// No config names this service anymore, so there's nothing for a
+			// future up to reuse this entry for; keeping it around would just
+			// accumulate dead weight in state.json.
+			delete(store.Services, name)
+			for _, net := range store.Networks {
+				delete(net.Allocated, name)
+			}
+			continue
+		}
+		svc.Status = serviceStatusStopped
+		svc.PID = 0
+		svc.VirtiofsdPID = 0
+		store.Services[name] = svc
 	}
 
 	plan, err := hostnet.Plan(cfg)

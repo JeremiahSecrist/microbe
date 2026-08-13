@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -383,7 +384,9 @@ func TestUpRunWarnsWhenKVMUnavailable(t *testing.T) {
 	datadir.Root = base
 
 	origProvision, origBuild, origStart, origCheckKVM := provisionHost, buildRunner, startService, checkKVMAccess
-	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error { return nil }
+	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+		return nil
+	}
 	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
 	checkKVMAccess = func() error { return errors.New("open /dev/kvm: no such file or directory") }
@@ -1025,13 +1028,82 @@ func TestBuildStoreAppliesHealthStatuses(t *testing.T) {
 	cfg, st := loadStack(t, cfgPath)
 
 	statuses := map[string]string{"db": serviceStatusHealthy}
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, statuses, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, statuses, filepath.Join(dataDir, "runners"), nil)
 
 	if got := store.Services["db"].Status; got != serviceStatusHealthy {
 		t.Errorf("db status = %q, want %q", got, serviceStatusHealthy)
 	}
 	if got := store.Services["web"].Status; got != serviceStatusRunning {
 		t.Errorf("web status = %q, want %q (no override)", got, serviceStatusRunning)
+	}
+}
+
+const testConfigDBOnlyJSON = `{
+  "schemaVersion": 1,
+  "name": "test-net",
+  "networks": {
+    "backend": { "subnet": "192.168.51.0/24" }
+  },
+  "services": {
+    "db": {
+      "networks": [ { "name": "backend", "ip": "192.168.51.2" } ],
+      "volumes": [ { "type": "disk", "name": "db-data", "target": "/var/lib/db", "size": "2G" } ]
+    }
+  }
+}`
+
+// TestBuildStorePreservesRemovedServiceAsStale proves that a service dropped
+// from config isn't lost from state just because up rebuilt the store: down
+// must still be able to find and stop it by PID (spec: down works even if
+// config changed after up).
+func TestBuildStorePreservesRemovedServiceAsStale(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
+	cfg, st := loadStack(t, cfgPath)
+
+	first := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	dbID, webID := first.Services["db"].ID, first.Services["web"].ID
+	if dbID == "" || webID == "" {
+		t.Fatalf("buildStore left ID empty: db=%q web=%q", dbID, webID)
+	}
+	if dbID == webID {
+		t.Fatalf("db and web got the same ID %q", dbID)
+	}
+
+	dir := t.TempDir()
+	dbOnlyPath := filepath.Join(dir, "microbe.json")
+	if err := os.WriteFile(dbOnlyPath, []byte(testConfigDBOnlyJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg2, st2 := loadStack(t, dbOnlyPath)
+
+	second := buildStore(cfg2, st2, map[string]int{"db": 3000}, nil, nil, filepath.Join(dataDir, "runners"), first)
+
+	web, ok := second.Services["web"]
+	if !ok {
+		t.Fatal("buildStore dropped web from state after it left the config; down can no longer find it")
+	}
+	if !web.Stale {
+		t.Error("web.Stale = false, want true (no longer in config)")
+	}
+	if web.PID != 2000 {
+		t.Errorf("web.PID = %d, want 2000 (unchanged)", web.PID)
+	}
+	if web.ID != webID {
+		t.Errorf("web.ID = %q, want unchanged %q", web.ID, webID)
+	}
+
+	db := second.Services["db"]
+	if db.Stale {
+		t.Error("db.Stale = true, want false (still in config)")
+	}
+	if db.ID != dbID {
+		t.Errorf("db.ID = %q, want unchanged %q (identity should persist across rebuilds)", db.ID, dbID)
+	}
+	if db.PID != 3000 {
+		t.Errorf("db.PID = %d, want 3000 (new run's pid)", db.PID)
 	}
 }
 
@@ -1042,7 +1114,7 @@ func TestDownRunOrderingAndState(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1100,7 +1172,7 @@ func TestDownRunStopsVirtiofsd(t *testing.T) {
 	dataDir := filepath.Join(base, "share-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000}, map[string]int{"db": 2000}, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000}, map[string]int{"db": 2000}, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1141,7 +1213,7 @@ func TestDownRunRemoveVolumes(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1179,6 +1251,61 @@ func TestDownRunRemoveVolumes(t *testing.T) {
 	}
 }
 
+// TestDownRunStopsAndClearsStaleService proves that a service state carried
+// forward as Stale (because it left the config, see
+// TestBuildStorePreservesRemovedServiceAsStale) is actually stopped by down
+// and then removed from state entirely, even without --remove-volumes.
+func TestDownRunStopsAndClearsStaleService(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+	dataDir := filepath.Join(base, "test-net")
+	cfg, st := loadStack(t, cfgPath)
+
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	webState := store.Services["web"]
+	webState.Stale = true
+	store.Services["web"] = webState
+	store.Networks["backend"].Allocated["web"] = "192.168.51.3"
+	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	var stopped []int
+	origTeardown, origStop := teardownHost, stopService
+	teardownHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+		return nil
+	}
+	stopService = func(_ context.Context, pid int, _ time.Duration) error {
+		stopped = append(stopped, pid)
+		return nil
+	}
+	defer func() { teardownHost, stopService = origTeardown, origStop }()
+
+	var buf bytes.Buffer
+	if err := downRun(nil, downOptions{file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Contains(stopped, 2000) {
+		t.Errorf("stopped pids = %v, want to include 2000 (web's stale pid)", stopped)
+	}
+	if !strings.Contains(buf.String(), "removed from config") {
+		t.Errorf("down output = %q, want a note that web was removed from config", buf.String())
+	}
+
+	got, err := state.Load(filepath.Join(dataDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Services["web"]; ok {
+		t.Error("web still present in state after down; stale entries should be cleared once stopped")
+	}
+	if _, ok := got.Networks["backend"].Allocated["web"]; ok {
+		t.Error("web's IP allocation still present after down cleared its stale state")
+	}
+}
+
 // TestDownRunCleansRunDir guards against the stale-socket collision this
 // session hit firsthand: a torn-down VM's .sock/.sock.lock survived under
 // .microbe/runs/<svc>/ and collided with the next `up`. down must remove the
@@ -1190,7 +1317,7 @@ func TestDownRunCleansRunDir(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1238,7 +1365,7 @@ func TestDownRunWarnsOnUntrackedLiveVM(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{}, nil, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{}, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1432,7 +1559,7 @@ func TestRmRequiresConfirmation(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1460,7 +1587,7 @@ func TestRmForceRemovesDisksAndState(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1495,7 +1622,7 @@ func TestPsRunPrintsTable(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"))
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}

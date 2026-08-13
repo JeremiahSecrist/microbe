@@ -432,11 +432,11 @@ func upRun(args []string, opts upOptions) error {
 
 	if !opts.dryRun {
 		p.Done()
-		store := buildStore(cfg, st, pids, virtiofsdPIDs, statuses, filepath.Join(dataDir, "runners"))
 		prev, err := state.Load(filepath.Join(dataDir, "state.json"))
 		if err != nil {
 			return err
 		}
+		store := buildStore(cfg, st, pids, virtiofsdPIDs, statuses, filepath.Join(dataDir, "runners"), prev)
 		if opts.noProvision {
 			store.Provisioned = prev.Provisioned
 		} else {
