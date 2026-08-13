@@ -75,7 +75,7 @@
       },
       "volumes": {
         "db-data": {
-          "host": "/home/sky/Documents/code/microbe/microbe-demo/pgdata",
+          "host": "/home/admin/microbe-demo/pgdata",
           "hostGid": 100,
           "hostUid": 1000
         }
@@ -178,7 +178,7 @@
       },
       "volumes": {
         "notes": {
-          "host": "/home/sky/Documents/code/microbe/microbe-demo/shared"
+          "host": "/home/admin/microbe-demo/shared"
         }
       }
     },

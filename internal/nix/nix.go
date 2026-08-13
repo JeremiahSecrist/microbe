@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,13 @@ func BuildRunner(dir, target, outLink string, statusFn func(string)) (string, er
 	absOut, err := filepath.Abs(outLink)
 	if err != nil {
 		return "", fmt.Errorf("nix: resolve out-link %s: %w", outLink, err)
+	}
+	// If a pre-populated symlink to a nix store path already exists at the
+	// outLink location (e.g., placed by the demo ISO activation service),
+	// return it directly without invoking `nix build`. This lets the demo ISO
+	// skip all compilation: the runners are already in the store.
+	if dest, err := os.Readlink(absOut); err == nil && strings.HasPrefix(dest, "/nix/store/") {
+		return dest, nil
 	}
 	cmd := exec.Command("nix", "build", "--no-write-lock-file", "--print-out-paths", "--out-link", absOut, target)
 	cmd.Dir = dir

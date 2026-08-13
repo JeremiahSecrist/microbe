@@ -84,19 +84,19 @@
       # The demo ISO: KDE desktop, auto-login, terminal opened in the baked-in
       # microbe-demo/ sample stack. Same host module/microbe install as the
       # plain ISO above.
+      demoRunners = {
+        db = microbe-demo.nixosConfigurations.db.config.microvm.declaredRunner;
+        web = microbe-demo.nixosConfigurations.web.config.microvm.declaredRunner;
+        jump = microbe-demo.nixosConfigurations.jump.config.microvm.declaredRunner;
+      };
+
       demoIso = nixpkgs.lib.nixosSystem {
         inherit system;
         specialArgs = {
-          demoPrebuild = [
-            # Runners: what microbe up actually builds for each service.
-            microbe-demo.nixosConfigurations.db.config.microvm.declaredRunner
-            microbe-demo.nixosConfigurations.web.config.microvm.declaredRunner
-            microbe-demo.nixosConfigurations.jump.config.microvm.declaredRunner
-            # Flake eval inputs: needed to evaluate the microbe-demo flake
-            # offline without fetching from GitHub.
-            flake-parts
-            import-tree
-          ];
+          # All three runners + flake eval inputs baked into the squashfs so
+          # microbe up finds them in /nix/store without fetching or building.
+          demoPrebuild = lib.attrValues demoRunners ++ [ flake-parts import-tree ];
+          inherit demoRunners;
         };
         modules = [
           ./demo-iso-config.nix

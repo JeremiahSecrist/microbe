@@ -1,4 +1,4 @@
-{ config, lib, pkgs, modulesPath, demoPrebuild, ... }:
+{ config, lib, pkgs, modulesPath, demoPrebuild, demoRunners, ... }:
 let
   # Prebuild the microbe guest kernel so microbe up finds it already in the
   # store and skips compilation. Both this flake and the microbe-demo flake
@@ -39,17 +39,47 @@ in
   ];
 
   systemd.services.microbe-demo-writable = {
-    description = "Make microbe demo directory writable";
+    description = "Set up microbe demo directory";
     wantedBy = [ "multi-user.target" ];
     after = [ "systemd-tmpfiles-setup.service" ];
+    path = [ pkgs.coreutils ];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      ExecStart = [
-        "${pkgs.coreutils}/bin/chown -R admin:users /home/admin/microbe-demo"
-        "${pkgs.coreutils}/bin/chmod -R u+w /home/admin/microbe-demo"
-      ];
     };
+    script = ''
+      chown -R admin:users /home/admin/microbe-demo
+      chmod -R u+w /home/admin/microbe-demo
+
+      # pgdata is excluded from the nix store copy (gitignored); create it
+      # fresh so postgres can initialise it on first start.
+      mkdir -p /home/admin/microbe-demo/pgdata
+      chown admin:users /home/admin/microbe-demo/pgdata
+      chmod 700 /home/admin/microbe-demo/pgdata
+    '';
+  };
+
+  # Pre-populate the microbe runner symlinks so `microbe up` finds all three
+  # services already built in the nix store and skips compilation entirely.
+  # The store paths are the same derivations baked into isoImage.storeContents
+  # above, so they are always present in /nix/store on the live system.
+  # microbe's BuildRunner checks for an existing nix-store symlink at the
+  # outLink path and returns it directly without invoking `nix build`.
+  systemd.services.microbe-demo-runners = {
+    description = "Pre-populate microbe runner symlinks for demo";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "systemd-tmpfiles-setup.service" ];
+    path = [ pkgs.coreutils ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      mkdir -p /var/lib/microbe/test-net/runners
+      ln -sfn ${demoRunners.db}   /var/lib/microbe/test-net/runners/db
+      ln -sfn ${demoRunners.web}  /var/lib/microbe/test-net/runners/web
+      ln -sfn ${demoRunners.jump} /var/lib/microbe/test-net/runners/jump
+    '';
   };
 
   microbe.demoDesktop = {
