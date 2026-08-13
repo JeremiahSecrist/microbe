@@ -39,6 +39,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newPurgeCmd())
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newProvisiondCmd())
+	root.AddCommand(newGendocsCmd())
 	return root
 }
 
