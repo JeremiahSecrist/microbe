@@ -168,7 +168,7 @@
       };
 
       devShells.${system}.default = pkgs.mkShell {
-        packages = [ pkgs.mdbook ];
+        packages = [ pkgs.mdbook microbePkg ];
       };
 
       # NixOS module configuring a host to run microbe VMs.
