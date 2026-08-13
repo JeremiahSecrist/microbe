@@ -57,20 +57,26 @@
         # go test needs network (vsock/pasta) for some tests; sandbox has no
         # network access, so tests hang until sandbox setup times out. Skip.
         doCheck = false;
+
+        # Section-1 man pages, generated from the same command tree the CLI
+        # itself builds (see internal/gendocs, cmd/gendocs) -- same
+        # installShellFiles/installManPage pattern nixpkgs uses for other
+        # Cobra-based CLIs (e.g. gh). gendocs is a sibling binary buildGoModule
+        # already produced in $out/bin alongside microbe itself (no
+        # subPackages restriction on this derivation); drop it afterwards so
+        # it doesn't ship as a public command.
+        nativeBuildInputs = [ pkgs.installShellFiles ];
+        postInstall = ''
+          $out/bin/gendocs man man1
+          installManPage man1/*.1
+          rm $out/bin/gendocs
+        '';
       };
 
       # Static docs site: hand-written mdBook narrative + generated Go
       # package docs + generated NixOS module option reference.
       docs = import ./nix/docs.nix {
         inherit pkgs lib nixpkgs system;
-        goSrc = microbePkg.src;
-        vendorHash = microbeVendorHash;
-      };
-
-      # Section-1 man pages for the microbe CLI, a sibling output to docs
-      # sharing the same goSrc/vendorHash (see nix/man.nix).
-      man = import ./nix/man.nix {
-        inherit pkgs;
         goSrc = microbePkg.src;
         vendorHash = microbeVendorHash;
       };
@@ -158,7 +164,6 @@
         microvm-kernel = microbeKernelPackages.kernel;
         microvm-finix = finixTestCfg.config.microbe.qemuRunner;
         docs = docs;
-        microbe-man = man;
         default = iso.config.system.build.isoImage;
       };
 
@@ -197,7 +202,6 @@
         microvm = microvmCfg.config.microvm.declaredRunner;
         microvm-finix = finixTestCfg.config.microbe.qemuRunner;
         docs = docs;
-        microbe-man = man;
       };
 
       nixosConfigurations = {
