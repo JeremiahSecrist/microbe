@@ -162,16 +162,30 @@ JSON-safe values. No rendered logic flows through JSON.
 
 The orchestration projection, formally:
 
+> **IPv6 flat-network model**: every service in every stack on a host shares
+> one flat address space -- a single ULA `/64` generated once per host
+> (`internal/state.HostState`, RFC 4193, `fd` + 40 random bits) and persisted
+> at `/var/lib/microbe/host-state.json`. `networks.<n>` no longer carries a
+> `subnet`; it is a pure label used for grouping/`internal` egress policy and
+> as `rules:` vocabulary (§8.6). A service gets exactly one IPv6 address,
+> shared across every network it attaches to, generated once via
+> `crypto/rand` and permanently recorded in a committed lockfile
+> (`microbe.lock.json`, next to the compose file, `internal/lockfile.Lock`)
+> so it never changes again -- not re-derived per `up` the way the old
+> per-network IPv4 allocation was. Reachability between services is
+> default-deny, opened only by the new top-level `rules:` list.
+
 ```abnf
 compose       = "{" "schemaVersion" ":" version
                 "name" ":" string
                 "networks" ":" networks
-                "services" ":" services "}"
+                "services" ":" services
+                [ "rules" ":" "[" *( rule ) "]" ] "}"
 
 version       = %x31                 ; literal 1
 
 networks      = "{" *( name ":" network ) "}"
-network       = "{" "subnet" ":" cidr "}"
+network       = "{" [ "internal" ":" boolean ] "}"
 
 services      = "{" *( name ":" service ) "}"
 service       = "{" [ "vcpu" ":" integer ]
@@ -198,19 +212,21 @@ share         = "{" "type" ":" "share"
                     [ "mode" ":" ( "ro" / "rw" ) ]
                     [ "protocol" ":" ( "9p" / "virtiofs" ) ] "}"
 
-attach        = "{" "name" ":" name [ "ip" ":" ip-addr ] "}"
+attach        = "{" "name" ":" name [ "addr" ":" ip6-addr ] "}"
 
 port-map      = ip-or-empty ":" port ":" port     ; "8080:80"
               / ip-or-empty ":" port ":" port "/" proto
+
+rule          = "{" "from" ":" name "to" ":" name
+                    [ "ports" ":" "[" *( port ) "]" ]
+                    [ "proto" ":" ( "tcp" / "udp" ) ] "}"
 
 healthcheck   = "{" [ "interval" ":" duration ]
                     [ "timeout" ":" duration ]
                     [ "startPeriod" ":" duration ]
                     [ "command" ":" "[" *( string ) "]" ] "}"
 
-cidr          = ip-addr "/" prefix
-ip-addr       = 1*3DIGIT "." 1*3DIGIT "." 1*3DIGIT "." 1*3DIGIT
-prefix        = 1*2DIGIT            ; 16..30 for managed networks
+ip6-addr      = 1*4HEXDIG *7( ":" 1*4HEXDIG ) / "::" ...   ; RFC 4291, must fall within the host's ULA /64
 size          = integer *( "K" / "M" / "G" / "T" )   ; "20G", "512M"
 duration      = integer *( "ms" / "s" / "m" )
 name          = 1*( ALPHA / DIGIT / "-" / "_" )
@@ -229,6 +245,9 @@ name          = 1*( ALPHA / DIGIT / "-" / "_" )
 | `services.<n>.ports` | `[]` | Requires ≥1 network. |
 | `services.<n>.dependsOn` | `[]` | |
 | `services.<n>.healthcheck` | absent | Absent ⇒ no readiness gate. |
+| `rules` | `[]` | Absent ⇒ no service can reach any other (default-deny). |
+| `rule.proto` | `tcp` | |
+| `rule.ports` | `[]` | Empty ⇒ every port for `proto`. |
 | `volume.share.mode` | `rw` | |
 | `volume.share.protocol` | `9p` | Matches microvm.nix default. |
 | `volume.disk.fsType` | `ext4` | |
@@ -248,8 +267,8 @@ normalizes:
 | `services.<n>.networks = [ "frontend" "backend" ]` (list of strings) | `networks = [{ name = "frontend"; } { name = "backend"; }]` |
 | `services.<n>.config = ./services/web.nix` (path) | `configPresent = true` in projection; path kept in render view. |
 | `services.<n>.config = { pkgs, ... }: { ... }` (inline lambda) | `configPresent = true`; never serialized. |
-| Omitted `ip` in an attach | CLI allocates next free host (stateful, §9.6). |
-| `networks.<n>` value may be `{ subnet = ...; }` | unchanged |
+| Omitted `addr` in an attach | CLI generates a random IPv6 `/128` within the host's ULA `/64`, permanently recorded in `microbe.lock.json` on first `up` (§9.4). |
+| `networks.<n>` value may be `{ internal = true; }` | unchanged; no more `subnet` field. |
 
 Forbidden in the file (validation errors):
 - Top-level keys other than `name`, `networks`, `services`, `schemaVersion`.
@@ -270,9 +289,12 @@ Enforced by the CLI after projecting to JSON; any failure ⇒ exit code 2.
 | V2 | Service names match `[a-z][a-z0-9_-]{0,31}` and are unique. |
 | V3 | Network names match V2 rules and are unique. |
 | V4 | Every `attach.name` references a declared network. |
-| V5 | All network `subnet`s are pairwise disjoint; no overlap with the host's active subnets. |
-| V6 | Every static `ip` lies within its network's subnet and is not the subnet `.0`, the broadcast, or the gateway (`.1`). |
-| V7 | Static IPs within a network are unique. |
+| V5 | Every static `attach.addr` is a valid IPv6 address (`.Is6()`). |
+| V6 | A service's attachments must agree on `addr`: setting a different static address on two of the same service's attachments is a conflict. |
+| V7 | Static addresses are unique across the whole stack (one flat address space, not one per network). |
+| V16 | Every `rule.from`/`rule.to` references a declared service; `from != to`. |
+| V17 | No duplicate `(from, to, proto, port)` rule tuples. |
+| V18 | `rule.proto` ∈ {`""`, `tcp`, `udp`}; each `rule.ports` entry in 1–65535. |
 | V8 | `ports`: `hostPort` unique across the stack; values in 1–65535; `guestPort` in 1–65535. |
 | V9 | `dependsOn` references existing services; the graph is acyclic. |
 | V10 | Volume names unique per service; `disk.name` unique per stack. |
@@ -318,8 +340,11 @@ microvm.interfaces += {
   `mvc-` + 11 hex chars of `sha256(stack-svc-net)`. The renderer reads the id
   from `gen.taps` so the host side (CLI provisioning) and guest side agree.
 
-- **Host side** (provisiond, not Nix): bridge `br-<stack>-<N>`; tap `mvc-...`
-  enslaved; bridge IP = gateway (`<subnet> .1`).
+- **Host side** (provisiond, not Nix): one bridge per **stack** (not per
+  network -- `br-<stack>`, `hostnet.BridgeName`), shared by every network the
+  stack declares; tap `mvc-...` enslaved; bridge address is the host's one
+  flat-network gateway (`<host ULA prefix>::1`, the same address on every
+  stack's bridge -- see the known multi-stack gap noted in §8.6).
 - Taps are **not** auto-created by the hypervisor; `microbe-provisiond`
   creates them via netlink (§13.1) because microvm.nix only manages them
   under the `host` module, which we do not require.
@@ -330,22 +355,29 @@ The CLI generates a networkd unit as data into `generated.nix`; the renderer
 merges it (no hand-written per-VM networking):
 
 ```
-systemd.network.networks."mvc-<svc>" = {
+systemd.network.networks."mvc-<svc>-<N>" = {
   matchConfig.MACAddress  = <mac>;
   linkConfig.RequiredForOnline = "no";
-  address = [ "<ip>/<prefix>" ];
-  routes  = [ { Gateway = "<gateway>"; } ];
+  address = [ "<addr>/64" ];        # same addr on every one of this service's units
+  routes  = [ { Gateway = "<gateway>"; } ];   # only on the first-declared network's unit
 };
 ```
 
-- Multiple networks ⇒ multiple units and multiple default routes; the
-  gateway of the *first* declared network becomes the primary default route,
-  later ones get explicit subnet routes only.
-- `networking.useDHCP = false`; DNS = `1.1.1.1` unless overridden in the guest
-  config.
-- `/etc/hosts`: for every service reachable via shared networks or
-  `dependsOn`, an entry `<ip> <svcname> <svcname>.<network>`. Rendered into
-  `environment.etc.hosts` by the renderer.
+- A service has exactly **one** IPv6 address, shared across every network
+  attachment (not one per network the way the old per-network IPv4 model
+  worked) -- every `systemd.network.networks` unit for the service carries
+  the same `address`. Only the *first* declared network's unit gets a
+  default route (`routes = [{ Gateway = ...; }]`); every other attachment's
+  unit gets `routes = []` (must marshal to a JSON empty array, not `null` --
+  `systemd-networkd` rejects `null` for this option), since the whole flat
+  `/64` is reachable via the shared gateway regardless of which tap traffic
+  entered on.
+- `networking.useDHCP = false`; DNS = the host's dns64 resolver address
+  (`gen.gateway` -- see §13.1's NAT64/DNS64 module), not a hardcoded literal:
+  guests are IPv6-only, so an IPv4 literal like `1.1.1.1` is unreachable.
+- `/etc/hosts`: one entry per service, `<addr> <svcname>` -- no more
+  `<svcname>.<network>` alias, since every attachment resolves to the same
+  address now, adding no information a second entry would carry.
 
 ### 8.4 Volumes — `disk`
 
@@ -386,22 +418,43 @@ microvm.shares += {
 
 | Compose | Host resource | Lifecycle |
 |---------|---------------|-----------|
-| `networks.<N>.subnet` | bridge `br-<stack>-<N>` @ gateway `.1` | created `up`, removed `down` |
+| any network attachment in the stack | one bridge `br-<stack>` @ the host's flat-network gateway | created `up`, never deleted by `down` (see below) |
 | each attach | tap `mvc-<stack>-<svc>-<N>` | created `up`, removed `down` |
-| `ports` | nftables DNAT `<hostPort> → <guest ip>:<guestPort>` | created `up`, removed `down` |
+| `ports` | nftables DNAT (IPv6 family) `<hostPort> → [<guest addr>]:<guestPort>`, straight to the guest's real address -- no NAT64 needed for an IPv6-capable external client | created `up`, removed `down` |
+| `rules` | nftables `forward` chain (IPv6 family, table `microbe`): `Policy: drop` + one `ct state established,related accept` + one accept per rule, matching exact service addresses (no subnet/mask, since these are single `/128`s) | (re)applied `up`, removed `down` |
 
-- **Provisioning record**: `up` appends every created bridge/tap to
+- **Known gap**: every stack's bridge gets assigned the *same* host-wide
+  gateway address (`<host ULA prefix>::1`), since every service shares one
+  flat `/64` and there's currently no per-stack address carve-out. This is
+  correct for the common single-stack-per-host case but means two stacks
+  running concurrently on the same host will collide on that address --
+  tracked as a follow-up (candidate fix: collapse to one truly host-global
+  bridge instead of one per stack, since the `rules:` forward-chain
+  default-deny already provides the actual cross-service isolation boundary
+  now, not bridge topology).
+- **Provisioning record**: `up` appends the created bridge/taps to
   `state.json`'s `provisioned` field (`json:"provisioned"`). `down` also
   *culls orphaned links*: after tearing down a selected service, any
   recorded device neither in the current config nor on a service staying up
   is deleted (best-effort, exact-name) via the daemon's `teardown_links`
   RPC, and swept names drop out of `provisioned`. This cleans leftovers from
-  earlier aborted runs.
-- **IP allocation**: CLI assigns static IPs deterministically — read
-  `state.json`; if absent, next free host from `.2` upward, persisted. A
-  restarted stack keeps the same IPs.
+  earlier aborted runs. The bridge itself is treated as a permanent,
+  idempotently-(re)ensured host fixture -- `down`/`purge` never delete it
+  (mirrors `docker0` never being torn down by `docker stop`), only taps.
+- **Address allocation**: a service's one IPv6 address is generated once via
+  `crypto/rand` (a random `/128` within the host's ULA `/64`) and
+  permanently recorded in the stack's committed `microbe.lock.json`
+  (`internal/lockfile.Lock`) -- not re-derived per `up` the way the old
+  per-network "next free host IPv4" scan was. A static `attach.addr`
+  overrides random generation and is written into the lockfile too.
 - **MAC allocation**: `02:00:00:00:00:<2-hex>`, unique per interface across
-  the stack, persisted in `generated.nix`/`state.json`.
+  the stack, persisted in `generated.json`/`state.json` -- unchanged by the
+  IPv6 migration (MACs identify taps for the guest, addresses identify
+  services; only the latter needed to change).
+- **Outbound internet egress**: no more nftables masquerade (there's no
+  per-network subnet left to masquerade). Guests reach the general IPv4
+  internet via NAT64 (tayga) + DNS64 (unbound) on the host instead -- see
+  §13.1.
 
 ### 8.6.1 `microbe purge`
 
@@ -484,16 +537,23 @@ no firewall on managed networks, journald streaming socket for `logs`.
     db = {
       cid = 3;
       macs = { backend = "02:00:00:00:00:02"; };
-      ips  = { backend = "192.168.51.2"; };
-      gateway = { backend = "192.168.51.1"; };
-      prefix  = { backend = 24; };
-      hosts = [ { ip = "192.168.51.2"; names = [ "db" "db.backend" ]; } ];
+      addr = "fd7a:3c9e:1122::2";        # one address, shared by every attachment
+      gateway = "fd7a:3c9e:1122::1";     # one gateway, shared by every service/stack
+      prefix  = 64;                      # always 64 (the host ULA prefix length)
+      hosts = [ { ip = "fd7a:3c9e:1122::2"; names = [ "db" ]; } ];  # one entry per service
       networkd = { /* exact systemd.network attrset, §8.3 */ };
       taps = { backend = "mvc-<stack>-<svc>-<net>"; };  # ≤15 chars, see §8.2
     };
   };
 }
 ```
+
+> **Field shape note**: `addr`/`gateway`/`prefix` are singular values now
+> (one per service, one per host), not per-network maps the way
+> `ips`/`gateway`/`prefix` used to be -- there's only one address and one
+> gateway to describe once a service is IPv6-only on a flat network. `macs`
+> and `taps` stay per-network maps (unchanged): a service still gets one tap
+> per network attachment, only the *address* on those taps is now shared.
 
 > **Implementation note (M2)**: tap ids are computed by the CLI (see §8.2) so
 > the host provisioning and the guest config always agree; the renderer reads
@@ -544,15 +604,11 @@ compose file and generated data.
 ```json
 {
   "stack": "app-stack",
-  "networks": {
-    "backend": {
-      "cidr": "192.168.51.0/24",
-      "allocated": { "db": "192.168.51.2", "web": "192.168.51.3" }
-    }
-  },
+  "networks": ["backend"],
   "services": {
     "db": {
-      "ip": { "backend": "192.168.51.2" },
+      "addr": "fd7a:3c9e:1122::2",
+      "networks": ["backend"],
       "cid": 3,
       "macs": { "backend": "02:00:00:00:00:02" },
       "volumes": ["db-data"],
@@ -565,6 +621,14 @@ compose file and generated data.
 }
 ```
 
+> `networks` is now a flat list of network *names* (used only to
+> reconstruct the stack's bridge/taps without a config, e.g. for a host-wide
+> `purge`), not a map with per-network CIDR/allocation data -- there's no
+> more per-network subnet or allocation table once every service shares one
+> flat `/64`. Each service's own `networks` list (distinct from the
+> top-level one) is the set of networks *that service* is attached to,
+> needed to reconstruct its taps.
+
 ### 9.5 `up` lifecycle walkthrough
 
 1. **Load**: eval orchestration projection → JSON → validate (§5–§7).
@@ -576,12 +640,16 @@ compose file and generated data.
    the bridge/tap/DNAT specs to the **microbe-provisiond** daemon over its
    unix socket (`/run/microbe.sock`); the root daemon applies them itself via
    netlink (bridges, taps, addresses) and the nftables netlink protocol
-   (DNAT) — no `ip`/`iptables` exec, no sudo (§13.1):
-   - create bridges `br-<stack>-<net>`, assign bridge IP = gateway;
-   - allocate static IPs + MACs (or read from `state.json`);
+   (DNAT, forward-chain rules) — no `ip`/`iptables` exec, no sudo (§13.1):
+   - resolve the host's ULA prefix (generate once, first `up` ever; §5's
+     intro note) and the stack's committed `microbe.lock.json` (generate any
+     missing service addresses, persist);
+   - create/ensure the stack's one bridge `br-<stack>`, assign the host's
+     shared gateway address;
    - create qcow2 disks at `volumes/<stack>/<name>.qcow2` (qemu-img, unprivileged) if absent;
-   - create tap devices and attach to bridges;
-   - apply nftables DNAT for `ports`.
+   - create tap devices and attach to the bridge;
+   - apply nftables DNAT for `ports` and forward-chain accept rules for
+     `rules:` (default-deny otherwise).
 5. **Start**: topological order from `dependsOn`; launch each
    `microvm-run` with the tap/socket args; record PID in `state.json`.
 6. **Wait**: for each service, poll `healthcheck` (or wait for SSH) until ready
@@ -779,8 +847,22 @@ provisioning daemon, and device access. The flake ships a NixOS module,
   `kvm_intel`/`kvm_amd` (modprobe warns harmlessly when the CPU lacks the
   feature).
 - **Sysctls** (priority 98, so user config can override): `net.ipv4.ip_forward`
-  + per-interface forwarding, and `net.bridge.bridge-nf-call-{ip,ip6}tables` so
-  the nftables DNAT that publishes VM ports sees bridged traffic.
+  + per-interface forwarding, `net.ipv6.conf.{all,default}.forwarding` (guests
+  are IPv6-only now -- the host must forward between stack bridges and, with
+  `nat64.enable`, into the tayga tun device, regardless of whether NAT64
+  itself is on), and `net.bridge.bridge-nf-call-{ip,ip6}tables` so the
+  nftables DNAT that publishes VM ports sees bridged traffic.
+- **NAT64/DNS64** (`virtualisation.microbe.nat64.enable`, default on):
+  `services.tayga` gives guests outbound-only NAT64 to the general IPv4
+  internet (well-known `64:ff9b::/96` prefix, configurable `ipv4Pool` --
+  RFC 6598 CGNAT space by default); `services.unbound` runs as a DNS64
+  resolver (rewrites A-only answers into the NAT64 prefix), `access-control`
+  hardcoded to `fd00::/8` since every host ULA prefix microbe generates
+  falls under that range. Reachability *to* a published port needs no
+  NAT64 for an IPv6-capable client (direct DNAT, §8.6); IPv4-only external
+  clients aren't supported yet (tayga's static `mappings` render once at
+  nix-eval time, incompatible with ports published/unpublished at ordinary
+  `up`/`down` time).
 - **Packages**: `qemu-utils` (`qemu-img` for VM volume images), plus the
   `microbe` CLI when `virtualisation.microbe.package` is set (the flake sets it
   to `packages.<system>.microbe`). No `ip`/`iptables` userspace is required:
@@ -806,7 +888,8 @@ the vendored `./vendor` directory, so it builds offline.
   or keys; CLI never injects plaintext passwords into rendered files.
 - The generated guest modules must **not** allow the VM to escape to host
   networking beyond its bridge: no promiscuous taps, DNAT only for declared
-  ports, and (v2) optional firewall rules per service.
+  ports, and default-deny service-to-service reachability enforced by the
+  `rules:` list (§8.6) -- shipped, not a future v2 item.
 - `nix-instantiate --eval` runs user config — document that the compose file
   is trusted input (same trust model as the user's own nix config).
 - Guest base module disables root password login over SSH by default (§8.8).
