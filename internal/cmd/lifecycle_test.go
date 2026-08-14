@@ -366,13 +366,17 @@ type hostRecorder struct {
 
 // fakeOps records the daemon calls made through the provisionHost seam.
 type fakeOps struct {
-	ensureNetworks int
-	ensureTaps     int
-	applyPorts     int
-	stack          string
-	prefix         string
-	applyRules     []hostnet.RuleSpec
-	teardownRules  []hostnet.RuleSpec
+	ensureNetworks       int
+	ensureTaps           int
+	applyPorts           int
+	stack                string
+	prefix               string
+	applyRules           []hostnet.RuleSpec
+	teardownRules        []hostnet.RuleSpec
+	applyHostAccess      []hostnet.HostAccessSpec
+	teardownHostAccess   []hostnet.HostAccessSpec
+	applyHealthAccess    []hostnet.HealthAccessSpec
+	teardownHealthAccess []hostnet.HealthAccessSpec
 }
 
 func (f *fakeOps) EnsureNetworks(stack string, nets []hostnet.NetSpec) error {
@@ -409,6 +413,23 @@ func (f *fakeOps) ApplyRules(rules []hostnet.RuleSpec) error {
 }
 func (f *fakeOps) TeardownRules(rules []hostnet.RuleSpec) error {
 	f.teardownRules = rules
+	return nil
+}
+
+func (f *fakeOps) ApplyHostAccess(specs []hostnet.HostAccessSpec) error {
+	f.applyHostAccess = specs
+	return nil
+}
+func (f *fakeOps) TeardownHostAccess(specs []hostnet.HostAccessSpec) error {
+	f.teardownHostAccess = specs
+	return nil
+}
+func (f *fakeOps) ApplyHealthAccess(specs []hostnet.HealthAccessSpec) error {
+	f.applyHealthAccess = specs
+	return nil
+}
+func (f *fakeOps) TeardownHealthAccess(specs []hostnet.HealthAccessSpec) error {
+	f.teardownHealthAccess = specs
 	return nil
 }
 

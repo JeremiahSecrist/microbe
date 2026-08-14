@@ -11,18 +11,22 @@ import (
 
 // fakeOps records the arguments each Ops method receives and returns err.
 type fakeOps struct {
-	ensureNets    []hostnet.NetSpec
-	ensureTaps    []hostnet.TapSpec
-	applyPorts    []hostnet.PortSpec
-	teardownNets  []hostnet.NetSpec
-	teardownTaps  []hostnet.TapSpec
-	teardownPts   []hostnet.PortSpec
-	teardownLinks []string
-	stack         string
-	prefix        string
-	applyRules    []hostnet.RuleSpec
-	teardownRules []hostnet.RuleSpec
-	err           error
+	ensureNets           []hostnet.NetSpec
+	ensureTaps           []hostnet.TapSpec
+	applyPorts           []hostnet.PortSpec
+	teardownNets         []hostnet.NetSpec
+	teardownTaps         []hostnet.TapSpec
+	teardownPts          []hostnet.PortSpec
+	teardownLinks        []string
+	stack                string
+	prefix               string
+	applyRules           []hostnet.RuleSpec
+	teardownRules        []hostnet.RuleSpec
+	applyHostAccess      []hostnet.HostAccessSpec
+	teardownHostAccess   []hostnet.HostAccessSpec
+	applyHealthAccess    []hostnet.HealthAccessSpec
+	teardownHealthAccess []hostnet.HealthAccessSpec
+	err                  error
 }
 
 func (f *fakeOps) EnsureNetworks(stack string, nets []hostnet.NetSpec) error {
@@ -65,6 +69,22 @@ func (f *fakeOps) ApplyRules(rules []hostnet.RuleSpec) error {
 }
 func (f *fakeOps) TeardownRules(rules []hostnet.RuleSpec) error {
 	f.teardownRules = rules
+	return f.err
+}
+func (f *fakeOps) ApplyHostAccess(specs []hostnet.HostAccessSpec) error {
+	f.applyHostAccess = specs
+	return f.err
+}
+func (f *fakeOps) TeardownHostAccess(specs []hostnet.HostAccessSpec) error {
+	f.teardownHostAccess = specs
+	return f.err
+}
+func (f *fakeOps) ApplyHealthAccess(specs []hostnet.HealthAccessSpec) error {
+	f.applyHealthAccess = specs
+	return f.err
+}
+func (f *fakeOps) TeardownHealthAccess(specs []hostnet.HealthAccessSpec) error {
+	f.teardownHealthAccess = specs
 	return f.err
 }
 
@@ -220,6 +240,60 @@ func TestDispatchApplyAndTeardownRules(t *testing.T) {
 	}
 	if !reflect.DeepEqual(ops.teardownRules, rules) {
 		t.Errorf("TeardownRules = %v, want %v", ops.teardownRules, rules)
+	}
+}
+
+func TestDispatchApplyAndTeardownHostAccess(t *testing.T) {
+	ops := &fakeOps{}
+	specs := []hostnet.HostAccessSpec{{GuestIP: "fd00::2"}}
+
+	var buf bytes.Buffer
+	if err := dispatch(&buf, ops, Request{Method: MethodApplyHostAccess, HostAccess: specs}); err != nil {
+		t.Fatal(err)
+	}
+	if resp := decodeResp(t, &buf); resp.Error != "" {
+		t.Fatalf("unexpected error response: %q", resp.Error)
+	}
+	if !reflect.DeepEqual(ops.applyHostAccess, specs) {
+		t.Errorf("ApplyHostAccess = %v, want %v", ops.applyHostAccess, specs)
+	}
+
+	buf.Reset()
+	if err := dispatch(&buf, ops, Request{Method: MethodTeardownHostAccess, HostAccess: specs}); err != nil {
+		t.Fatal(err)
+	}
+	if resp := decodeResp(t, &buf); resp.Error != "" {
+		t.Fatalf("unexpected error response: %q", resp.Error)
+	}
+	if !reflect.DeepEqual(ops.teardownHostAccess, specs) {
+		t.Errorf("TeardownHostAccess = %v, want %v", ops.teardownHostAccess, specs)
+	}
+}
+
+func TestDispatchApplyAndTeardownHealthAccess(t *testing.T) {
+	ops := &fakeOps{}
+	specs := []hostnet.HealthAccessSpec{{GuestIP: "fd00::2", Port: 5432}}
+
+	var buf bytes.Buffer
+	if err := dispatch(&buf, ops, Request{Method: MethodApplyHealthAccess, HealthAccess: specs}); err != nil {
+		t.Fatal(err)
+	}
+	if resp := decodeResp(t, &buf); resp.Error != "" {
+		t.Fatalf("unexpected error response: %q", resp.Error)
+	}
+	if !reflect.DeepEqual(ops.applyHealthAccess, specs) {
+		t.Errorf("ApplyHealthAccess = %v, want %v", ops.applyHealthAccess, specs)
+	}
+
+	buf.Reset()
+	if err := dispatch(&buf, ops, Request{Method: MethodTeardownHealthAccess, HealthAccess: specs}); err != nil {
+		t.Fatal(err)
+	}
+	if resp := decodeResp(t, &buf); resp.Error != "" {
+		t.Fatalf("unexpected error response: %q", resp.Error)
+	}
+	if !reflect.DeepEqual(ops.teardownHealthAccess, specs) {
+		t.Errorf("TeardownHealthAccess = %v, want %v", ops.teardownHealthAccess, specs)
 	}
 }
 

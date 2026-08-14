@@ -234,6 +234,34 @@ func (p printOps) TeardownRules(rules []hostnet.RuleSpec) error {
 	return nil
 }
 
+func (p printOps) ApplyHostAccess(specs []hostnet.HostAccessSpec) error {
+	for _, s := range specs {
+		fmt.Fprintf(p.out, "allow host -> %s (all ports)\n", s.GuestIP)
+	}
+	return nil
+}
+
+func (p printOps) TeardownHostAccess(specs []hostnet.HostAccessSpec) error {
+	for _, s := range specs {
+		fmt.Fprintf(p.out, "revoke host -> %s\n", s.GuestIP)
+	}
+	return nil
+}
+
+func (p printOps) ApplyHealthAccess(specs []hostnet.HealthAccessSpec) error {
+	for _, s := range specs {
+		fmt.Fprintf(p.out, "allow host -> %s:%d (healthcheck)\n", s.GuestIP, s.Port)
+	}
+	return nil
+}
+
+func (p printOps) TeardownHealthAccess(specs []hostnet.HealthAccessSpec) error {
+	for _, s := range specs {
+		fmt.Fprintf(p.out, "revoke host -> %s:%d (healthcheck)\n", s.GuestIP, s.Port)
+	}
+	return nil
+}
+
 // EnsurePrefix delegates to the real daemon-side implementation rather than
 // printing a placeholder: unlike bridges/taps/ports (destructive host
 // mutations --dry-run must not perform), the host's persisted ULA prefix is
