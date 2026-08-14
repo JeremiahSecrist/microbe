@@ -2,8 +2,8 @@
   name = "test-net";
 
   networks = {
-    frontend = { subnet = "192.168.50.0/24"; };
-    backend  = { subnet = "192.168.51.0/24"; };
+    frontend = { };
+    backend  = { };
   };
 
   services = {
@@ -18,8 +18,13 @@
         services.postgresql = {
           enable = true;
           enableTCPIP = true;
+          # rules: (below) is the actual access boundary now -- pg_hba is
+          # defense-in-depth, not primary enforcement. There's no fixed
+          # subnet to trust anymore (every service shares one flat,
+          # randomly-addressed /64 -- see microbe.lock.json once you've
+          # run `up`), so this is deliberately wide open.
           authentication = ''
-            host all all 192.168.51.0/24 trust
+            host all all ::0/0 trust
           '';
         };
       };
@@ -33,8 +38,12 @@
         { name = "db-data"; host = "./pgdata"; target = "/var/lib/postgresql"; owner = "postgres"; }
       ];
 
+      # No static addr: db gets a random IPv6 /128 within the host's
+      # persisted ULA /64 on first `up`, permanently recorded in
+      # microbe.lock.json (committed to git like a Cargo.lock) so it never
+      # changes again after that.
       networks = [
-        { name = "backend"; ip = "192.168.51.2"; }
+        { name = "backend"; }
       ];
 
       ports = [ "5432:5432" ];
@@ -53,8 +62,8 @@
       dependsOn = [ "db" ];
 
       networks = [
-        { name = "backend";  ip = "192.168.51.3"; }
-        { name = "frontend"; ip = "192.168.50.3"; }
+        { name = "backend"; }
+        { name = "frontend"; }
       ];
 
       ports = [ "8080:80" ];
@@ -78,4 +87,11 @@
       ];
     };
   };
+
+  # Default-deny: services can only reach each other over rules declared
+  # here. web -> db is the only cross-service traffic this demo actually
+  # needs (jump has no app talking to db/web, so it gets no rule).
+  rules = [
+    { from = "web"; to = "db"; ports = [ 5432 ]; }
+  ];
 }
