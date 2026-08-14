@@ -51,6 +51,39 @@ in
         privilege (no sudoers, no setuid).
       '';
     };
+
+    nat64 = {
+      enable = mkOption {
+        type = types.bool;
+        default = cfg.enable;
+        description = ''
+          Give guests (IPv6-only; see the flat-network addressing model)
+          outbound internet access via NAT64 (tayga) + DNS64 (unbound):
+          guest apps resolving an IPv4-only hostname get an
+          A-record-synthesized AAAA answer in the well-known
+          {option}`64:ff9b::/96` prefix, and tayga translates the resulting
+          v6 flow to v4 on the host's own uplink. Reachability *to* a
+          published port from an IPv6-capable external client needs no
+          NAT64 at all (microbe-provisiond DNATs straight to the guest's
+          real IPv6 address); reachability from an IPv4-only external
+          client is not yet implemented (tracked separately -- tayga's
+          static `mappings` are rendered once at nix-eval time, and
+          microbe publishes/unpublishes ports at `up`/`down` time, so a
+          static nix-declared mapping table can't track that without a
+          `nixos-rebuild` per port change).
+        '';
+      };
+
+      ipv4Pool = mkOption {
+        type = types.str;
+        default = "100.64.1.0/24";
+        description = ''
+          The IPv4 address pool tayga hands each translated IPv6 flow a
+          temporary address from (RFC 6598 CGNAT space by default, so it
+          won't collide with a typical host's own LAN/uplink addressing).
+        '';
+      };
+    };
   };
 
   config = mkIf cfg.enable (mkMerge [
@@ -77,6 +110,11 @@ in
         "net.ipv4.conf.default.forwarding" = mkDefault true;
         "net.bridge.bridge-nf-call-iptables" = mkOverride 98 true;
         "net.bridge.bridge-nf-call-ip6tables" = mkOverride 98 true;
+        # Guests are IPv6-only (flat-network model): the host must forward
+        # between stack bridges (and, with nat64.enable, into the tayga tun
+        # device) regardless of whether NAT64 itself is turned on.
+        "net.ipv6.conf.all.forwarding" = mkOverride 98 true;
+        "net.ipv6.conf.default.forwarding" = mkDefault true;
       };
 
       environment.systemPackages = [
@@ -135,5 +173,49 @@ in
         };
       };
     }
+    (mkIf cfg.nat64.enable {
+      # Outbound-only NAT64: guest (IPv6-only) -> tayga tun -> host's own
+      # IPv4 uplink. ipv6.pool is the well-known RFC 6052 prefix dns64
+      # rewrites A-only answers into (see the unbound config below);
+      # ipv4.pool is where each translated flow gets a temporary source
+      # address. wkpfStrict is off because ipv4Pool is deliberately
+      # non-global (RFC 6598) -- the well-known prefix's own RFC 6052
+      # restriction against translating non-global v4 ranges doesn't apply
+      # to what is, here, entirely host-internal traffic.
+      services.tayga = {
+        enable = true;
+        wkpfStrict = false;
+        ipv4 = {
+          address = "100.64.0.1";
+          router.address = "100.64.0.2";
+          pool = {
+            address = builtins.elemAt (lib.splitString "/" cfg.nat64.ipv4Pool) 0;
+            prefixLength = lib.toInt (builtins.elemAt (lib.splitString "/" cfg.nat64.ipv4Pool) 1);
+          };
+        };
+        ipv6.router.address = "64:ff9b::1";
+        ipv6.pool = {
+          address = "64:ff9b::";
+          prefixLength = 96;
+        };
+      };
+
+      # dns64: rewrites an A-only answer into the NAT64 prefix so a guest
+      # resolving an IPv4-only hostname still gets something it can dial
+      # (tayga then does the actual v6<->v4 translation). access-control is
+      # fd00::/8 -- every host ULA prefix microbe ever generates (see
+      # internal/provisiond/prefix.go) falls under RFC 4193's
+      # locally-assigned range, so this doesn't need to know this
+      # particular host's actual generated prefix.
+      services.unbound = {
+        enable = true;
+        settings.server = {
+          interface = [ "::0" ];
+          access-control = [ "fd00::/8 allow" ];
+          module-config = "\"dns64 validator iterator\"";
+          dns64-prefix = "64:ff9b::/96";
+        };
+      };
+    })
   ]);
 }
