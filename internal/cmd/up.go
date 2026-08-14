@@ -336,6 +336,9 @@ func upRun(args []string, opts upOptions) error {
 		if err != nil {
 			return err
 		}
+		if err := checkPortsAvailable(ports); err != nil {
+			return err
+		}
 		if err := provisionHost(opts.ops, st.Name, nets, taps, ports); err != nil {
 			return err
 		}

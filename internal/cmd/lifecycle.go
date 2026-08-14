@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -80,6 +81,28 @@ var (
 			return err
 		}
 		return f.Close()
+	}
+
+	// checkPortsAvailable is a docker-style preflight: bind-and-close each
+	// requested host port before any provisioning touches the host, so a
+	// port collision fails fast with a clear error instead of silently
+	// producing a DNAT rule nothing will ever receive traffic through.
+	// Binds the wildcard address (any interface), matching the DNAT rule
+	// itself having no interface/source restriction.
+	checkPortsAvailable = func(ports []hostnet.PortSpec) error {
+		seen := map[int]bool{}
+		for _, p := range ports {
+			if seen[p.HostPort] {
+				continue
+			}
+			seen[p.HostPort] = true
+			l, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(p.HostPort)))
+			if err != nil {
+				return fmt.Errorf("port %d already allocated: %w", p.HostPort, err)
+			}
+			l.Close()
+		}
+		return nil
 	}
 )
 

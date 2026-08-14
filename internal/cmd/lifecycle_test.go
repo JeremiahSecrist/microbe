@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -113,6 +114,67 @@ func TestVirtiofsShareSocketsFinixIncludesStore(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("virtiofsShareSockets(finix) = %v, want to include %q", sockets, want)
+	}
+}
+
+// TestCheckPortsAvailable proves the docker-style preflight rejects a host
+// port that's already bound by something else, and accepts a free one.
+func TestCheckPortsAvailable(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer l.Close()
+	taken := l.Addr().(*net.TCPAddr).Port
+
+	if err := checkPortsAvailable([]hostnet.PortSpec{{HostPort: taken, GuestIP: "fd00::1", GuestPort: 80}}); err == nil {
+		t.Error("checkPortsAvailable(taken port): want error, got nil")
+	}
+
+	l2, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	free := l2.Addr().(*net.TCPAddr).Port
+	l2.Close()
+
+	if err := checkPortsAvailable([]hostnet.PortSpec{{HostPort: free, GuestIP: "fd00::1", GuestPort: 80}}); err != nil {
+		t.Errorf("checkPortsAvailable(free port %d): want nil, got %v", free, err)
+	}
+}
+
+// TestUpRunFailsFastOnPortConflict proves up refuses to provision anything
+// when a requested host port is already bound -- docker-style "port is
+// already allocated", surfaced before any bridge/tap/DNAT/VM work.
+func TestUpRunFailsFastOnPortConflict(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+
+	var hr hostRecorder
+	origProvision, origBuild, origStart, origCheck := provisionHost, buildRunner, startService, checkPortsAvailable
+	provisionHost = recordHost(&hr, nil, "provision")
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) {
+		return filepath.Join(dir, "runners", svc), nil
+	}
+	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	checkPortsAvailable = func([]hostnet.PortSpec) error {
+		return errors.New("port 8080 already allocated")
+	}
+	defer func() {
+		provisionHost, buildRunner, startService, checkPortsAvailable = origProvision, origBuild, origStart, origCheck
+	}()
+
+	rec := &cmdRecorder{}
+	var buf bytes.Buffer
+	err := upRun(nil, upOptions{ops: &fakeOps{},
+		file: cfgPath, runner: rec.run, out: &buf,
+	})
+	if err == nil || !strings.Contains(err.Error(), "already allocated") {
+		t.Fatalf("upRun err = %v, want a port-already-allocated error", err)
+	}
+	if hr.calls != 0 {
+		t.Errorf("provisionHost calls = %d, want 0 (should fail before provisioning)", hr.calls)
 	}
 }
 
