@@ -55,6 +55,80 @@ func TestParseAcceptsNetworkShorthand(t *testing.T) {
 	}
 }
 
+func TestParseHostAccessFields(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+	  "name": "ha",
+	  "hostAccess": true,
+	  "networks": { "n": { "subnet": "10.0.0.0/24" } },
+	  "services": {
+	    "a": { "networks": ["n"], "hostAccess": true },
+	    "b": { "networks": ["n"] }
+	  }
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !cfg.HostAccess {
+		t.Error("cfg.HostAccess = false, want true")
+	}
+	if !cfg.Services["a"].HostAccess {
+		t.Error("services[a].HostAccess = false, want true")
+	}
+	if cfg.Services["b"].HostAccess {
+		t.Error("services[b].HostAccess = true, want false (unset)")
+	}
+}
+
+func TestHostAccessServices(t *testing.T) {
+	base := func() *Compose {
+		return &Compose{
+			Services: map[string]Service{
+				"a": {},
+				"b": {},
+			},
+		}
+	}
+
+	t.Run("compose-wide unlocks all", func(t *testing.T) {
+		c := base()
+		c.HostAccess = true
+		got := c.HostAccessServices()
+		if !got["a"] || !got["b"] {
+			t.Errorf("got %v, want both true", got)
+		}
+	})
+
+	t.Run("per-service unlocks just that one", func(t *testing.T) {
+		c := base()
+		svc := c.Services["a"]
+		svc.HostAccess = true
+		c.Services["a"] = svc
+		got := c.HostAccessServices()
+		if !got["a"] || got["b"] {
+			t.Errorf("got %v, want only a true", got)
+		}
+	})
+
+	t.Run("neither set unlocks none", func(t *testing.T) {
+		got := base().HostAccessServices()
+		if got["a"] || got["b"] {
+			t.Errorf("got %v, want both false", got)
+		}
+	})
+
+	t.Run("compose-wide overrides a service explicitly false", func(t *testing.T) {
+		c := base()
+		c.HostAccess = true
+		svc := c.Services["a"]
+		svc.HostAccess = false
+		c.Services["a"] = svc
+		got := c.HostAccessServices()
+		if !got["a"] {
+			t.Errorf("got %v, want a true (compose-wide OR)", got)
+		}
+	})
+}
+
 func TestValidateUnknownNetwork(t *testing.T) {
 	cfg, err := Parse([]byte(`{
 	  "name": "bad",
