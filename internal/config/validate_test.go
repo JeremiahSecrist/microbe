@@ -183,6 +183,55 @@ func TestValidateDependsOnCycle(t *testing.T) {
 	}
 }
 
+func TestParsePort(t *testing.T) {
+	host, guest, err := ParsePort("8080:80")
+	if err != nil || host != 8080 || guest != 80 {
+		t.Errorf("ParsePort(8080:80) = %d,%d,%v", host, guest, err)
+	}
+	bad := []string{
+		"8080", "abc:80", "8080:0", "0:80", "8080:99999", ":80",
+		"127.0.0.1:8080:80", // 3-field host-IP form: dropped, not supported
+		"8080:80/tcp",       // proto suffix: dropped, not supported
+	}
+	for _, b := range bad {
+		if _, _, err := ParsePort(b); err == nil {
+			t.Errorf("ParsePort(%q): want error", b)
+		}
+	}
+}
+
+func TestValidatePorts(t *testing.T) {
+	cases := []struct {
+		name    string
+		ports   string
+		wantErr bool
+	}{
+		{"valid", `["8080:80"]`, false},
+		{"host ip prefix rejected", `["127.0.0.1:8080:80"]`, true},
+		{"proto suffix rejected", `["8080:80/tcp"]`, true},
+		{"malformed rejected", `["nope"]`, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(`{
+			  "name": "ports",
+			  "networks": { "n": { "subnet": "10.0.0.0/24" } },
+			  "services": { "a": { "networks": [{ "name": "n" }], "ports": ` + c.ports + ` } }
+			}`))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			err = cfg.Validate()
+			if c.wantErr && err == nil {
+				t.Error("want error, got nil")
+			}
+			if !c.wantErr && err != nil {
+				t.Errorf("want no error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateHealthcheck(t *testing.T) {
 	cases := []struct {
 		name    string

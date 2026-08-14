@@ -256,23 +256,6 @@ func resolvePlan(cfg *config.Compose, composeFile string, ops provisiond.Ops) (*
 	return plan, lock.Prefix, nil
 }
 
-// parsePort parses a "host:guest" port mapping.
-func parsePort(portMapping string) (host, guest int, err error) {
-	parts := strings.Split(portMapping, ":")
-	if len(parts) != 2 {
-		return 0, 0, fmt.Errorf("invalid port mapping %q", portMapping)
-	}
-	host, err = strconv.Atoi(parts[0])
-	if err != nil || host < 1 || host > 65535 {
-		return 0, 0, fmt.Errorf("invalid port mapping %q", portMapping)
-	}
-	guest, err = strconv.Atoi(parts[1])
-	if err != nil || guest < 1 || guest > 65535 {
-		return 0, 0, fmt.Errorf("invalid port mapping %q", portMapping)
-	}
-	return host, guest, nil
-}
-
 // netSpecs derives the stack's one NetSpec (one bridge per stack, see
 // hostnet.BridgeName): empty if the stack has no service attached to any
 // network, else a single-element slice carrying the host's shared flat
@@ -543,7 +526,7 @@ func portSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) ([]ho
 		}
 		svc := st.Services[name]
 		for _, portMapping := range cfg.Services[name].Ports {
-			host, guest, err := parsePort(portMapping)
+			host, guest, err := config.ParsePort(portMapping)
 			if err != nil {
 				return nil, err
 			}
@@ -701,7 +684,7 @@ func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map
 	}
 	for _, name := range st.Names() {
 		for _, portMapping := range cfg.Services[name].Ports {
-			host, guest, err := parsePort(portMapping)
+			host, guest, err := config.ParsePort(portMapping)
 			if err != nil {
 				continue
 			}

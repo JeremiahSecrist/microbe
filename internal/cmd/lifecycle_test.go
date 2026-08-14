@@ -116,18 +116,6 @@ func TestVirtiofsShareSocketsFinixIncludesStore(t *testing.T) {
 	}
 }
 
-func TestParsePort(t *testing.T) {
-	host, guest, err := parsePort("8080:80")
-	if err != nil || host != 8080 || guest != 80 {
-		t.Errorf("parsePort(8080:80) = %d,%d,%v", host, guest, err)
-	}
-	for _, bad := range []string{"8080", "abc:80", "8080:0", "0:80", "8080:99999", ":80"} {
-		if _, _, err := parsePort(bad); err == nil {
-			t.Errorf("parsePort(%q): want error", bad)
-		}
-	}
-}
-
 // TestNetSpecsSingleBridge proves netSpecs returns exactly one NetSpec for
 // any stack with at least one network attachment -- one bridge per stack
 // now, not one per declared network (see hostnet.BridgeName).

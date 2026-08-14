@@ -160,15 +160,15 @@ func (c *Compose) validateRules() error {
 }
 
 func (c *Compose) validatePorts() error {
-	seen := map[string]string{}
+	seen := map[int]string{}
 	for svcName, svc := range c.Services {
 		for _, portMapping := range svc.Ports {
-			host := hostPort(portMapping)
-			if host == "" {
+			host, _, err := ParsePort(portMapping)
+			if err != nil {
 				return fmt.Errorf("config: service %q: invalid port mapping %q", svcName, portMapping)
 			}
 			if prev, dup := seen[host]; dup {
-				return fmt.Errorf("config: duplicate host port %s (%s, %s)", host, prev, svcName)
+				return fmt.Errorf("config: duplicate host port %d (%s, %s)", host, prev, svcName)
 			}
 			seen[host] = svcName
 		}
@@ -292,25 +292,25 @@ func (c *Compose) validateHealthchecks() error {
 	return nil
 }
 
-// hostPort extracts the host-side port number from a Docker Compose-style
-// port mapping (e.g. "8080:80", "127.0.0.1:8080:80/tcp"), returning it
-// normalized without leading zeros, or "" if the mapping is malformed.
-func hostPort(portMapping string) string {
-	host := portMapping
-	if slash := strings.Index(host, "/"); slash >= 0 {
-		host = host[:slash]
+// ParsePort parses a strict "hostPort:guestPort" mapping (the only form
+// microbe supports -- no host-IP prefix, no /proto suffix; see
+// docs/microbe-plan.md's port-mapping section for why those forms are
+// deliberately rejected rather than partially honored). This is the single
+// source of truth for the mapping grammar: both config.Validate and the
+// runtime DNAT rule construction in internal/cmd call this, so the two can
+// never drift into accepting different strings.
+func ParsePort(portMapping string) (host, guest int, err error) {
+	parts := strings.Split(portMapping, ":")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid port mapping %q", portMapping)
 	}
-	fields := strings.Split(host, ":")
-	switch len(fields) {
-	case 2: // hostPort:containerPort
-		host = fields[0]
-	case 3: // hostIP:hostPort:containerPort
-		host = fields[1]
-	default:
-		return ""
+	host, err = strconv.Atoi(parts[0])
+	if err != nil || host < minHostPort || host > maxHostPort {
+		return 0, 0, fmt.Errorf("invalid port mapping %q", portMapping)
 	}
-	if port, err := strconv.Atoi(host); err == nil && port >= minHostPort && port <= maxHostPort {
-		return strconv.Itoa(port)
+	guest, err = strconv.Atoi(parts[1])
+	if err != nil || guest < minHostPort || guest > maxHostPort {
+		return 0, 0, fmt.Errorf("invalid port mapping %q", portMapping)
 	}
-	return ""
+	return host, guest, nil
 }
