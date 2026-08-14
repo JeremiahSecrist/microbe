@@ -591,6 +591,50 @@ func portSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) ([]ho
 	return specs, nil
 }
 
+// hostAccessSpecs derives one HostAccessSpec per service in selected whose
+// resolved config.Compose.HostAccessServices() view is true (compose-wide
+// or per-service HostAccess). Scoped to selected the same way portSpecs is,
+// for the same reason: an unscoped call from a partial `up`/`down` would
+// touch a still-running service's rule.
+func hostAccessSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) []hostnet.HostAccessSpec {
+	isSelected := map[string]bool{}
+	for _, name := range selected {
+		isSelected[name] = true
+	}
+	unlocked := cfg.HostAccessServices()
+	var specs []hostnet.HostAccessSpec
+	for _, name := range st.Names() {
+		if !isSelected[name] || !unlocked[name] {
+			continue
+		}
+		specs = append(specs, hostnet.HostAccessSpec{GuestIP: st.Services[name].Addr})
+	}
+	return specs
+}
+
+// healthAccessSpecs derives one HealthAccessSpec per service in selected
+// that declares a Healthcheck -- auto-allowed host->guest reachability on
+// that port, independent of HostAccess, since declaring a healthcheck is
+// itself explicit intent (see internal/cmd/health.go's host-side probe).
+func healthAccessSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) []hostnet.HealthAccessSpec {
+	isSelected := map[string]bool{}
+	for _, name := range selected {
+		isSelected[name] = true
+	}
+	var specs []hostnet.HealthAccessSpec
+	for _, name := range st.Names() {
+		if !isSelected[name] {
+			continue
+		}
+		hc := cfg.Services[name].Healthcheck
+		if hc == nil {
+			continue
+		}
+		specs = append(specs, hostnet.HealthAccessSpec{GuestIP: st.Services[name].Addr, Port: hc.Port})
+	}
+	return specs
+}
+
 // startOrder returns the selected services with dependencies first.
 func startOrder(cfg *config.Compose, selected []string) ([]string, error) {
 	isSelected := map[string]bool{}

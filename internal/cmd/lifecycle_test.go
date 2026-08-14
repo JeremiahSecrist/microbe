@@ -309,6 +309,103 @@ func TestRuleSpecsResolvesAddresses(t *testing.T) {
 	}
 }
 
+const hostAccessConfigJSON = `{
+  "schemaVersion": 1,
+  "name": "test-net",
+  "hostAccess": false,
+  "networks": { "backend": {} },
+  "services": {
+    "db": {
+      "networks": [ { "name": "backend", "addr": "fd00:1234:5678::2" } ],
+      "hostAccess": true,
+      "healthcheck": { "port": 5432, "interval": "1s", "timeout": "1s", "startPeriod": "1s" }
+    },
+    "web": { "networks": [ { "name": "backend", "addr": "fd00:1234:5678::3" } ] }
+  }
+}`
+
+func writeHostAccessConfig(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "microbe.json")
+	if err := os.WriteFile(p, []byte(hostAccessConfigJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestHostAccessSpecs proves hostAccessSpecs resolves the OR'd
+// compose-wide/per-service HostAccess fields into one HostAccessSpec per
+// unlocked service's resolved address, scoped to selected.
+func TestHostAccessSpecs(t *testing.T) {
+	cfgPath := writeHostAccessConfig(t)
+	cfg, st := loadStack(t, cfgPath)
+
+	got := hostAccessSpecs(cfg, st, st.Names())
+	want := []hostnet.HostAccessSpec{{GuestIP: "fd00:1234:5678::2"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("hostAccessSpecs = %v, want %v", got, want)
+	}
+
+	// Scoping: excluding db from selected drops its spec even though it's
+	// host-accessible.
+	if got := hostAccessSpecs(cfg, st, []string{"web"}); len(got) != 0 {
+		t.Errorf("hostAccessSpecs(web only) = %v, want empty", got)
+	}
+}
+
+// TestHealthAccessSpecs proves healthAccessSpecs builds one spec per
+// selected service with a declared healthcheck, regardless of HostAccess.
+func TestHealthAccessSpecs(t *testing.T) {
+	cfgPath := writeHostAccessConfig(t)
+	cfg, st := loadStack(t, cfgPath)
+
+	got := healthAccessSpecs(cfg, st, st.Names())
+	want := []hostnet.HealthAccessSpec{{GuestIP: "fd00:1234:5678::2", Port: 5432}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("healthAccessSpecs = %v, want %v", got, want)
+	}
+
+	if got := healthAccessSpecs(cfg, st, []string{"web"}); len(got) != 0 {
+		t.Errorf("healthAccessSpecs(web only) = %v, want empty (no healthcheck)", got)
+	}
+}
+
+// TestUpRunAppliesHostAndHealthAccess proves up wires hostAccessSpecs and
+// healthAccessSpecs through to ops.ApplyHostAccess/ApplyHealthAccess before
+// any healthcheck probe runs.
+func TestUpRunAppliesHostAndHealthAccess(t *testing.T) {
+	cfgPath := writeHostAccessConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+
+	origProvision, origBuild, origStart, origWaitHealthy := provisionHost, buildRunner, startService, waitHealthy
+	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+		return nil
+	}
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
+	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	waitHealthy = func(string, time.Duration, time.Duration, time.Duration) bool { return true }
+	defer func() {
+		provisionHost, buildRunner, startService, waitHealthy = origProvision, origBuild, origStart, origWaitHealthy
+	}()
+
+	ops := &fakeOps{}
+	var buf bytes.Buffer
+	if err := upRun(nil, upOptions{ops: ops, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+
+	wantHost := []hostnet.HostAccessSpec{{GuestIP: "fd00:1234:5678::2"}}
+	if !reflect.DeepEqual(ops.applyHostAccess, wantHost) {
+		t.Errorf("ApplyHostAccess = %v, want %v", ops.applyHostAccess, wantHost)
+	}
+	wantHealth := []hostnet.HealthAccessSpec{{GuestIP: "fd00:1234:5678::2", Port: 5432}}
+	if !reflect.DeepEqual(ops.applyHealthAccess, wantHealth) {
+		t.Errorf("ApplyHealthAccess = %v, want %v", ops.applyHealthAccess, wantHealth)
+	}
+}
+
 // TestUpRunAppliesRules proves up wires ruleSpecs() through to
 // ops.ApplyRules, not just nets/taps/ports.
 func TestUpRunAppliesRules(t *testing.T) {

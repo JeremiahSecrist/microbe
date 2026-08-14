@@ -345,6 +345,12 @@ func upRun(args []string, opts upOptions) error {
 		if err := opts.ops.ApplyRules(ruleSpecs(cfg, st)); err != nil {
 			return err
 		}
+		if err := opts.ops.ApplyHostAccess(hostAccessSpecs(cfg, st, selected)); err != nil {
+			return err
+		}
+		if err := opts.ops.ApplyHealthAccess(healthAccessSpecs(cfg, st, selected)); err != nil {
+			return err
+		}
 	}
 
 	order, err := startOrder(cfg, selected)

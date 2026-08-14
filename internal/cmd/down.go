@@ -172,6 +172,12 @@ func downRun(args []string, opts downOptions) error {
 	if err := opts.ops.TeardownRules(ruleSpecs(cfg, st)); err != nil {
 		return err
 	}
+	if err := opts.ops.TeardownHostAccess(hostAccessSpecs(cfg, st, selected)); err != nil {
+		return err
+	}
+	if err := opts.ops.TeardownHealthAccess(healthAccessSpecs(cfg, st, selected)); err != nil {
+		return err
+	}
 
 	// Sweep orphaned devices: any interface this stack may have provisioned
 	// (recorded in state, or reconstructible from config+state names) that
