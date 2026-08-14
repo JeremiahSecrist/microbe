@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -80,6 +81,28 @@ var (
 			return err
 		}
 		return f.Close()
+	}
+
+	// checkPortsAvailable is a docker-style preflight: bind-and-close each
+	// requested host port before any provisioning touches the host, so a
+	// port collision fails fast with a clear error instead of silently
+	// producing a DNAT rule nothing will ever receive traffic through.
+	// Binds the wildcard address (any interface), matching the DNAT rule
+	// itself having no interface/source restriction.
+	checkPortsAvailable = func(ports []hostnet.PortSpec) error {
+		seen := map[int]bool{}
+		for _, p := range ports {
+			if seen[p.HostPort] {
+				continue
+			}
+			seen[p.HostPort] = true
+			l, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(p.HostPort)))
+			if err != nil {
+				return fmt.Errorf("port %d already allocated: %w", p.HostPort, err)
+			}
+			l.Close()
+		}
+		return nil
 	}
 )
 
@@ -211,6 +234,34 @@ func (p printOps) TeardownRules(rules []hostnet.RuleSpec) error {
 	return nil
 }
 
+func (p printOps) ApplyHostAccess(specs []hostnet.HostAccessSpec) error {
+	for _, s := range specs {
+		fmt.Fprintf(p.out, "allow host -> %s (all ports)\n", s.GuestIP)
+	}
+	return nil
+}
+
+func (p printOps) TeardownHostAccess(specs []hostnet.HostAccessSpec) error {
+	for _, s := range specs {
+		fmt.Fprintf(p.out, "revoke host -> %s\n", s.GuestIP)
+	}
+	return nil
+}
+
+func (p printOps) ApplyHealthAccess(specs []hostnet.HealthAccessSpec) error {
+	for _, s := range specs {
+		fmt.Fprintf(p.out, "allow host -> %s:%d (healthcheck)\n", s.GuestIP, s.Port)
+	}
+	return nil
+}
+
+func (p printOps) TeardownHealthAccess(specs []hostnet.HealthAccessSpec) error {
+	for _, s := range specs {
+		fmt.Fprintf(p.out, "revoke host -> %s:%d (healthcheck)\n", s.GuestIP, s.Port)
+	}
+	return nil
+}
+
 // EnsurePrefix delegates to the real daemon-side implementation rather than
 // printing a placeholder: unlike bridges/taps/ports (destructive host
 // mutations --dry-run must not perform), the host's persisted ULA prefix is
@@ -254,23 +305,6 @@ func resolvePlan(cfg *config.Compose, composeFile string, ops provisiond.Ops) (*
 		return nil, "", fmt.Errorf("save %s: %w", path, err)
 	}
 	return plan, lock.Prefix, nil
-}
-
-// parsePort parses a "host:guest" port mapping.
-func parsePort(portMapping string) (host, guest int, err error) {
-	parts := strings.Split(portMapping, ":")
-	if len(parts) != 2 {
-		return 0, 0, fmt.Errorf("invalid port mapping %q", portMapping)
-	}
-	host, err = strconv.Atoi(parts[0])
-	if err != nil || host < 1 || host > 65535 {
-		return 0, 0, fmt.Errorf("invalid port mapping %q", portMapping)
-	}
-	guest, err = strconv.Atoi(parts[1])
-	if err != nil || guest < 1 || guest > 65535 {
-		return 0, 0, fmt.Errorf("invalid port mapping %q", portMapping)
-	}
-	return host, guest, nil
 }
 
 // netSpecs derives the stack's one NetSpec (one bridge per stack, see
@@ -543,7 +577,7 @@ func portSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) ([]ho
 		}
 		svc := st.Services[name]
 		for _, portMapping := range cfg.Services[name].Ports {
-			host, guest, err := parsePort(portMapping)
+			host, guest, err := config.ParsePort(portMapping)
 			if err != nil {
 				return nil, err
 			}
@@ -555,6 +589,50 @@ func portSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) ([]ho
 		}
 	}
 	return specs, nil
+}
+
+// hostAccessSpecs derives one HostAccessSpec per service in selected whose
+// resolved config.Compose.HostAccessServices() view is true (compose-wide
+// or per-service HostAccess). Scoped to selected the same way portSpecs is,
+// for the same reason: an unscoped call from a partial `up`/`down` would
+// touch a still-running service's rule.
+func hostAccessSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) []hostnet.HostAccessSpec {
+	isSelected := map[string]bool{}
+	for _, name := range selected {
+		isSelected[name] = true
+	}
+	unlocked := cfg.HostAccessServices()
+	var specs []hostnet.HostAccessSpec
+	for _, name := range st.Names() {
+		if !isSelected[name] || !unlocked[name] {
+			continue
+		}
+		specs = append(specs, hostnet.HostAccessSpec{GuestIP: st.Services[name].Addr})
+	}
+	return specs
+}
+
+// healthAccessSpecs derives one HealthAccessSpec per service in selected
+// that declares a Healthcheck -- auto-allowed host->guest reachability on
+// that port, independent of HostAccess, since declaring a healthcheck is
+// itself explicit intent (see internal/cmd/health.go's host-side probe).
+func healthAccessSpecs(cfg *config.Compose, st *flakegen.Stack, selected []string) []hostnet.HealthAccessSpec {
+	isSelected := map[string]bool{}
+	for _, name := range selected {
+		isSelected[name] = true
+	}
+	var specs []hostnet.HealthAccessSpec
+	for _, name := range st.Names() {
+		if !isSelected[name] {
+			continue
+		}
+		hc := cfg.Services[name].Healthcheck
+		if hc == nil {
+			continue
+		}
+		specs = append(specs, hostnet.HealthAccessSpec{GuestIP: st.Services[name].Addr, Port: hc.Port})
+	}
+	return specs
 }
 
 // startOrder returns the selected services with dependencies first.
@@ -701,7 +779,7 @@ func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map
 	}
 	for _, name := range st.Names() {
 		for _, portMapping := range cfg.Services[name].Ports {
-			host, guest, err := parsePort(portMapping)
+			host, guest, err := config.ParsePort(portMapping)
 			if err != nil {
 				continue
 			}

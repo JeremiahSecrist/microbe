@@ -151,3 +151,95 @@ func TestRuleExprsRejectsIPv4(t *testing.T) {
 		t.Error("ruleExprs(ipv4 to) = nil error, want error")
 	}
 }
+
+func TestOutDnatStatusAcceptExprsShape(t *testing.T) {
+	exprs := outDnatStatusAcceptExprs()
+	if len(exprs) != 4 {
+		t.Fatalf("outDnatStatusAcceptExprs = %d expressions, want 4", len(exprs))
+	}
+	ct, ok := exprs[0].(*expr.Ct)
+	if !ok || ct.Key != expr.CtKeySTATUS {
+		t.Errorf("expr[0] = %#v, want ct status load", exprs[0])
+	}
+	if _, ok := exprs[1].(*expr.Bitwise); !ok {
+		t.Errorf("expr[1] = %#v, want bitwise mask", exprs[1])
+	}
+	cmp, ok := exprs[2].(*expr.Cmp)
+	if !ok || cmp.Op != expr.CmpOpNeq {
+		t.Errorf("expr[2] = %#v, want neq-zero cmp", exprs[2])
+	}
+	if _, ok := exprs[3].(*expr.Verdict); !ok {
+		t.Errorf("expr[3] = %#v, want accept verdict", exprs[3])
+	}
+}
+
+func TestHostAccessExprsShape(t *testing.T) {
+	exprs, err := hostAccessExprs(hostnet.HostAccessSpec{GuestIP: "fd00::2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exprs) != 3 {
+		t.Fatalf("hostAccessExprs = %d expressions, want 3", len(exprs))
+	}
+	daddr, ok := exprs[0].(*expr.Payload)
+	if !ok || daddr.Offset != ipv6DstOffset || daddr.Len != 16 {
+		t.Errorf("expr[0] = %#v, want ip6 daddr payload load", exprs[0])
+	}
+	cmp, ok := exprs[1].(*expr.Cmp)
+	if !ok || len(cmp.Data) != 16 {
+		t.Errorf("expr[1] = %#v, want 16-byte guest-addr cmp", exprs[1])
+	}
+	if _, ok := exprs[2].(*expr.Verdict); !ok {
+		t.Errorf("expr[2] = %#v, want accept verdict", exprs[2])
+	}
+}
+
+func TestHostAccessExprsRejectsIPv4(t *testing.T) {
+	if _, err := hostAccessExprs(hostnet.HostAccessSpec{GuestIP: "10.0.0.2"}); err == nil {
+		t.Error("hostAccessExprs(ipv4) = nil error, want error")
+	}
+}
+
+func TestHostAccessFingerprintUnique(t *testing.T) {
+	a := hostAccessFingerprint(hostnet.HostAccessSpec{GuestIP: "fd00::2"})
+	b := hostAccessFingerprint(hostnet.HostAccessSpec{GuestIP: "fd00::3"})
+	if a == b {
+		t.Fatalf("host-access fingerprints collide: %q", a)
+	}
+}
+
+func TestHealthAccessExprsShape(t *testing.T) {
+	exprs, err := healthAccessExprs(hostnet.HealthAccessSpec{GuestIP: "fd00::2", Port: 5432})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exprs) != 5 {
+		t.Fatalf("healthAccessExprs = %d expressions, want 5", len(exprs))
+	}
+	daddr, ok := exprs[0].(*expr.Payload)
+	if !ok || daddr.Offset != ipv6DstOffset || daddr.Len != 16 {
+		t.Errorf("expr[0] = %#v, want ip6 daddr payload load", exprs[0])
+	}
+	dport, ok := exprs[2].(*expr.Payload)
+	if !ok || dport.Base != expr.PayloadBaseTransportHeader || dport.Offset != 2 || dport.Len != 2 {
+		t.Errorf("expr[2] = %#v, want tcp dport payload load", exprs[2])
+	}
+	if _, ok := exprs[4].(*expr.Verdict); !ok {
+		t.Errorf("expr[4] = %#v, want accept verdict", exprs[4])
+	}
+}
+
+func TestHealthAccessExprsRejectsIPv4(t *testing.T) {
+	if _, err := healthAccessExprs(hostnet.HealthAccessSpec{GuestIP: "10.0.0.2", Port: 80}); err == nil {
+		t.Error("healthAccessExprs(ipv4) = nil error, want error")
+	}
+}
+
+func TestHealthAccessFingerprintUnique(t *testing.T) {
+	a := healthAccessFingerprint(hostnet.HealthAccessSpec{GuestIP: "fd00::2", Port: 5432})
+	b := healthAccessFingerprint(hostnet.HealthAccessSpec{GuestIP: "fd00::2", Port: 80})
+	c := healthAccessFingerprint(hostnet.HealthAccessSpec{GuestIP: "fd00::3", Port: 5432})
+	if a == b || a == c || b == c {
+		t.Errorf("health-access fingerprints collide: a=%q b=%q c=%q", a, b, c)
+	}
+}

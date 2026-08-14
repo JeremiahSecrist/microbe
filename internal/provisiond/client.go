@@ -107,3 +107,27 @@ func (c *Client) ApplyRules(rules []hostnet.RuleSpec) error {
 func (c *Client) TeardownRules(rules []hostnet.RuleSpec) error {
 	return c.call(Request{Method: MethodTeardownRules, Rules: rules})
 }
+
+// ApplyHostAccess asks the daemon to install the output-chain host->guest
+// accept rules for the given opted-in services.
+func (c *Client) ApplyHostAccess(specs []hostnet.HostAccessSpec) error {
+	return c.call(Request{Method: MethodApplyHostAccess, HostAccess: specs})
+}
+
+// TeardownHostAccess asks the daemon to remove the output-chain host->guest
+// accept rules (best-effort).
+func (c *Client) TeardownHostAccess(specs []hostnet.HostAccessSpec) error {
+	return c.call(Request{Method: MethodTeardownHostAccess, HostAccess: specs})
+}
+
+// ApplyHealthAccess asks the daemon to install the output-chain accept rules
+// for each service's declared healthcheck port.
+func (c *Client) ApplyHealthAccess(specs []hostnet.HealthAccessSpec) error {
+	return c.call(Request{Method: MethodApplyHealthAccess, HealthAccess: specs})
+}
+
+// TeardownHealthAccess asks the daemon to remove the output-chain
+// healthcheck-port accept rules (best-effort).
+func (c *Client) TeardownHealthAccess(specs []hostnet.HealthAccessSpec) error {
+	return c.call(Request{Method: MethodTeardownHealthAccess, HealthAccess: specs})
+}

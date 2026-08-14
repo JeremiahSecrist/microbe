@@ -422,6 +422,7 @@ microvm.shares += {
 | each attach | tap `mvc-<stack>-<svc>-<N>` | created `up`, removed `down` |
 | `ports` | nftables DNAT (IPv6 family) `<hostPort> → [<guest addr>]:<guestPort>`, straight to the guest's real address -- no NAT64 needed for an IPv6-capable external client | created `up`, removed `down` |
 | `rules` | nftables `forward` chain (IPv6 family, table `microbe`): `Policy: drop` + one `ct state established,related accept` + one accept per rule, matching exact service addresses (no subnet/mask, since these are single `/128`s) | (re)applied `up`, removed `down` |
+| `hostAccess` (compose- or service-level) / `healthcheck` | nftables `output` chain (IPv6 family, table `microbe`): `Policy: drop` + `ct state established,related accept` + `ct status dnat accept` + one accept per opted-in service address + one accept per declared healthcheck port | (re)applied `up`, removed `down` |
 
 - **Known gap**: every stack's bridge gets assigned the *same* host-wide
   gateway address (`<host ULA prefix>::1`), since every service shares one
@@ -455,6 +456,9 @@ microvm.shares += {
   per-network subnet left to masquerade). Guests reach the general IPv4
   internet via NAT64 (tayga) + DNS64 (unbound) on the host instead -- see
   §13.1.
+- **DNAT'd traffic is not blocked by the host->guest lockdown (§8.6.2)**:
+  published ports always work regardless of `hostAccess` -- the `output`
+  chain's `ct status dnat accept` rule is exactly what carves that path out.
 
 ### 8.6.1 `microbe purge`
 
@@ -473,6 +477,34 @@ unless `--all` widens it host-wide across every `/var/lib/microbe/<stack>`:
   declare and clears their state (like `rm`), with a confirmation prompt.
 - `purge all`: host-wide network sweep + VM purge (confirmation prompt; `-f`
   skips prompts; `--dry-run` prints without mutating).
+
+### 8.6.2 Host→guest reachability
+
+No guest's IPv6 address is reachable from the host by default -- previously
+nothing enforced this: `forward`'s default-deny (§8.6) only governs
+guest↔guest/external bridged traffic, never host-originated packets (those
+take the `OUTPUT` hook, not `FORWARD`). The `output` chain closes that gap:
+
+- **Published ports (`ports:`) and declared `healthcheck.port` always work**,
+  regardless of `hostAccess` -- published ports via the `ct status dnat
+  accept` carve-out (the packet was legitimately retargeted by the
+  `prerouting` DNAT chain), healthcheck ports via a per-service, per-port
+  accept rule auto-installed whenever a service declares a `healthcheck:`
+  block. Declaring a healthcheck is itself explicit intent, so it needs no
+  separate opt-in.
+- **`hostAccess: true`** is the explicit, coarse-grained opt-out of the
+  default deny: set at the top level of `microbe.nix` (unlocks every
+  service's address, all ports) or on an individual service (unlocks just
+  that one). Either is OR'd together per service (see
+  `config.Compose.HostAccessServices`). Mirrors `Network.Internal`'s naming
+  and doc-comment style -- but unlike `Internal` (currently plumbed through
+  to `flakegen.Stack.Internal` and then unenforced anywhere), `hostAccess`
+  is real, end-to-end enforcement wired all the way to nftables.
+- **IPv4 is unaffected and out of scope**: the `microbe` table is IPv6-only,
+  so `curl 127.0.0.1:<port>` was never reachable this way regardless of
+  `hostAccess` -- true IPv4 host-literal reachability needs a NAT46 path
+  (reverse of the outbound NAT64 in §13.1), a separate, larger follow-up,
+  not built here.
 
 ### 8.7 Ordering & health
 

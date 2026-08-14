@@ -121,6 +121,44 @@ func TestClientRoundTripRules(t *testing.T) {
 	}
 }
 
+func TestClientRoundTripHostAndHealthAccess(t *testing.T) {
+	path, ops := startTestServer(t)
+	c, err := Dial(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	hostSpecs := []hostnet.HostAccessSpec{{GuestIP: "fd00::2"}}
+	healthSpecs := []hostnet.HealthAccessSpec{{GuestIP: "fd00::2", Port: 5432}}
+
+	if err := c.ApplyHostAccess(hostSpecs); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.TeardownHostAccess(hostSpecs); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ApplyHealthAccess(healthSpecs); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.TeardownHealthAccess(healthSpecs); err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(ops.applyHostAccess, hostSpecs) {
+		t.Errorf("ApplyHostAccess = %v, want %v", ops.applyHostAccess, hostSpecs)
+	}
+	if !reflect.DeepEqual(ops.teardownHostAccess, hostSpecs) {
+		t.Errorf("TeardownHostAccess = %v, want %v", ops.teardownHostAccess, hostSpecs)
+	}
+	if !reflect.DeepEqual(ops.applyHealthAccess, healthSpecs) {
+		t.Errorf("ApplyHealthAccess = %v, want %v", ops.applyHealthAccess, healthSpecs)
+	}
+	if !reflect.DeepEqual(ops.teardownHealthAccess, healthSpecs) {
+		t.Errorf("TeardownHealthAccess = %v, want %v", ops.teardownHealthAccess, healthSpecs)
+	}
+}
+
 func TestClientPropagatesDaemonError(t *testing.T) {
 	path, ops := startTestServer(t)
 	ops.err = &provisionErr{"operation not permitted"}

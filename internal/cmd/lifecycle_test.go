@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -116,15 +117,64 @@ func TestVirtiofsShareSocketsFinixIncludesStore(t *testing.T) {
 	}
 }
 
-func TestParsePort(t *testing.T) {
-	host, guest, err := parsePort("8080:80")
-	if err != nil || host != 8080 || guest != 80 {
-		t.Errorf("parsePort(8080:80) = %d,%d,%v", host, guest, err)
+// TestCheckPortsAvailable proves the docker-style preflight rejects a host
+// port that's already bound by something else, and accepts a free one.
+func TestCheckPortsAvailable(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
 	}
-	for _, bad := range []string{"8080", "abc:80", "8080:0", "0:80", "8080:99999", ":80"} {
-		if _, _, err := parsePort(bad); err == nil {
-			t.Errorf("parsePort(%q): want error", bad)
-		}
+	defer l.Close()
+	taken := l.Addr().(*net.TCPAddr).Port
+
+	if err := checkPortsAvailable([]hostnet.PortSpec{{HostPort: taken, GuestIP: "fd00::1", GuestPort: 80}}); err == nil {
+		t.Error("checkPortsAvailable(taken port): want error, got nil")
+	}
+
+	l2, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	free := l2.Addr().(*net.TCPAddr).Port
+	l2.Close()
+
+	if err := checkPortsAvailable([]hostnet.PortSpec{{HostPort: free, GuestIP: "fd00::1", GuestPort: 80}}); err != nil {
+		t.Errorf("checkPortsAvailable(free port %d): want nil, got %v", free, err)
+	}
+}
+
+// TestUpRunFailsFastOnPortConflict proves up refuses to provision anything
+// when a requested host port is already bound -- docker-style "port is
+// already allocated", surfaced before any bridge/tap/DNAT/VM work.
+func TestUpRunFailsFastOnPortConflict(t *testing.T) {
+	cfgPath := writeConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+
+	var hr hostRecorder
+	origProvision, origBuild, origStart, origCheck := provisionHost, buildRunner, startService, checkPortsAvailable
+	provisionHost = recordHost(&hr, nil, "provision")
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) {
+		return filepath.Join(dir, "runners", svc), nil
+	}
+	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	checkPortsAvailable = func([]hostnet.PortSpec) error {
+		return errors.New("port 8080 already allocated")
+	}
+	defer func() {
+		provisionHost, buildRunner, startService, checkPortsAvailable = origProvision, origBuild, origStart, origCheck
+	}()
+
+	rec := &cmdRecorder{}
+	var buf bytes.Buffer
+	err := upRun(nil, upOptions{ops: &fakeOps{},
+		file: cfgPath, runner: rec.run, out: &buf,
+	})
+	if err == nil || !strings.Contains(err.Error(), "already allocated") {
+		t.Fatalf("upRun err = %v, want a port-already-allocated error", err)
+	}
+	if hr.calls != 0 {
+		t.Errorf("provisionHost calls = %d, want 0 (should fail before provisioning)", hr.calls)
 	}
 }
 
@@ -259,6 +309,103 @@ func TestRuleSpecsResolvesAddresses(t *testing.T) {
 	}
 }
 
+const hostAccessConfigJSON = `{
+  "schemaVersion": 1,
+  "name": "test-net",
+  "hostAccess": false,
+  "networks": { "backend": {} },
+  "services": {
+    "db": {
+      "networks": [ { "name": "backend", "addr": "fd00:1234:5678::2" } ],
+      "hostAccess": true,
+      "healthcheck": { "port": 5432, "interval": "1s", "timeout": "1s", "startPeriod": "1s" }
+    },
+    "web": { "networks": [ { "name": "backend", "addr": "fd00:1234:5678::3" } ] }
+  }
+}`
+
+func writeHostAccessConfig(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "microbe.json")
+	if err := os.WriteFile(p, []byte(hostAccessConfigJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestHostAccessSpecs proves hostAccessSpecs resolves the OR'd
+// compose-wide/per-service HostAccess fields into one HostAccessSpec per
+// unlocked service's resolved address, scoped to selected.
+func TestHostAccessSpecs(t *testing.T) {
+	cfgPath := writeHostAccessConfig(t)
+	cfg, st := loadStack(t, cfgPath)
+
+	got := hostAccessSpecs(cfg, st, st.Names())
+	want := []hostnet.HostAccessSpec{{GuestIP: "fd00:1234:5678::2"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("hostAccessSpecs = %v, want %v", got, want)
+	}
+
+	// Scoping: excluding db from selected drops its spec even though it's
+	// host-accessible.
+	if got := hostAccessSpecs(cfg, st, []string{"web"}); len(got) != 0 {
+		t.Errorf("hostAccessSpecs(web only) = %v, want empty", got)
+	}
+}
+
+// TestHealthAccessSpecs proves healthAccessSpecs builds one spec per
+// selected service with a declared healthcheck, regardless of HostAccess.
+func TestHealthAccessSpecs(t *testing.T) {
+	cfgPath := writeHostAccessConfig(t)
+	cfg, st := loadStack(t, cfgPath)
+
+	got := healthAccessSpecs(cfg, st, st.Names())
+	want := []hostnet.HealthAccessSpec{{GuestIP: "fd00:1234:5678::2", Port: 5432}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("healthAccessSpecs = %v, want %v", got, want)
+	}
+
+	if got := healthAccessSpecs(cfg, st, []string{"web"}); len(got) != 0 {
+		t.Errorf("healthAccessSpecs(web only) = %v, want empty (no healthcheck)", got)
+	}
+}
+
+// TestUpRunAppliesHostAndHealthAccess proves up wires hostAccessSpecs and
+// healthAccessSpecs through to ops.ApplyHostAccess/ApplyHealthAccess before
+// any healthcheck probe runs.
+func TestUpRunAppliesHostAndHealthAccess(t *testing.T) {
+	cfgPath := writeHostAccessConfig(t)
+	base := t.TempDir()
+	datadir.Root = base
+
+	origProvision, origBuild, origStart, origWaitHealthy := provisionHost, buildRunner, startService, waitHealthy
+	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
+		return nil
+	}
+	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
+	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	waitHealthy = func(string, time.Duration, time.Duration, time.Duration) bool { return true }
+	defer func() {
+		provisionHost, buildRunner, startService, waitHealthy = origProvision, origBuild, origStart, origWaitHealthy
+	}()
+
+	ops := &fakeOps{}
+	var buf bytes.Buffer
+	if err := upRun(nil, upOptions{ops: ops, file: cfgPath, runner: cmdrun.Dry(&buf), out: &buf}); err != nil {
+		t.Fatal(err)
+	}
+
+	wantHost := []hostnet.HostAccessSpec{{GuestIP: "fd00:1234:5678::2"}}
+	if !reflect.DeepEqual(ops.applyHostAccess, wantHost) {
+		t.Errorf("ApplyHostAccess = %v, want %v", ops.applyHostAccess, wantHost)
+	}
+	wantHealth := []hostnet.HealthAccessSpec{{GuestIP: "fd00:1234:5678::2", Port: 5432}}
+	if !reflect.DeepEqual(ops.applyHealthAccess, wantHealth) {
+		t.Errorf("ApplyHealthAccess = %v, want %v", ops.applyHealthAccess, wantHealth)
+	}
+}
+
 // TestUpRunAppliesRules proves up wires ruleSpecs() through to
 // ops.ApplyRules, not just nets/taps/ports.
 func TestUpRunAppliesRules(t *testing.T) {
@@ -316,13 +463,17 @@ type hostRecorder struct {
 
 // fakeOps records the daemon calls made through the provisionHost seam.
 type fakeOps struct {
-	ensureNetworks int
-	ensureTaps     int
-	applyPorts     int
-	stack          string
-	prefix         string
-	applyRules     []hostnet.RuleSpec
-	teardownRules  []hostnet.RuleSpec
+	ensureNetworks       int
+	ensureTaps           int
+	applyPorts           int
+	stack                string
+	prefix               string
+	applyRules           []hostnet.RuleSpec
+	teardownRules        []hostnet.RuleSpec
+	applyHostAccess      []hostnet.HostAccessSpec
+	teardownHostAccess   []hostnet.HostAccessSpec
+	applyHealthAccess    []hostnet.HealthAccessSpec
+	teardownHealthAccess []hostnet.HealthAccessSpec
 }
 
 func (f *fakeOps) EnsureNetworks(stack string, nets []hostnet.NetSpec) error {
@@ -359,6 +510,23 @@ func (f *fakeOps) ApplyRules(rules []hostnet.RuleSpec) error {
 }
 func (f *fakeOps) TeardownRules(rules []hostnet.RuleSpec) error {
 	f.teardownRules = rules
+	return nil
+}
+
+func (f *fakeOps) ApplyHostAccess(specs []hostnet.HostAccessSpec) error {
+	f.applyHostAccess = specs
+	return nil
+}
+func (f *fakeOps) TeardownHostAccess(specs []hostnet.HostAccessSpec) error {
+	f.teardownHostAccess = specs
+	return nil
+}
+func (f *fakeOps) ApplyHealthAccess(specs []hostnet.HealthAccessSpec) error {
+	f.applyHealthAccess = specs
+	return nil
+}
+func (f *fakeOps) TeardownHealthAccess(specs []hostnet.HealthAccessSpec) error {
+	f.teardownHealthAccess = specs
 	return nil
 }
 

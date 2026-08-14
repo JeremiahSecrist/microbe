@@ -15,6 +15,28 @@ type Compose struct {
 	Networks      map[string]Network `json:"networks"`
 	Services      map[string]Service `json:"services"`
 	Rules         []Rule             `json:"rules,omitempty"`
+
+	// HostAccess, when true, exposes every service's guest IPv6 address to
+	// direct host-originated connections on every port. Default false: no
+	// guest address is reachable from the host except via published ports
+	// (Service.Ports) or a service's own HostAccess. Orthogonal to
+	// Network.Internal (that gates guest->host/internet egress; this gates
+	// host->guest ingress). See HostAccessServices for the resolved
+	// per-service view this and Service.HostAccess combine into.
+	HostAccess bool `json:"hostAccess,omitempty"`
+}
+
+// HostAccessServices resolves Compose.HostAccess and each Service's own
+// HostAccess into a flat per-service view: service X is host-accessible if
+// either is true. This is the one place that OR happens -- every downstream
+// consumer (nftables rule building) only ever needs a "is service X
+// host-accessible: yes/no" answer, never the two separate booleans.
+func (c *Compose) HostAccessServices() map[string]bool {
+	out := make(map[string]bool, len(c.Services))
+	for name, svc := range c.Services {
+		out[name] = c.HostAccess || svc.HostAccess
+	}
+	return out
 }
 
 // Network is a logical label a stack's services can attach to. It carries no
@@ -58,6 +80,13 @@ type Service struct {
 	Ports         []string     `json:"ports,omitempty"`
 	DependsOn     []string     `json:"dependsOn,omitempty"`
 	Healthcheck   *Healthcheck `json:"healthcheck,omitempty"`
+
+	// HostAccess, when true (or when Compose.HostAccess is true), exposes
+	// this service's one guest address to direct host-originated
+	// connections on every port. Coarse-grained (whole-address, not
+	// per-port) opt-out of the default host->guest deny; published ports
+	// and Healthcheck.Port work regardless of this field.
+	HostAccess bool `json:"hostAccess,omitempty"`
 }
 
 // Volume describes storage attached to a Service: either a "disk" (a named,

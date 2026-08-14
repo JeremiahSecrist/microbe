@@ -73,6 +73,27 @@ type RuleSpec struct {
 	Port     int    // 0 = every port for Proto
 }
 
+// HostAccessSpec is one service's opt-in to direct host-originated
+// reachability on every port (config.Compose.HostAccess or
+// config.Service.HostAccess -- see config.Compose.HostAccessServices). The
+// nftables output-chain default-deny (see provisiond's ensureOutputChain)
+// carves out one accept rule per HostAccessSpec. Deliberately whole-address,
+// not port-scoped -- published ports and healthcheck ports reach the guest
+// regardless of this, via their own carve-outs (see HealthAccessSpec).
+type HostAccessSpec struct {
+	GuestIP string // resolved IPv6 address (internal/lockfile)
+}
+
+// HealthAccessSpec is one service's auto-allowed host->guest reachability on
+// its declared Healthcheck.Port -- declaring a healthcheck is itself
+// explicit intent, so it doesn't also require HostAccess. Without this, the
+// host-side TCP healthcheck probe (internal/cmd/health.go) would be dropped
+// by the same default-deny that blocks unpublished direct guest access.
+type HealthAccessSpec struct {
+	GuestIP string
+	Port    int
+}
+
 // BridgeName returns the host bridge name for a stack: readable "br-<stack>"
 // when it fits, else a deterministic 15-char hash-based name (Linux
 // interface names are capped at IFNAMSIZ=15). One bridge serves every

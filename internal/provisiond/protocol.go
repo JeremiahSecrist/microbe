@@ -34,6 +34,11 @@ const (
 	MethodEnsurePrefix  Method = "ensure_prefix"
 	MethodApplyRules    Method = "apply_rules"
 	MethodTeardownRules Method = "teardown_rules"
+
+	MethodApplyHostAccess      Method = "apply_host_access"
+	MethodTeardownHostAccess   Method = "teardown_host_access"
+	MethodApplyHealthAccess    Method = "apply_health_access"
+	MethodTeardownHealthAccess Method = "teardown_health_access"
 )
 
 // Request is one RPC sent over the socket. Exactly one of the payload fields
@@ -46,6 +51,9 @@ type Request struct {
 	Ports  []hostnet.PortSpec `json:"ports,omitempty"`
 	Links  []string           `json:"links,omitempty"`
 	Rules  []hostnet.RuleSpec `json:"rules,omitempty"`
+
+	HostAccess   []hostnet.HostAccessSpec   `json:"hostAccess,omitempty"`
+	HealthAccess []hostnet.HealthAccessSpec `json:"healthAccess,omitempty"`
 }
 
 // Response is the daemon's reply. Error is empty on success. Prefix is only
@@ -77,6 +85,20 @@ type Ops interface {
 	// TeardownRules removes the forward-chain accept rules for the given
 	// rules. Best-effort, mirrors TeardownPorts.
 	TeardownRules(rules []hostnet.RuleSpec) error
+	// ApplyHostAccess installs output-chain accept rules unlocking direct
+	// host->guest reachability (every port) for the given services (see
+	// config.Compose.HostAccessServices). Idempotent, mirrors ApplyRules.
+	ApplyHostAccess(specs []hostnet.HostAccessSpec) error
+	// TeardownHostAccess removes the output-chain accept rules installed by
+	// ApplyHostAccess. Best-effort, mirrors TeardownRules.
+	TeardownHostAccess(specs []hostnet.HostAccessSpec) error
+	// ApplyHealthAccess installs output-chain accept rules for each
+	// service's declared Healthcheck.Port, auto-allowed since declaring a
+	// healthcheck is itself explicit intent. Idempotent, mirrors ApplyRules.
+	ApplyHealthAccess(specs []hostnet.HealthAccessSpec) error
+	// TeardownHealthAccess removes the output-chain accept rules installed
+	// by ApplyHealthAccess. Best-effort, mirrors TeardownRules.
+	TeardownHealthAccess(specs []hostnet.HealthAccessSpec) error
 }
 
 // dispatch runs a request against ops and writes the response to w.
@@ -104,6 +126,14 @@ func dispatch(w io.Writer, ops Ops, req Request) error {
 		err = ops.ApplyRules(req.Rules)
 	case MethodTeardownRules:
 		err = ops.TeardownRules(req.Rules)
+	case MethodApplyHostAccess:
+		err = ops.ApplyHostAccess(req.HostAccess)
+	case MethodTeardownHostAccess:
+		err = ops.TeardownHostAccess(req.HostAccess)
+	case MethodApplyHealthAccess:
+		err = ops.ApplyHealthAccess(req.HealthAccess)
+	case MethodTeardownHealthAccess:
+		err = ops.TeardownHealthAccess(req.HealthAccess)
 	default:
 		err = fmt.Errorf("provisiond: unknown method %q", req.Method)
 	}
