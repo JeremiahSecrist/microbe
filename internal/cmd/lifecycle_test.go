@@ -1808,7 +1808,7 @@ func TestPsRunPrintsTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	for _, want := range []string{"service", "db", "web", "running", "1000", "fd00:1234:5678::2", "8080->80"} {
+	for _, want := range []string{"service", "db", "web", "running", "1000", "fd00:1234:5678::2", "8080", "80", "host", "guest"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("ps output missing %q:\n%s", want, out)
 		}

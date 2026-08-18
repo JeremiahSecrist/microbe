@@ -745,7 +745,7 @@ func printStore(out io.Writer, store *state.Store, interactive bool) {
 		fmt.Fprintln(out, "no services")
 		return
 	}
-	fmt.Fprintf(out, "%-12s %-9s %-7s %-24s %s\n", "service", "status", "pid", "ip", "ports")
+	fmt.Fprintf(out, "%-12s %-9s %-7s %-24s %s %s\n", "service", "status", "pid", "ip", "host", "guest")
 	names := make([]string, 0, len(store.Services))
 	for name := range store.Services {
 		names = append(names, name)
@@ -753,13 +753,15 @@ func printStore(out io.Writer, store *state.Store, interactive bool) {
 	sort.Strings(names)
 	for _, name := range names {
 		svc := store.Services[name]
-		var ports []string
+		var hosts, guests []string
 		for hostPort, portState := range store.Ports {
 			if portState.Service == name {
-				ports = append(ports, fmt.Sprintf("%s->%d", hostPort, portState.Guest))
+				hosts = append(hosts, hostPort)
+				guests = append(guests, strconv.Itoa(portState.Guest))
 			}
 		}
-		sort.Strings(ports)
+		sort.Strings(hosts)
+		sort.Strings(guests)
 		status := svc.Status
 		if interactive {
 			status = fmt.Sprintf("\x1b[%sm%s\x1b[0m", statusColor(svc.Status), svc.Status)
@@ -768,6 +770,6 @@ func printStore(out io.Writer, store *state.Store, interactive bool) {
 		if pad < 0 {
 			pad = 0
 		}
-		fmt.Fprintf(out, "%-12s %s%*s %-7d %-24s %s\n", name, status, pad, "", svc.PID, svc.Addr, strings.Join(ports, " "))
+		fmt.Fprintf(out, "%-12s %s%*s %-7d %-24s %s %s\n", name, status, pad, "", svc.PID, svc.Addr, strings.Join(hosts, " "), strings.Join(guests, " "))
 	}
 }
