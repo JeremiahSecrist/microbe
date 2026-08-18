@@ -58,6 +58,7 @@ would do without touching the host or any VM.`,
 	root.AddCommand(newPurgeCmd())
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newProvisiondCmd())
+	root.AddCommand(newPortForwardCmd())
 	return root
 }
 

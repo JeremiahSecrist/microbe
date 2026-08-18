@@ -351,6 +351,7 @@ func upRun(args []string, opts upOptions) error {
 
 	pids := map[string]int{}
 	virtiofsdPIDs := map[string]int{}
+	proxyPIDs := map[string]int{}
 	statuses := map[string]string{}
 	var healthErr error
 	for _, svc := range order {
@@ -401,6 +402,23 @@ func upRun(args []string, opts upOptions) error {
 		pids[svc] = pid
 		p.Step("started %s (pid %d)", svc, pid)
 
+		for _, portMapping := range cfg.Services[svc].Ports {
+			host, guest, err := parsePort(portMapping)
+			if err != nil {
+				continue
+			}
+			guestIP := st.Services[svc].Addr
+			listenAddr := fmt.Sprintf("[::1]:%d", host)
+			dialAddr := fmt.Sprintf("[%s]:%d", guestIP, guest)
+			logPath := filepath.Join(dataDir, "logs", fmt.Sprintf("proxy-%d.log", host))
+			proxyPID, err := startPortForwarder(context.Background(), listenAddr, dialAddr, logPath)
+			if err != nil {
+				return fmt.Errorf("service %q: port forwarder :%d: %w", svc, host, err)
+			}
+			proxyPIDs[strconv.Itoa(host)] = proxyPID
+			p.Step("started port forwarder :%d -> %s:%d (pid %d)", host, guestIP, guest, proxyPID)
+		}
+
 		if hc := cfg.Services[svc].Healthcheck; hc != nil {
 			ip := st.Services[svc].Addr
 			healthy, err := probeHealth(*hc, ip)
@@ -441,7 +459,7 @@ func upRun(args []string, opts upOptions) error {
 		if err != nil {
 			return err
 		}
-		store := buildStore(cfg, st, pids, virtiofsdPIDs, statuses, filepath.Join(dataDir, "runners"), prev)
+		store := buildStore(cfg, st, pids, virtiofsdPIDs, proxyPIDs, statuses, filepath.Join(dataDir, "runners"), prev)
 		if opts.noProvision {
 			store.Provisioned = prev.Provisioned
 		} else {

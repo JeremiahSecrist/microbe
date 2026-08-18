@@ -197,6 +197,35 @@ func StopService(ctx context.Context, pid int, grace time.Duration) error {
 	return nil
 }
 
+// StartPortForwarder execs a detached child `microbe _portforward listenAddr
+// dialAddr` that runs until killed. logPath receives its stderr/stdout.
+func StartPortForwarder(_ context.Context, listenAddr, dialAddr, logPath string) (int, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return 0, fmt.Errorf("runtime: portforward: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return 0, err
+	}
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	cmd := exec.Command(self, "_portforward", listenAddr, dialAddr)
+	cmd.Stdout = f
+	cmd.Stderr = f
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return 0, err
+	}
+	pid := cmd.Process.Pid
+	if err := cmd.Process.Release(); err != nil {
+		return 0, err
+	}
+	return pid, nil
+}
+
 // processAlive reports whether pid is running, not a zombie. A zombie (state
 // Z or X) holds its pid but is no longer executing, so it counts as dead.
 func processAlive(pid int) bool {

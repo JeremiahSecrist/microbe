@@ -71,6 +71,10 @@ var (
 		return runtime.StopService(ctx, pid, grace)
 	}
 
+	startPortForwarder = func(ctx context.Context, listenAddr, dialAddr, logPath string) (int, error) {
+		return runtime.StartPortForwarder(ctx, listenAddr, dialAddr, logPath)
+	}
+
 	vmState = chapi.VMState
 
 	// cloud-hypervisor is KVM-only (no TCG fallback), so a missing /dev/kvm means every VM fails to boot.
@@ -649,7 +653,7 @@ const (
 // no longer named by the current config is carried forward unchanged and
 // marked Stale, instead of dropped, so down can still find and stop it by
 // PID even after the config changed out from under it.
-func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map[string]int, statuses map[string]string, runnerDir string, prev *state.Store) *state.Store {
+func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map[string]int, proxyPIDs map[string]int, statuses map[string]string, runnerDir string, prev *state.Store) *state.Store {
 	netNames := make([]string, 0, len(cfg.Networks))
 	for netName := range cfg.Networks {
 		netNames = append(netNames, netName)
@@ -705,7 +709,7 @@ func buildStore(cfg *config.Compose, st *flakegen.Stack, pids, virtiofsdPIDs map
 			if err != nil {
 				continue
 			}
-			store.Ports[strconv.Itoa(host)] = state.PortState{Service: name, Guest: guest}
+			store.Ports[strconv.Itoa(host)] = state.PortState{Service: name, Guest: guest, ProxyPID: proxyPIDs[strconv.Itoa(host)]}
 		}
 	}
 	if prev != nil {

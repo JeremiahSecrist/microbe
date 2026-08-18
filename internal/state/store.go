@@ -43,8 +43,9 @@ type ServiceState struct {
 
 // PortState records the DNAT rule for one published host port.
 type PortState struct {
-	Service string `json:"svc"`
-	Guest   int    `json:"guest"`
+	Service  string `json:"svc"`
+	Guest    int    `json:"guest"`
+	ProxyPID int    `json:"proxyPid,omitempty"`
 }
 
 // Store is the on-disk CLI state (spec §9.4).

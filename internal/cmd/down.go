@@ -152,6 +152,18 @@ func downRun(args []string, opts downOptions) error {
 		store.Services[name] = svc
 	}
 
+	if !opts.dryRun {
+		for hostPort, portState := range store.Ports {
+			if portState.ProxyPID > 0 {
+				if err := stopService(context.Background(), portState.ProxyPID, runtime.StopGrace); err != nil {
+					fmt.Fprintf(opts.out, "warning: failed to stop port forwarder :%s (pid %d): %v\n", hostPort, portState.ProxyPID, err)
+				}
+				portState.ProxyPID = 0
+				store.Ports[hostPort] = portState
+			}
+		}
+	}
+
 	plan, prefix, err := resolvePlan(cfg, opts.file, opts.ops)
 	if err != nil {
 		return err

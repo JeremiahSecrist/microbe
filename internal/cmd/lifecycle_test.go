@@ -1113,7 +1113,7 @@ func TestBuildStoreAppliesHealthStatuses(t *testing.T) {
 	cfg, st := loadStack(t, cfgPath)
 
 	statuses := map[string]string{"db": serviceStatusHealthy}
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, statuses, filepath.Join(dataDir, "runners"), nil)
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, statuses, filepath.Join(dataDir, "runners"), nil)
 
 	if got := store.Services["db"].Status; got != serviceStatusHealthy {
 		t.Errorf("db status = %q, want %q", got, serviceStatusHealthy)
@@ -1148,7 +1148,7 @@ func TestBuildStorePreservesRemovedServiceAsStale(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	first := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	first := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	dbID, webID := first.Services["db"].ID, first.Services["web"].ID
 	if dbID == "" || webID == "" {
 		t.Fatalf("buildStore left ID empty: db=%q web=%q", dbID, webID)
@@ -1164,7 +1164,7 @@ func TestBuildStorePreservesRemovedServiceAsStale(t *testing.T) {
 	}
 	cfg2, st2 := loadStack(t, dbOnlyPath)
 
-	second := buildStore(cfg2, st2, map[string]int{"db": 3000}, nil, nil, filepath.Join(dataDir, "runners"), first)
+	second := buildStore(cfg2, st2, map[string]int{"db": 3000}, nil, nil, nil, filepath.Join(dataDir, "runners"), first)
 
 	web, ok := second.Services["web"]
 	if !ok {
@@ -1201,7 +1201,7 @@ func TestDownRunTeardownsRules(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1234,7 +1234,7 @@ func TestDownRunOrderingAndState(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1292,7 +1292,7 @@ func TestDownRunStopsVirtiofsd(t *testing.T) {
 	dataDir := filepath.Join(base, "share-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000}, map[string]int{"db": 2000}, nil, filepath.Join(dataDir, "runners"), nil)
+	store := buildStore(cfg, st, map[string]int{"db": 1000}, map[string]int{"db": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1333,7 +1333,7 @@ func TestDownRunRemoveVolumes(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1383,7 +1383,7 @@ func TestDownRunRemoveVolumesClearsStaleServiceVolumes(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	dbState := store.Services["db"]
 	dbState.Stale = true
 	store.Services["db"] = dbState
@@ -1433,7 +1433,7 @@ func TestDownRunStopsAndClearsStaleService(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	webState := store.Services["web"]
 	webState.Stale = true
 	store.Services["web"] = webState
@@ -1484,7 +1484,7 @@ func TestDownRunCleansRunDir(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1532,7 +1532,7 @@ func TestDownRunWarnsOnUntrackedLiveVM(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	store := buildStore(cfg, st, map[string]int{}, nil, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1722,7 +1722,7 @@ func TestRmRequiresConfirmation(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1750,7 +1750,7 @@ func TestRmForceRemovesDisksAndState(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	store := buildStore(cfg, st, map[string]int{"db": 1000}, nil, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -1785,7 +1785,7 @@ func TestPsRunPrintsTable(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, filepath.Join(dataDir, "runners"), nil)
+	store := buildStore(cfg, st, map[string]int{"db": 1000, "web": 2000}, nil, nil, nil, filepath.Join(dataDir, "runners"), nil)
 	if err := store.Save(filepath.Join(dataDir, "state.json")); err != nil {
 		t.Fatal(err)
 	}
