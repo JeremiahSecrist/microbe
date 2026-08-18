@@ -3,6 +3,7 @@
   "services": {
     "db": "fd7a:3c9e:1122:0:f68e:d0ec:5c17:533e",
     "jump": "fd7a:3c9e:1122:0:9172:15f:5a7:811a",
+    "proxy": "fd7a:3c9e:1122:0:8b56:2ebb:7fae:e88c",
     "web": "fd7a:3c9e:1122:0:c798:8f16:c129:b587"
   }
 }

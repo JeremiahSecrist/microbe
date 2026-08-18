@@ -4,8 +4,9 @@
 # imported by both NixOS and finix ServiceParts (see flake.go).
 #
 # Sets boot.kernelPackages to a linux_6_12 LTS kernel trimmed for
-# cloud-hypervisor microVM guests with lib.mkDefault so a service's own
-# `config` block can override per-service if needed.
+# cloud-hypervisor microVM guests. Uses lib.mkOverride 90 so it beats finix's
+# own default kernel assignment (normal priority 100) while still losing to
+# lib.mkForce (50) in a per-service config that needs a different kernel.
 #
 # Built with linuxManualConfig from the hand-edited microbe-kernel-6.12.config
 # that lives alongside this file. linuxManualConfig bypasses nixpkgs'
@@ -20,7 +21,11 @@
       });
     in
     {
-      boot.kernelPackages = lib.mkDefault microbeKernel;
+      # mkOverride 90: beats finix's own default kernel (normal priority 100)
+      # so the trimmed microVM kernel is used for all guest OS types, while
+      # still losing to lib.mkForce (50) in a per-service config that needs
+      # a different kernel.
+      boot.kernelPackages = lib.mkOverride 90 microbeKernel;
       # NixOS's default availableKernelModules includes physical-hardware
       # drivers (atkbd, ahci, ehci_hcd, etc.) that don't exist in the
       # stripped microVM kernel. Restrict to what's actually present.
