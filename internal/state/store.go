@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // ServiceState records what a started service looks like on this host.
@@ -65,7 +66,10 @@ type Store struct {
 }
 
 // Load reads the store from path. A missing file yields an empty store, never
-// an error.
+// an error. If the file was written by a pre-IPv6-migration binary (v0
+// format: networks as an object map, services with per-network "ip" fields
+// instead of a single "addr"), it is transparently migrated to the current
+// schema in memory; the on-disk file is not rewritten.
 func Load(path string) (*Store, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -74,11 +78,91 @@ func Load(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	if isV0Format(data) {
+		return migrateV0(data)
+	}
 	var s Store
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, err
 	}
 	return &s, nil
+}
+
+// isV0Format reports whether data was written by the pre-IPv6-migration
+// binary. The distinguishing marker is the "networks" field being a JSON
+// object ({"frontend":{...}}) instead of a JSON array (["frontend"]).
+func isV0Format(data []byte) bool {
+	var probe struct {
+		Networks json.RawMessage `json:"networks"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil || len(probe.Networks) == 0 {
+		return false
+	}
+	return probe.Networks[0] == '{'
+}
+
+// migrateV0 parses the pre-IPv6-migration state format and returns an
+// equivalent Store in the current schema:
+//
+//   - networks: object map → sorted []string of keys
+//   - services[x].ip: per-network map → Networks []string (keys only); Addr
+//     is left empty because IPv4 stacks have no single IPv6 address.
+func migrateV0(data []byte) (*Store, error) {
+	var raw struct {
+		Stack    string                     `json:"stack"`
+		Networks map[string]json.RawMessage `json:"networks"`
+		Services map[string]struct {
+			IP           map[string]string `json:"ip"`
+			CID          int               `json:"cid"`
+			MACs         map[string]string `json:"macs"`
+			Volumes      []string          `json:"volumes"`
+			Status       string            `json:"status"`
+			PID          int               `json:"pid"`
+			Runner       string            `json:"runner"`
+			VirtiofsdPID int               `json:"virtiofsdPid,omitempty"`
+			Stale        bool              `json:"stale,omitempty"`
+		} `json:"services"`
+		Ports       map[string]PortState `json:"ports"`
+		Provisioned []string             `json:"provisioned,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+
+	store := &Store{
+		Stack:       raw.Stack,
+		Ports:       raw.Ports,
+		Provisioned: raw.Provisioned,
+		Services:    make(map[string]ServiceState, len(raw.Services)),
+	}
+
+	for name := range raw.Networks {
+		store.Networks = append(store.Networks, name)
+	}
+	sort.Strings(store.Networks)
+
+	for name, svc := range raw.Services {
+		networks := make([]string, 0, len(svc.IP))
+		for netName := range svc.IP {
+			networks = append(networks, netName)
+		}
+		sort.Strings(networks)
+
+		store.Services[name] = ServiceState{
+			Addr:         "",
+			Networks:     networks,
+			CID:          svc.CID,
+			MACs:         svc.MACs,
+			Volumes:      svc.Volumes,
+			Status:       svc.Status,
+			PID:          svc.PID,
+			Runner:       svc.Runner,
+			VirtiofsdPID: svc.VirtiofsdPID,
+			Stale:        svc.Stale,
+		}
+	}
+
+	return store, nil
 }
 
 // Save writes the store atomically (temp file + rename) as indented JSON,
