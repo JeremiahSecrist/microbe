@@ -18,18 +18,14 @@ import (
 //
 //   - prerouting (nat): one DNAT rule per published port — external clients
 //     connecting to hostPort are redirected to the service's IPv6 address.
-//   - output (nat): mirror of prerouting — host-local clients (e.g. curl
-//     localhost:8080) also get DNAT'd to the service.  Without this chain,
-//     locally-generated packets start in the output hook and never see the
-//     prerouting DNAT.
-//   - postrouting (nat): masquerade packets with src=::1 going to a bridge.
-//     After output DNAT rewrites dst to the guest's IPv6 address, the source
-//     is still ::1 (loopback).  The guest can't route a reply to ::1 across
-//     the bridge — it would send the response to the bridge gateway, which
-//     the kernel would drop as a martian.  Masquerading replaces ::1 with
-//     the bridge's own address so the guest has a routable return path.
-//     Only local-source traffic is masqueraded; external DNAT paths (where
-//     src is the real client IP) are unaffected.
+//     Host-local access (e.g. curl [::1]:8080) is deliberately NOT DNAT'd
+//     here.  It is served by the userspace port forwarder spawned on `up`
+//     (see internal/cmd/up.go and internal/portproxy), which dials the guest
+//     directly and sidesteps the kernel martian-drop: a ::1 source can't
+//     carry a reply back across the bridge, so an OUTPUT-chain DNAT + ::1
+//     masquerade leaves the loopback return path dead.  Keeping host-local
+//     ports entirely in userspace avoids that entirely, while prerouting
+//     DNAT still serves real external clients whose sources are routable.
 //   - forward (filter): default-deny (Policy: drop) plus one
 //     established/related accept, one accept per config.Rule (service-to-
 //     service), and one accept per published port (ip6 daddr <guest>
@@ -44,11 +40,9 @@ import (
 // throughout this file.
 
 const (
-	nftTable           = "microbe"
-	nftChain           = "prerouting"
-	nftOutputChain     = "output"
-	nftPostroutingChain = "postrouting"
-	nftForwardChain    = "forward"
+	nftTable        = "microbe"
+	nftChain        = "prerouting"
+	nftForwardChain = "forward"
 )
 
 const (
@@ -60,21 +54,19 @@ const (
 	// establishedFingerprint tags the single leading "ct state
 	// established,related accept" rule so it's only ever added once.
 	establishedFingerprint = "microbe-fwd-established"
-	// masqLoopbackFingerprint tags the postrouting masquerade rule for ::1
-	// source addresses (loopback NAT for host-local port access).
-	masqLoopbackFingerprint = "microbe-masq-loopback"
 )
 
-// ApplyPorts installs DNAT rules in both the prerouting and output chains
-// (so both external and host-local clients reach the VM), plus a
-// forward-chain accept rule for each port (so the DNAT'd packet passes the
-// default-deny forward policy). Idempotent.
+// ApplyPorts installs a prerouting DNAT rule per published port (external
+// clients), plus a forward-chain accept rule for each port (so the DNAT'd
+// packet passes the default-deny forward policy). Host-local access is not
+// DNAT'd -- it's served by the userspace port forwarder (internal/portproxy)
+// that dials the guest directly. Idempotent.
 func (NetOps) ApplyPorts(ports []hostnet.PortSpec) error {
 	c, err := nftables.New()
 	if err != nil {
 		return fmt.Errorf("provisiond: nftables: %w", err)
 	}
-	table, prerouting, output, err := ensureNatChains(c)
+	table, prerouting, err := ensureNatChain(c)
 	if err != nil {
 		return err
 	}
@@ -83,9 +75,15 @@ func (NetOps) ApplyPorts(ports []hostnet.PortSpec) error {
 	if err != nil {
 		return fmt.Errorf("provisiond: list prerouting DNAT rules: %w", err)
 	}
-	outExisting, err := c.GetRules(table, output)
-	if err != nil {
-		return fmt.Errorf("provisiond: list output DNAT rules: %w", err)
+
+	// Best-effort migration: a deployment that ran the old (pre-forwarder)
+	// rules installed an output-chain DNAT mirror plus a ::1 postrouting
+	// masquerade, both of which shadow the userspace forwarder's listener on
+	// the same [::1]:<hostPort> and resurrect the martian-drop that this
+	// file no longer services. Prune them so a stack provisioned by the old
+	// binary self-heals on the next `up`.
+	if err := pruneLegacyHostLocalNAT(c, table); err != nil {
+		return err
 	}
 
 	fwdTable, fwdChain, err := ensureForwardChain(c)
@@ -98,7 +96,6 @@ func (NetOps) ApplyPorts(ports []hostnet.PortSpec) error {
 	}
 
 	haveInPre := fingerprintSet(preExisting, userDataPrefix)
-	haveInOut := fingerprintSet(outExisting, userDataPrefix)
 	haveInFwd := fingerprintSet(fwdExisting, portFwdPrefix)
 
 	for _, port := range ports {
@@ -109,9 +106,6 @@ func (NetOps) ApplyPorts(ports []hostnet.PortSpec) error {
 		}
 		if !haveInPre[fp] {
 			c.AddRule(&nftables.Rule{Table: table, Chain: prerouting, UserData: []byte(fp), Exprs: exprs})
-		}
-		if !haveInOut[fp] {
-			c.AddRule(&nftables.Rule{Table: table, Chain: output, UserData: []byte(fp), Exprs: exprs})
 		}
 
 		pfp := portFwdFingerprint(port)
@@ -126,14 +120,14 @@ func (NetOps) ApplyPorts(ports []hostnet.PortSpec) error {
 	return c.Flush()
 }
 
-// TeardownPorts removes the DNAT rules (prerouting + output) and the
-// forward-chain accept rules for the published ports. Best-effort.
+// TeardownPorts removes the prerouting DNAT rules and the forward-chain
+// accept rules for the published ports. Best-effort.
 func (NetOps) TeardownPorts(ports []hostnet.PortSpec) error {
 	c, err := nftables.New()
 	if err != nil {
 		return fmt.Errorf("provisiond: nftables: %w", err)
 	}
-	table, prerouting, output, err := ensureNatChains(c)
+	table, prerouting, err := ensureNatChain(c)
 	if err != nil {
 		return err
 	}
@@ -157,18 +151,6 @@ func (NetOps) TeardownPorts(ports []hostnet.PortSpec) error {
 		}
 	}
 
-	outExisting, err := c.GetRules(table, output)
-	if err != nil {
-		return fmt.Errorf("provisiond: list output DNAT rules: %w", err)
-	}
-	for _, rule := range outExisting {
-		if tag := userDataFingerprint(rule.UserData, userDataPrefix); want[tag] {
-			if err := c.DelRule(rule); err != nil {
-				return fmt.Errorf("provisiond: delete output DNAT rule %s: %w", tag, err)
-			}
-		}
-	}
-
 	fwdTable, fwdChain, err := ensureForwardChain(c)
 	if err != nil {
 		return err
@@ -188,11 +170,10 @@ func (NetOps) TeardownPorts(ports []hostnet.PortSpec) error {
 	return c.Flush()
 }
 
-// ensureNatChains creates the microbe IPv6 table and all three NAT chains
-// (prerouting, output, postrouting) if absent. Prerouting catches external
-// traffic, output catches host-local traffic, postrouting masquerades ::1
-// sources so the loopback-DNAT path has a routable return address.
-func ensureNatChains(c *nftables.Conn) (*nftables.Table, *nftables.Chain, *nftables.Chain, error) {
+// ensureNatChain creates the microbe IPv6 table and prerouting nat chain if
+// absent. Only external DNAT lives here: host-local ports are served by the
+// userspace port forwarder.
+func ensureNatChain(c *nftables.Conn) (*nftables.Table, *nftables.Chain, error) {
 	table := c.AddTable(&nftables.Table{Name: nftTable, Family: nftables.TableFamilyIPv6})
 	prerouting := c.AddChain(&nftables.Chain{
 		Name:     nftChain,
@@ -201,62 +182,47 @@ func ensureNatChains(c *nftables.Conn) (*nftables.Table, *nftables.Chain, *nftab
 		Hooknum:  nftables.ChainHookPrerouting,
 		Priority: nftables.ChainPriorityNATDest,
 	})
-	output := c.AddChain(&nftables.Chain{
-		Name:     nftOutputChain,
-		Table:    table,
-		Type:     nftables.ChainTypeNAT,
-		Hooknum:  nftables.ChainHookOutput,
-		Priority: nftables.ChainPriorityNATDest,
-	})
-	postrouting := c.AddChain(&nftables.Chain{
-		Name:     nftPostroutingChain,
-		Table:    table,
-		Type:     nftables.ChainTypeNAT,
-		Hooknum:  nftables.ChainHookPostrouting,
-		Priority: nftables.ChainPriorityNATSource,
-	})
 	if err := c.Flush(); err != nil {
-		return nil, nil, nil, fmt.Errorf("provisiond: flush nat table setup: %w", err)
+		return nil, nil, fmt.Errorf("provisiond: flush nat table setup: %w", err)
 	}
-
-	// Ensure the single postrouting masquerade rule exists. This is a
-	// structural rule (not per-port) so it lives here alongside the
-	// established-accept rule in ensureForwardChain.
-	existing, err := c.GetRules(table, postrouting)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("provisiond: list postrouting rules: %w", err)
-	}
-	for _, rule := range existing {
-		if string(rule.UserData) == masqLoopbackFingerprint {
-			return table, prerouting, output, nil
-		}
-	}
-	c.AddRule(&nftables.Rule{
-		Table:    table,
-		Chain:    postrouting,
-		UserData: []byte(masqLoopbackFingerprint),
-		Exprs:    masqLoopbackExprs(),
-	})
-	if err := c.Flush(); err != nil {
-		return nil, nil, nil, fmt.Errorf("provisiond: flush postrouting masquerade rule: %w", err)
-	}
-	return table, prerouting, output, nil
+	return table, prerouting, nil
 }
 
-// masqLoopbackExprs builds "ip6 saddr ::1 masquerade" for the postrouting
-// chain. This SNAT replaces the ::1 source on output-DNAT'd packets with
-// the outgoing bridge's own address, giving the guest a routable return path.
-//
-//	payload load 16b @ network header + 8  => reg 1   (ip6 saddr)
-//	cmp eq reg 1 ::1
-//	masquerade
-func masqLoopbackExprs() []expr.Any {
-	loopback := net.ParseIP("::1").To16()
-	return []expr.Any{
-		&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: ipv6SrcOffset, Len: 16},
-		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: loopback},
-		&expr.Masq{},
+// pruneLegacyHostLocalNAT removes rules left behind by the old host-local
+// port-access strategy: the output-chain DNAT mirror (any microbe: rule in
+// the "output" chain) and the postrouting ::1 masquerade. Both are fixed,
+// non-per-port rules, so they're deleted wholesale. Best-effort: an absent
+// chain is treated as already clean.
+func pruneLegacyHostLocalNAT(c *nftables.Conn, table *nftables.Table) error {
+	if chain, err := c.ListChain(table, "output"); err == nil && chain != nil {
+		rules, err := c.GetRules(table, chain)
+		if err != nil {
+			return fmt.Errorf("provisiond: list legacy output rules: %w", err)
+		}
+		for _, rule := range rules {
+			if userDataFingerprint(rule.UserData, userDataPrefix) == "" {
+				continue
+			}
+			if err := c.DelRule(rule); err != nil {
+				return fmt.Errorf("provisiond: delete legacy output DNAT rule: %w", err)
+			}
+		}
 	}
+	if chain, err := c.ListChain(table, "postrouting"); err == nil && chain != nil {
+		rules, err := c.GetRules(table, chain)
+		if err != nil {
+			return fmt.Errorf("provisiond: list legacy postrouting rules: %w", err)
+		}
+		for _, rule := range rules {
+			if string(rule.UserData) != "microbe-masq-loopback" {
+				continue
+			}
+			if err := c.DelRule(rule); err != nil {
+				return fmt.Errorf("provisiond: delete legacy postrouting masquerade: %w", err)
+			}
+		}
+	}
+	return c.Flush()
 }
 
 // dnatExprs builds the expression list for one DNAT rule:

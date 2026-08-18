@@ -249,6 +249,10 @@ func upRun(args []string, opts upOptions) error {
 	}
 	projectDir := filepath.Dir(opts.file)
 	dataDir := datadir.Dir(cfg.Name)
+	prev, err := state.Load(filepath.Join(dataDir, "state.json"))
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
 	if err := attachVolumeImages(dataDir, cfg, st); err != nil {
 		return err
 	}
@@ -407,6 +411,18 @@ func upRun(args []string, opts upOptions) error {
 			if err != nil {
 				continue
 			}
+			hostKey := strconv.Itoa(host)
+			// Reuse a forwarder from a prior run still bound to [::1]:host.
+			// Otherwise the new listener hits EADDRINUSE and aborts `up`
+			// (e.g. after a crashed `up` that never recorded state).
+			if stale := prev.Ports[hostKey]; stale.ProxyPID > 0 {
+				if err := stopService(context.Background(), stale.ProxyPID, runtime.StopGrace); err != nil {
+					return fmt.Errorf("service %q: clean stale port forwarder :%d: %w", svc, host, err)
+				}
+				st := prev.Ports[hostKey]
+				st.ProxyPID = 0
+				prev.Ports[hostKey] = st
+			}
 			guestIP := st.Services[svc].Addr
 			listenAddr := fmt.Sprintf("[::1]:%d", host)
 			dialAddr := fmt.Sprintf("[%s]:%d", guestIP, guest)
@@ -415,7 +431,7 @@ func upRun(args []string, opts upOptions) error {
 			if err != nil {
 				return fmt.Errorf("service %q: port forwarder :%d: %w", svc, host, err)
 			}
-			proxyPIDs[strconv.Itoa(host)] = proxyPID
+			proxyPIDs[hostKey] = proxyPID
 			p.Step("started port forwarder :%d -> %s:%d (pid %d)", host, guestIP, guest, proxyPID)
 		}
 
@@ -455,10 +471,6 @@ func upRun(args []string, opts upOptions) error {
 
 	if !opts.dryRun {
 		p.Done()
-		prev, err := state.Load(filepath.Join(dataDir, "state.json"))
-		if err != nil {
-			return err
-		}
 		store := buildStore(cfg, st, pids, virtiofsdPIDs, proxyPIDs, statuses, filepath.Join(dataDir, "runners"), prev)
 		if opts.noProvision {
 			store.Provisioned = prev.Provisioned

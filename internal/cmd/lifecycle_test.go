@@ -384,14 +384,15 @@ func TestUpRunProvision(t *testing.T) {
 	cfg, st := loadStack(t, cfgPath)
 
 	var hr hostRecorder
-	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
+	origProvision, origBuild, origStart, origPF := provisionHost, buildRunner, startService, startPortForwarder
 	provisionHost = recordHost(&hr, nil, "provision")
 	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) {
 		return filepath.Join(dir, "runners", svc), nil
 	}
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	startPortForwarder = func(_ context.Context, _, _, _ string) (int, error) { return 9000, nil }
 	defer func() {
-		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
+		provisionHost, buildRunner, startService, startPortForwarder = origProvision, origBuild, origStart, origPF
 	}()
 
 	rec := &cmdRecorder{}
@@ -456,7 +457,7 @@ func TestUpRunProvision(t *testing.T) {
 	if !slices.Contains(store.Networks, "backend") || store.Services["web"].Addr != "fd00:1234:5678::3" {
 		t.Errorf("backend network state = %+v", store.Networks)
 	}
-	if got := store.Ports["8080"]; got != (state.PortState{Service: "web", Guest: 80}) {
+	if got := store.Ports["8080"]; got != (state.PortState{Service: "web", Guest: 80, ProxyPID: 9000}) {
 		t.Errorf("port state = %+v", got)
 	}
 }
@@ -468,15 +469,17 @@ func TestUpRunWarnsWhenKVMUnavailable(t *testing.T) {
 	base := t.TempDir()
 	datadir.Root = base
 
-	origProvision, origBuild, origStart, origCheckKVM := provisionHost, buildRunner, startService, checkKVMAccess
+	origProvision, origBuild, origStart, origCheckKVM, origPF := provisionHost, buildRunner, startService, checkKVMAccess, startPortForwarder
 	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
 		return nil
 	}
 	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	startPortForwarder = func(context.Context, string, string, string) (int, error) { return 9000, nil }
 	checkKVMAccess = func() error { return errors.New("open /dev/kvm: no such file or directory") }
 	defer func() {
-		provisionHost, buildRunner, startService, checkKVMAccess = origProvision, origBuild, origStart, origCheckKVM
+		provisionHost, buildRunner, startService, checkKVMAccess, startPortForwarder =
+			origProvision, origBuild, origStart, origCheckKVM, origPF
 	}()
 
 	rec := &cmdRecorder{}
@@ -602,20 +605,21 @@ func TestUpRunSkipsVirtiofsdWithoutShares(t *testing.T) {
 	base := t.TempDir()
 	datadir.Root = base
 
-	origProvision, origBuild, origStart, origVirtiofsd :=
-		provisionHost, buildRunner, startService, startVirtiofsd
+	origProvision, origBuild, origStart, origVirtiofsd, origPF :=
+		provisionHost, buildRunner, startService, startVirtiofsd, startPortForwarder
 	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
 		return nil
 	}
 	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	startPortForwarder = func(context.Context, string, string, string) (int, error) { return 9000, nil }
 	startVirtiofsd = func(context.Context, string, string, string, []string) (int, error) {
 		t.Fatal("startVirtiofsd called for a service with no virtiofs share")
 		return 0, nil
 	}
 	defer func() {
-		provisionHost, buildRunner, startService, startVirtiofsd =
-			origProvision, origBuild, origStart, origVirtiofsd
+		provisionHost, buildRunner, startService, startVirtiofsd, startPortForwarder =
+			origProvision, origBuild, origStart, origVirtiofsd, origPF
 	}()
 
 	var buf bytes.Buffer
@@ -638,7 +642,7 @@ func TestUpRunBuildsConcurrently(t *testing.T) {
 	bothInFlight := make(chan struct{})
 	var once sync.Once
 
-	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
+	origProvision, origBuild, origStart, origPF := provisionHost, buildRunner, startService, startPortForwarder
 	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
 		return nil
 	}
@@ -663,8 +667,9 @@ func TestUpRunBuildsConcurrently(t *testing.T) {
 		return outLink, nil
 	}
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	startPortForwarder = func(context.Context, string, string, string) (int, error) { return 9000, nil }
 	defer func() {
-		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
+		provisionHost, buildRunner, startService, startPortForwarder = origProvision, origBuild, origStart, origPF
 	}()
 
 	rec := &cmdRecorder{}
@@ -969,14 +974,15 @@ func TestUpRunGeneratedNixHasAbsoluteVolumeImage(t *testing.T) {
 	datadir.Root = base
 	dataDir := filepath.Join(base, "test-net")
 
-	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
+	origProvision, origBuild, origStart, origPF := provisionHost, buildRunner, startService, startPortForwarder
 	provisionHost = recordHost(&hostRecorder{}, nil, "provision")
 	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) {
 		return filepath.Join(dir, "runners", svc), nil
 	}
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	startPortForwarder = func(context.Context, string, string, string) (int, error) { return 9000, nil }
 	defer func() {
-		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
+		provisionHost, buildRunner, startService, startPortForwarder = origProvision, origBuild, origStart, origPF
 	}()
 
 	rec := &cmdRecorder{}
@@ -1064,12 +1070,13 @@ func TestUpRunProvisionsViaDaemon(t *testing.T) {
 	datadir.Root = base
 
 	var hr hostRecorder
-	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
+	origProvision, origBuild, origStart, origPF := provisionHost, buildRunner, startService, startPortForwarder
 	provisionHost = recordHost(&hr, nil, "provision")
 	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1, nil }
+	startPortForwarder = func(context.Context, string, string, string) (int, error) { return 9000, nil }
 	defer func() {
-		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
+		provisionHost, buildRunner, startService, startPortForwarder = origProvision, origBuild, origStart, origPF
 	}()
 
 	var buf bytes.Buffer
@@ -1088,12 +1095,13 @@ func TestUpRunNoProvision(t *testing.T) {
 	datadir.Root = base
 
 	var hr hostRecorder
-	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
+	origProvision, origBuild, origStart, origPF := provisionHost, buildRunner, startService, startPortForwarder
 	provisionHost = recordHost(&hr, nil, "provision")
 	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1, nil }
+	startPortForwarder = func(context.Context, string, string, string) (int, error) { return 9000, nil }
 	defer func() {
-		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
+		provisionHost, buildRunner, startService, startPortForwarder = origProvision, origBuild, origStart, origPF
 	}()
 
 	var buf bytes.Buffer
@@ -1690,14 +1698,15 @@ func TestUpRunRecordsProvisioned(t *testing.T) {
 	dataDir := filepath.Join(base, "test-net")
 	cfg, st := loadStack(t, cfgPath)
 
-	origProvision, origBuild, origStart := provisionHost, buildRunner, startService
+	origProvision, origBuild, origStart, origPF := provisionHost, buildRunner, startService, startPortForwarder
 	provisionHost = func(provisiond.Ops, string, []hostnet.NetSpec, []hostnet.TapSpec, []hostnet.PortSpec) error {
 		return nil
 	}
 	buildRunner = func(dir, svc, outLink string, _ func(string)) (string, error) { return outLink, nil }
 	startService = func(context.Context, string, string, string) (int, error) { return 1000, nil }
+	startPortForwarder = func(context.Context, string, string, string) (int, error) { return 9000, nil }
 	defer func() {
-		provisionHost, buildRunner, startService = origProvision, origBuild, origStart
+		provisionHost, buildRunner, startService, startPortForwarder = origProvision, origBuild, origStart, origPF
 	}()
 
 	var buf bytes.Buffer

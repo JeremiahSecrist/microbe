@@ -6,8 +6,17 @@ import (
 	"sync"
 )
 
+// halfCloser is implemented by net.TCPConn to shut down one direction of a
+// TCP stream, so the far side sees EOF without waiting for the local side to
+// close the fd entirely.
+type halfCloser interface {
+	CloseWrite() error
+}
+
 // Serve listens on listenAddr and forwards each connection to dialAddr.
-// Returns only on accept error (i.e. listener closed).
+// Runs forever: accept errors (interrupts, transient fd pressure) are
+// retried rather than killing the forwarder. Returns only when the listener
+// is closed.
 func Serve(listenAddr, dialAddr string) error {
 	l, err := net.Listen("tcp6", listenAddr)
 	if err != nil {
@@ -16,7 +25,7 @@ func Serve(listenAddr, dialAddr string) error {
 	for {
 		c, err := l.Accept()
 		if err != nil {
-			return nil
+			continue
 		}
 		go forward(c, dialAddr)
 	}
@@ -33,14 +42,24 @@ func forward(in net.Conn, addr string) {
 	go func() {
 		defer wg.Done()
 		io.Copy(out, in)
-		out.(*net.TCPConn).CloseWrite()
+		closeWrite(out)
 	}()
 	go func() {
 		defer wg.Done()
 		io.Copy(in, out)
-		in.(*net.TCPConn).CloseWrite()
+		closeWrite(in)
 	}()
 	wg.Wait()
 	in.Close()
 	out.Close()
+}
+
+func closeWrite(c net.Conn) {
+	if hc, ok := c.(halfCloser); ok {
+		_ = hc.CloseWrite()
+		return
+	}
+	if tc, ok := c.(*net.TCPConn); ok {
+		_ = tc.CloseWrite()
+	}
 }
